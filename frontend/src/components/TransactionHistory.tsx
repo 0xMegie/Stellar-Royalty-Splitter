@@ -1,24 +1,38 @@
 import { useState, useEffect } from "react";
-import { api, TransactionRecord, TransactionDetails } from "../api";
+import { api, TransactionRecord } from "../api";
 import "./TransactionHistory.css";
 import { formatNumber } from "../utils/format";
 import { CopyButton } from "./CopyButton";
+import { TransactionDetailView } from "./TransactionDetailView";
 
 interface TransactionHistoryProps {
   contractId: string;
+  selectedTxHash?: string | null;
+  onSelectTxHash?: (hash: string | null) => void;
 }
 
 export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   contractId,
+  selectedTxHash: propSelectedTxHash,
+  onSelectTxHash,
 }) => {
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
-  const [selected, setSelected] = useState<TransactionDetails | null>(null);
-  const [modalLoading, setModalLoading] = useState(false);
+  const [localSelectedTxHash, setLocalSelectedTxHash] = useState<string | null>(null);
   const LIMIT = 10;
+
+  const activeTxHash = propSelectedTxHash !== undefined ? propSelectedTxHash : localSelectedTxHash;
+
+  function handleSelectTxHash(hash: string | null) {
+    if (onSelectTxHash) {
+      onSelectTxHash(hash);
+    } else {
+      setLocalSelectedTxHash(hash);
+    }
+  }
 
   const fetchHistory = async () => {
     setLoading(true);
@@ -36,26 +50,6 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
 
   useEffect(() => { setOffset(0); }, [contractId]);
   useEffect(() => { fetchHistory(); }, [contractId, offset]);
-
-  const openModal = async (tx: TransactionRecord) => {
-    if (!tx.txHash) {
-      // No hash yet — show what we have without fetching details
-      setSelected({ ...tx });
-      return;
-    }
-    setModalLoading(true);
-    setSelected({ ...tx }); // show immediately with basic data
-    try {
-      const result = await api.getTransactionDetails(tx.txHash);
-      setSelected(result.data);
-    } catch {
-      // keep the basic data already shown
-    } finally {
-      setModalLoading(false);
-    }
-  };
-
-  const closeModal = () => { setSelected(null); };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -75,6 +69,15 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
 
   const truncateHash = (hash: string | null) =>
     hash ? `${hash.slice(0, 8)}...${hash.slice(-8)}` : "Pending";
+
+  if (activeTxHash) {
+    return (
+      <TransactionDetailView
+        txHash={activeTxHash}
+        onBack={() => handleSelectTxHash(null)}
+      />
+    );
+  }
 
   return (
     <div className="transaction-history">
@@ -110,7 +113,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                   <tr
                     key={tx.id}
                     className="tx-row-clickable"
-                    onClick={() => openModal(tx)}
+                    onClick={() => tx.txHash && handleSelectTxHash(tx.txHash)}
                     title="Click to view details"
                   >
                     <td><span className="tx-type">{tx.type}</span></td>
@@ -165,106 +168,6 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
       )}
 
       {loading && <div className="loading">Loading transactions...</div>}
-
-      {/* Detail modal */}
-      {selected && (
-        <div className="tx-modal-overlay" onClick={closeModal} role="dialog" aria-modal="true" aria-label="Transaction details">
-          <div className="tx-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="tx-modal-header">
-              <h3>Transaction Details</h3>
-              <button className="tx-modal-close" onClick={closeModal} aria-label="Close">✕</button>
-            </div>
-
-            <div className="tx-modal-body">
-              <div className="tx-detail-row">
-                <span className="tx-detail-label">Type</span>
-                <span className="tx-type">{selected.type}</span>
-              </div>
-
-              <div className="tx-detail-row">
-                <span className="tx-detail-label">Status</span>
-                <span
-                  className="status-badge"
-                  style={{
-                    backgroundColor: getStatusColor(selected.status),
-                    color: selected.status === "failed" ? "white" : "black",
-                  }}
-                >
-                  {selected.status}
-                </span>
-              </div>
-
-              <div className="tx-detail-row">
-                <span className="tx-detail-label">TX Hash</span>
-                <span className="tx-detail-hash">
-                  <span className="tx-detail-mono">{selected.txHash ?? "Pending"}</span>
-                  {selected.txHash && (
-                    <CopyButton
-                      value={selected.txHash}
-                      label="transaction hash"
-                      size="sm"
-                    />
-                  )}
-                </span>
-              </div>
-
-              <div className="tx-detail-row">
-                <span className="tx-detail-label">Initiator</span>
-                <span className="tx-detail-mono">{selected.initiatorAddress}</span>
-              </div>
-
-              <div className="tx-detail-row">
-                <span className="tx-detail-label">Timestamp</span>
-                <span>{formatDate(selected.timestamp)}</span>
-              </div>
-
-              {selected.requestedAmount && (
-                <div className="tx-detail-row">
-                  <span className="tx-detail-label">Amount</span>
-                  <span>{formatNumber(selected.requestedAmount)}</span>
-                </div>
-              )}
-
-              {selected.tokenId && (
-                <div className="tx-detail-row">
-                  <span className="tx-detail-label">Token</span>
-                  <span className="tx-detail-mono">{selected.tokenId}</span>
-                </div>
-              )}
-
-              {selected.status === "failed" && selected.errorMessage && (
-                <div className="tx-detail-row tx-detail-error">
-                  <span className="tx-detail-label">Error</span>
-                  <span className="tx-error-text">{selected.errorMessage}</span>
-                </div>
-              )}
-
-              {modalLoading && (
-                <div className="tx-modal-loading">Loading payout details…</div>
-              )}
-
-              {!modalLoading && selected.payouts && selected.payouts.length > 0 && (
-                <div className="tx-payouts">
-                  <span className="tx-detail-label">Payouts</span>
-                  <table className="tx-payouts-table">
-                    <thead>
-                      <tr><th>Collaborator</th><th>Amount</th></tr>
-                    </thead>
-                    <tbody>
-                      {selected.payouts.map((p, i) => (
-                        <tr key={i}>
-                          <td className="tx-detail-mono">{p.collaboratorAddress}</td>
-                          <td>{formatNumber(p.amountReceived)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

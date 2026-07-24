@@ -84,7 +84,7 @@ export class BackendApiError extends Error {
   }
 }
 
-function readErrorBody(status: number, data: unknown): BackendApiError {
+export function readErrorBody(status: number, data: unknown): BackendApiError {
   const parsed = extractContractError(data ?? { error: "Request failed" });
   return new BackendApiError(
     status,
@@ -121,11 +121,26 @@ export interface TransactionRecord {
   payoutCount?: number;
 }
 
+export interface PayoutDetail {
+  collaboratorAddress: string;
+  amountReceived: string;
+  sharePercentage?: number;
+}
+
+export interface ContractEventItem {
+  id: string;
+  type: string;
+  contractId: string;
+  topics: string[];
+  data: Record<string, unknown>;
+  timestamp: string;
+}
+
 export interface TransactionDetails extends TransactionRecord {
-  payouts?: Array<{
-    collaboratorAddress: string;
-    amountReceived: string;
-  }>;
+  payouts?: PayoutDetail[];
+  totalPayout?: string;
+  auditHistory?: AuditLogEntry[];
+  contractEvents?: ContractEventItem[];
 }
 
 export interface AuditLogEntry {
@@ -172,7 +187,11 @@ export const api = {
     contractId: string;
     walletAddress: string;
     tokenId: string;
+    amount?: string | number;
   }) => post<{ xdr: string; transactionId: number }>("/distribute", body),
+
+  getContractVersion: (contractId: string) =>
+    get<{ version: string }>(`/contract/version/${contractId}`),
 
   getContractBalance: (contractId: string, tokenId: string) =>
     get<{ balance: string }>(

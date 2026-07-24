@@ -270,6 +270,8 @@ export function getTransactionHistory(contractId, limit = 50, offset = 0) {
 }
 
 export function getTransactionDetails(txHash) {
+  if (!txHash) return null;
+
   const stmt = db.prepare(`
     SELECT 
       t.id,
@@ -287,23 +289,133 @@ export function getTransactionDetails(txHash) {
     WHERE t.txHash = ?
   `);
 
-  const transaction = stmt.get(txHash);
+  let transaction = stmt.get(txHash);
 
   if (!transaction) {
-    return null;
+    // Check contract_event_archive if transaction was archived
+    const archiveStmt = db.prepare(`
+      SELECT
+        originalTransactionId as id,
+        txHash,
+        contractId,
+        type,
+        initiatorAddress,
+        requestedAmount,
+        tokenId,
+        timestamp,
+        blockTime,
+        status,
+        errorMessage,
+        payoutsJson
+      FROM contract_event_archive
+      WHERE txHash = ?
+    `);
+
+    const archived = archiveStmt.get(txHash);
+    if (!archived) {
+      return null;
+    }
+
+    let rawPayouts = [];
+    try {
+      rawPayouts = JSON.parse(archived.payoutsJson || "[]");
+    } catch (_) {
+      rawPayouts = [];
+    }
+
+    transaction = {
+      ...archived,
+      payouts: rawPayouts,
+      payoutsJson: undefined,
+    };
+  } else {
+    const payoutsStmt = db.prepare(`
+      SELECT collaboratorAddress, amountReceived
+      FROM distribution_payouts
+      WHERE transactionId = ?
+    `);
+    transaction.payouts = payoutsStmt.all(transaction.id);
   }
 
-  const payoutsStmt = db.prepare(`
-    SELECT collaboratorAddress, amountReceived
-    FROM distribution_payouts
-    WHERE transactionId = ?
-  `);
+  // Calculate total payouts and share percentages per recipient
+  const totalPayoutNum = (transaction.payouts || []).reduce(
+    (acc, p) => acc + (parseFloat(p.amountReceived) || 0),
+    0
+  );
 
-  const payouts = payoutsStmt.all(transaction.id);
+  const payoutsWithShares = (transaction.payouts || []).map((p) => {
+    const amt = parseFloat(p.amountReceived) || 0;
+    const sharePercentage =
+      totalPayoutNum > 0 ? parseFloat(((amt / totalPayoutNum) * 100).toFixed(2)) : 0;
+    return {
+      ...p,
+      sharePercentage,
+    };
+  });
+
+  // Query edit history / audit log for this contract
+  let auditHistory = [];
+  try {
+    const auditStmt = db.prepare(`
+      SELECT id, contractId, action, user, details, timestamp
+      FROM audit_log
+      WHERE contractId = ?
+      ORDER BY timestamp DESC
+      LIMIT 20
+    `);
+    auditHistory = auditStmt.all(transaction.contractId).map((row) => {
+      let details = null;
+      try {
+        details = JSON.parse(row.details || "{}");
+      } catch (_) {
+        details = row.details;
+      }
+      return { ...row, details };
+    });
+  } catch (_) {
+    auditHistory = [];
+  }
+
+  // Construct structured Soroban contract events data
+  const contractEvents = [
+    {
+      id: `evt-${transaction.id}-invoked`,
+      type: "contract_invocation",
+      contractId: transaction.contractId,
+      topics: ["contract_call", transaction.type, transaction.contractId],
+      data: {
+        function: transaction.type,
+        initiator: transaction.initiatorAddress,
+        tokenId: transaction.tokenId || "XLM",
+        requestedAmount: transaction.requestedAmount || "0",
+        status: transaction.status,
+      },
+      timestamp: transaction.blockTime || transaction.timestamp,
+    },
+    {
+      id: `evt-${transaction.id}-payouts`,
+      type: "distribution_event",
+      contractId: transaction.contractId,
+      topics: ["royalty_split", "distribution_completed"],
+      data: {
+        totalDistributed: totalPayoutNum.toString(),
+        recipientCount: payoutsWithShares.length,
+        payoutsSummary: payoutsWithShares.map((p) => ({
+          address: p.collaboratorAddress,
+          amount: p.amountReceived,
+          share: `${p.sharePercentage}%`,
+        })),
+      },
+      timestamp: transaction.blockTime || transaction.timestamp,
+    },
+  ];
 
   return {
     ...transaction,
-    payouts,
+    payouts: payoutsWithShares,
+    totalPayout: totalPayoutNum.toString(),
+    auditHistory,
+    contractEvents,
   };
 }
 

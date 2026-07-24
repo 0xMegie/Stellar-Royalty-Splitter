@@ -24,7 +24,6 @@ import { Skeleton } from "./components/Skeleton";
 import { CopyButton } from "./components/CopyButton";
 import { api, SESSION_EXPIRED_EVENT } from "./api";
 import { OnboardingWalkthrough } from "./components/OnboardingWalkthrough";
-import { api } from "./api";
 
 
 import "./App.css";
@@ -49,8 +48,24 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState(
     () => localStorage.getItem("srs_currentPage") ?? "dashboard"
   );
+  const [selectedTxHash, setSelectedTxHash] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [sessionToast, setSessionToast] = useState<string | null>(null);
+
+  // Parse deep-link URL params (Issue #577 share link support)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const txHashParam = params.get("txHash");
+    const pageParam = params.get("page");
+
+    if (txHashParam) {
+      setSelectedTxHash(txHashParam);
+      setCurrentPage("transactions");
+    } else if (pageParam) {
+      setCurrentPage(pageParam);
+    }
+  }, []);
 
   function handleWalletConnect(address: string) {
     setWalletAddress(address);
@@ -283,12 +298,12 @@ export default function App() {
           </div>
         );
       case "transactions":
-        return contractId ? (
-          <TransactionHistory contractId={contractId} />
-        ) : (
-          <div className="page-empty">
-            <p>Please select a contract first</p>
-          </div>
+        return (
+          <TransactionHistory
+            contractId={contractId || "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+            selectedTxHash={selectedTxHash}
+            onSelectTxHash={setSelectedTxHash}
+          />
         );
       case "initialize":
         return walletAddress ? (
