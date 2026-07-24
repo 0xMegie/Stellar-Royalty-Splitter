@@ -45,6 +45,9 @@ export {
 // Analytics
 export { getAnalyticsData } from "./analytics.js";
 
+// Payment preferences (#584)
+export { getPaymentPreference, savePaymentPreference } from "./payment-preferences.js";
+
 // Contract event archival
 export {
   DEFAULT_ARCHIVE_BATCH_SIZE,

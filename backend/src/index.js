@@ -23,6 +23,7 @@ import { adminRouter } from "./routes/admin.js";
 import { metricsRouter } from "./routes/metrics.js";
 import { initializeSigningKey } from "./signing-key.js";
 import { sendError, normalizeErrorCode } from "./error-response.js";
+import { preferencesRouter } from "./routes/preferences.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -123,6 +124,7 @@ app.use("/api/v1", webhooksRouter);
 app.use("/api/v1", analyticsRouter);
 app.use("/api/v1/contract", contractRouter);
 app.use("/api/v1/health", healthRouter);
+app.use("/api/v1/preferences", preferencesRouter);
 app.use("/metrics", metricsRouter);
 app.use("/api/v1/metrics", metricsRouter);
 
