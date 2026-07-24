@@ -17,6 +17,7 @@ import webhooksRouter from "./routes/webhooks.js";
 import { analyticsRouter } from "./routes/analytics.js";
 import { contractRouter } from "./routes/contract.js";
 import { healthRouter } from "./routes/health.js";
+import onboardingRouter from "./routes/onboarding.js";
 import { closeDatabase, initializeDatabase } from "./database/index.js";
 import { createGracefulShutdownHandler } from "./shutdown.js";
 import { adminRouter } from "./routes/admin.js";
@@ -59,7 +60,7 @@ logger.info("CORS origin configured", { origin: corsOrigin });
 app.use(
   cors({
     origin: corsOrigin,
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "PATCH"],
     maxAge: Number.isNaN(corsPreflightMaxAge) ? 86400 : corsPreflightMaxAge,
   })
 );
@@ -112,12 +113,14 @@ app.use("/api/v1/initialize", writeLimiter);
 app.use("/api/v1/distribute", writeLimiter);
 app.use("/api/v1/secondary-royalty", writeLimiter);
 app.use("/api/v1/webhooks", writeLimiter);
+app.use("/api/v1/onboarding", writeLimiter);
 
 app.use("/api/v1/initialize", initializeRouter);
 app.use("/api/v1/distribute", distributeRouter);
 app.use("/api/v1/collaborators", collaboratorsRouter);
 app.use("/api/v1/secondary-royalty", secondaryRoyaltyRouter);
 app.use("/api/v1/simulate", simulateRouter);
+app.use("/api/v1/onboarding", onboardingRouter);
 app.use("/api/v1", historyRouter);
 app.use("/api/v1", webhooksRouter);
 app.use("/api/v1", analyticsRouter);

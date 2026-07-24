@@ -5,6 +5,10 @@ export const stellarAddress = z
   .string("Validation failed: walletAddress must be a string")
   .regex(/^G[A-Z2-7]{55}$/, "Validation failed: Invalid Stellar address");
 
+export function isValidStellarAddress(addr) {
+  return typeof addr === "string" && /^G[A-Z2-7]{55}$/.test(addr);
+}
+
 export const contractAddress = z
   .string("Validation failed: contractId must be a string")
   .regex(/^C[A-Z2-7]{55}$/, "Validation failed: Invalid contract address");

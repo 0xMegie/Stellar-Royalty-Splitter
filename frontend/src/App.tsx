@@ -24,8 +24,7 @@ import { Skeleton } from "./components/Skeleton";
 import { CopyButton } from "./components/CopyButton";
 import { api, SESSION_EXPIRED_EVENT } from "./api";
 import { OnboardingWalkthrough } from "./components/OnboardingWalkthrough";
-import { api } from "./api";
-
+import { ContributorOnboardingChecklist } from "./components/ContributorOnboardingChecklist";
 
 import "./App.css";
 
@@ -364,6 +363,13 @@ export default function App() {
               </p>
             </div>
           </div>
+        );
+      case "onboarding":
+        return (
+          <ContributorOnboardingChecklist
+            walletAddress={walletAddress}
+            onConnectWallet={() => handlePageChange("connect-wallet")}
+          />
         );
       default:
         return null;
