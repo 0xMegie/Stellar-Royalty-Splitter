@@ -145,6 +145,7 @@ await jest.unstable_mockModule("../src/database/index.js", () => ({
   getTransactionById: jest.fn(),
   getAuditLog: jest.fn(),
   addAuditLog: jest.fn(),
+  countAuditLog: jest.fn(),
   updateTransactionStatus: jest.fn(),
   updateTransactionHash: jest.fn(),
   archiveContractEvents: routeArchiveContractEvents,

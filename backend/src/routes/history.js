@@ -6,6 +6,7 @@ import {
   getTransactionById,
   getAuditLog,
   addAuditLog,
+  countAuditLog,
   updateTransactionStatus,
   updateTransactionHash,
   archiveContractEvents,
@@ -264,23 +265,33 @@ router.post("/transaction/confirm/:txHash", async (req, res) => {
 /**
  * GET /api/audit/:contractId
  * Get audit log for a contract
- * Query params: limit (default 100), offset (default 0)
+ * Query params: limit (default 50), offset (default 0), action, user, startDate, endDate, search
  */
 router.get("/audit/:contractId", validateContractIdMiddleware, (req, res) => {
   try {
     const { contractId } = req.params;
     if (!validateContractId(contractId, res)) return;
 
-    const pagination = parsePagination(req.query, res, 100, 200);
+    const pagination = parsePagination(req.query, res, 50, 200);
     if (!pagination) return;
     const { limit, offset } = pagination;
 
-    const auditLog = getAuditLog(contractId, limit, offset);
+    const { action, user, startDate, endDate, search } = req.query;
+
+    const filters = {};
+    if (action) filters.action = action;
+    if (user) filters.user = user;
+    if (startDate) filters.startDate = startDate;
+    if (endDate) filters.endDate = endDate;
+    if (search) filters.search = search;
+
+    const auditLog = getAuditLog(contractId, limit, offset, filters);
+    const total = countAuditLog(contractId, filters);
 
     res.json({
       success: true,
       data: auditLog,
-      pagination: { limit, offset },
+      pagination: { limit, offset, total },
     });
   } catch (error) {
     logger.error("Error fetching audit log:", error);
