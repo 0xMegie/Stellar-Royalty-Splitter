@@ -117,6 +117,19 @@ export function initializeDatabase() {
       `,
     },
     {
+      version: 5,
+      sql: `
+        CREATE TABLE IF NOT EXISTS payment_preferences (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          walletAddress TEXT NOT NULL UNIQUE,
+          paymentMethod TEXT NOT NULL CHECK(paymentMethod IN ('direct_transfer', 'usdc', 'xlm')),
+          updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_payment_preferences_walletAddress
+          ON payment_preferences(walletAddress);
+      `,
+    },
+    {
       version: 4,
       sql: `
         CREATE TABLE IF NOT EXISTS contract_event_archive (

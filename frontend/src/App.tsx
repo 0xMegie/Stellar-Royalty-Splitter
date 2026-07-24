@@ -327,7 +327,7 @@ export default function App() {
           </div>
         );
       case "settings":
-        return <Settings contractId={contractId} onClearContract={clearSavedContract} />;
+        return <Settings contractId={contractId} walletAddress={walletAddress} onClearContract={clearSavedContract} />;
       case "secondary":
         return walletAddress && contractId ? (
           <div className="page-section">
