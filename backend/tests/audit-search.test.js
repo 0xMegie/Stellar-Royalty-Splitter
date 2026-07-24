@@ -3,6 +3,10 @@ import { initializeDatabase, closeDatabase, getAuditLog, addAuditLog, countAudit
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 describe("Audit Log Search and Filter", () => {
   const testDbPath = path.join(__dirname, "test-audit-search.db");
