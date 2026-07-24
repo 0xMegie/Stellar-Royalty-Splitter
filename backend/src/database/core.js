@@ -117,6 +117,19 @@ export function initializeDatabase() {
       `,
     },
     {
+      version: 5,
+      sql: `
+        CREATE TABLE IF NOT EXISTS payment_preferences (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          walletAddress TEXT NOT NULL UNIQUE,
+          paymentMethod TEXT NOT NULL CHECK(paymentMethod IN ('direct_transfer', 'usdc', 'xlm')),
+          updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_payment_preferences_walletAddress
+          ON payment_preferences(walletAddress);
+      `,
+    },
+    {
       version: 4,
       sql: `
         CREATE TABLE IF NOT EXISTS contract_event_archive (
@@ -239,6 +252,8 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_secondary_distributions_contractId ON secondary_royalty_distributions(contractId);
     CREATE INDEX IF NOT EXISTS idx_audit_contractId ON audit_log(contractId);
     CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+    CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_secondary_sales_dedup ON secondary_sales(contractId, nftId, previousOwner, newOwner, salePrice, saleToken);
 
     CREATE TABLE IF NOT EXISTS contract_event_archive (

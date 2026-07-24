@@ -341,4 +341,24 @@ export const api = {
     }>(
       `/analytics/${contractId}${dateRange ? `?start=${dateRange.start}&end=${dateRange.end}` : ""}`,
     ),
+
+  // Payment Preferences (#584)
+  getPaymentPreference: (walletAddress: string) =>
+    get<{
+      success: boolean;
+      data: { walletAddress: string; paymentMethod: string; updatedAt: string };
+    }>(`/preferences/payment?walletAddress=${encodeURIComponent(walletAddress)}`).then(
+      (res) => res.data,
+    ),
+
+  savePaymentPreference: (
+    walletAddress: string,
+    paymentMethod: "direct_transfer" | "usdc" | "xlm",
+  ) =>
+    post<{
+      success: boolean;
+      data: { walletAddress: string; paymentMethod: string; updatedAt: string };
+    }>("/preferences/payment", { walletAddress, paymentMethod }).then(
+      (res) => res.data,
+    ),
 };

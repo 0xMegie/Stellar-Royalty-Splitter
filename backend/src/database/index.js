@@ -29,7 +29,7 @@ export {
 export { registerWebhook, listWebhooks, deleteWebhook } from "./webhooks.js";
 
 // Audit logging
-export { getAuditLog, addAuditLog } from "./audit.js";
+export { getAuditLog, addAuditLog, countAuditLog } from "./audit.js";
 
 // Secondary royalties
 export {
@@ -44,6 +44,9 @@ export {
 
 // Analytics
 export { getAnalyticsData } from "./analytics.js";
+
+// Payment preferences (#584)
+export { getPaymentPreference, savePaymentPreference } from "./payment-preferences.js";
 
 // Contract event archival
 export {

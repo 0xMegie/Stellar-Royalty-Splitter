@@ -168,6 +168,8 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_secondary_distributions_contractId ON secondary_royalty_distributions(contractId);
     CREATE INDEX IF NOT EXISTS idx_audit_contractId ON audit_log(contractId);
     CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+    CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_secondary_sales_dedup ON secondary_sales(contractId, nftId, previousOwner, newOwner, salePrice, saleToken);
   `);
 
@@ -307,8 +309,10 @@ export function getTransactionDetails(txHash) {
   };
 }
 
-export function getAuditLog(contractId, limit = 100, offset = 0) {
-  const stmt = db.prepare(`
+export function getAuditLog(contractId, limit = 100, offset = 0, filters = {}) {
+  const { action, user, startDate, endDate, search } = filters;
+
+  let query = `
     SELECT 
       id,
       contractId,
@@ -318,11 +322,39 @@ export function getAuditLog(contractId, limit = 100, offset = 0) {
       timestamp
     FROM audit_log
     WHERE contractId = ?
-    ORDER BY timestamp DESC
-    LIMIT ? OFFSET ?
-  `);
+  `;
+  const params = [contractId];
 
-  return stmt.all(contractId, limit, offset).map((row) => {
+  if (action) {
+    query += ` AND action = ?`;
+    params.push(action);
+  }
+
+  if (user) {
+    query += ` AND user = ?`;
+    params.push(user);
+  }
+
+  if (startDate) {
+    query += ` AND timestamp >= ?`;
+    params.push(startDate);
+  }
+
+  if (endDate) {
+    query += ` AND timestamp <= ?`;
+    params.push(endDate);
+  }
+
+  if (search) {
+    query += ` AND (action LIKE ? OR user LIKE ? OR details LIKE ?)`;
+    const searchPattern = `%${search}%`;
+    params.push(searchPattern, searchPattern, searchPattern);
+  }
+
+  query += ` ORDER BY timestamp DESC LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
+
+  return db.prepare(query).all(...params).map((row) => {
     let details = null;
     try {
       details = JSON.parse(row.details || "{}");
@@ -331,6 +363,41 @@ export function getAuditLog(contractId, limit = 100, offset = 0) {
     }
     return { ...row, details };
   });
+}
+
+export function countAuditLog(contractId, filters = {}) {
+  const { action, user, startDate, endDate, search } = filters;
+
+  let query = `SELECT COUNT(*) as total FROM audit_log WHERE contractId = ?`;
+  const params = [contractId];
+
+  if (action) {
+    query += ` AND action = ?`;
+    params.push(action);
+  }
+
+  if (user) {
+    query += ` AND user = ?`;
+    params.push(user);
+  }
+
+  if (startDate) {
+    query += ` AND timestamp >= ?`;
+    params.push(startDate);
+  }
+
+  if (endDate) {
+    query += ` AND timestamp <= ?`;
+    params.push(endDate);
+  }
+
+  if (search) {
+    query += ` AND (action LIKE ? OR user LIKE ? OR details LIKE ?)`;
+    const searchPattern = `%${search}%`;
+    params.push(searchPattern, searchPattern, searchPattern);
+  }
+
+  return db.prepare(query).get(...params).total;
 }
 
 export function addAuditLog(contractId, action, user, details) {

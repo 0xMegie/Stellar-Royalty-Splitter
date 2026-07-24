@@ -24,6 +24,8 @@ import { Skeleton } from "./components/Skeleton";
 import { CopyButton } from "./components/CopyButton";
 import { api, SESSION_EXPIRED_EVENT } from "./api";
 import { OnboardingWalkthrough } from "./components/OnboardingWalkthrough";
+import { EarningsForecastCalculator } from "./components/EarningsForecastCalculator";
+
 
 import "./App.css";
 
@@ -288,6 +290,14 @@ export default function App() {
             <p>Please select a contract first</p>
           </div>
         );
+      case "forecast":
+        return contractId ? (
+          <EarningsForecastCalculator contractId={contractId} />
+        ) : (
+          <div className="page-empty">
+            <p>Please select a contract first</p>
+          </div>
+        );
       case "initialize":
         return walletAddress ? (
           <div className="page-section">
@@ -325,7 +335,7 @@ export default function App() {
           </div>
         );
       case "settings":
-        return <Settings contractId={contractId} onClearContract={clearSavedContract} />;
+        return <Settings contractId={contractId} walletAddress={walletAddress} onClearContract={clearSavedContract} />;
       case "secondary":
         return walletAddress && contractId ? (
           <div className="page-section">
