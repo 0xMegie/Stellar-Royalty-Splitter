@@ -24,7 +24,7 @@ import { Skeleton } from "./components/Skeleton";
 import { CopyButton } from "./components/CopyButton";
 import { api, SESSION_EXPIRED_EVENT } from "./api";
 import { OnboardingWalkthrough } from "./components/OnboardingWalkthrough";
-import { api } from "./api";
+import { EarningsForecastCalculator } from "./components/EarningsForecastCalculator";
 
 
 import "./App.css";
@@ -285,6 +285,14 @@ export default function App() {
       case "transactions":
         return contractId ? (
           <TransactionHistory contractId={contractId} />
+        ) : (
+          <div className="page-empty">
+            <p>Please select a contract first</p>
+          </div>
+        );
+      case "forecast":
+        return contractId ? (
+          <EarningsForecastCalculator contractId={contractId} />
         ) : (
           <div className="page-empty">
             <p>Please select a contract first</p>
