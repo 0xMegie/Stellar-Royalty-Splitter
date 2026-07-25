@@ -60,6 +60,23 @@ export {
   updateArchivePolicy,
 } from "./archive.js";
 
+// Email digest (#569)
+export {
+  subscribeEmailDigest,
+  getSubscriberByToken,
+  getSubscriberByWallet,
+  unsubscribeByEmailDigest,
+  unsubscribeByWallet,
+  updateSubscriberPreferences,
+  getAllEnabledSubscribers,
+  getSubscribersDueForDigest,
+  wasDigestSentThisWeek,
+  logDigestSent,
+  logDigestFailed,
+  getDigestHistory,
+  getEarningsForWeek,
+} from "./email-digest.js";
+
 // Default export for backwards compatibility
 import { db } from "./core.js";
 export default db;

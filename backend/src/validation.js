@@ -64,6 +64,22 @@ export const distributeSecondarySchema = z.object({
   tokenId: contractAddress,
 });
 
+export const emailDigestSubscribeSchema = z.object({
+  walletAddress: stellarAddress,
+  email: z.string().email("Invalid email address"),
+  timezone: z.string().min(1).max(50).optional().default("UTC"),
+  dayOfWeek: z.number().int().min(0).max(6).optional().default(0),
+  hourOfDay: z.number().int().min(0).max(23).optional().default(9),
+});
+
+export const emailDigestPreferencesSchema = z.object({
+  walletAddress: stellarAddress,
+  email: z.string().email("Invalid email address").optional(),
+  timezone: z.string().min(1).max(50).optional(),
+  dayOfWeek: z.number().int().min(0).max(6).optional(),
+  hourOfDay: z.number().int().min(0).max(23).optional(),
+});
+
 export const webhookRegisterSchema = z.object({
   url: z
     .string()

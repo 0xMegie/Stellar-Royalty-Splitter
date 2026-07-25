@@ -24,6 +24,9 @@ import { metricsRouter } from "./routes/metrics.js";
 import { initializeSigningKey } from "./signing-key.js";
 import { sendError, normalizeErrorCode } from "./error-response.js";
 import { preferencesRouter } from "./routes/preferences.js";
+import emailDigestRouter from "./routes/email-digest.js";
+import { sendWeeklyDigests } from "./jobs/weekly-digest-job.js";
+import { isEmailConfigured } from "./email/email-service.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -125,6 +128,7 @@ app.use("/api/v1", analyticsRouter);
 app.use("/api/v1/contract", contractRouter);
 app.use("/api/v1/health", healthRouter);
 app.use("/api/v1/preferences", preferencesRouter);
+app.use("/api/v1", emailDigestRouter);
 app.use("/metrics", metricsRouter);
 app.use("/api/v1/metrics", metricsRouter);
 
@@ -168,6 +172,26 @@ app.use((err, _req, res, _next) => {
 const PORT = process.env.PORT ?? 3001;
 const server = app.listen(PORT, () => logger.info(`API listening on http://localhost:${PORT}`));
 
+// Start weekly email digest scheduler if email is configured
+let digestInterval = null;
+if (isEmailConfigured()) {
+  const DIGEST_CHECK_INTERVAL_MS = parseInt(process.env.DIGEST_CHECK_INTERVAL_MS ?? "60000", 10);
+  digestInterval = setInterval(async () => {
+    try {
+      const result = await sendWeeklyDigests();
+      if (result.sent > 0 || result.failed > 0) {
+        logger.info("Weekly digest run completed", result);
+      }
+    } catch (error) {
+      logger.error("Weekly digest scheduler error", { error: error.message });
+    }
+  }, DIGEST_CHECK_INTERVAL_MS);
+  digestInterval.unref();
+  logger.info("Weekly email digest scheduler started", { intervalMs: DIGEST_CHECK_INTERVAL_MS });
+} else {
+  logger.info("Email not configured; weekly digest scheduler disabled");
+}
+
 // Prevent hung connections from exhausting the connection pool
 server.keepAliveTimeout = parseInt(process.env.KEEP_ALIVE_TIMEOUT_MS ?? "35000");
 server.headersTimeout = parseInt(process.env.HEADERS_TIMEOUT_MS ?? "40000");
@@ -176,6 +200,12 @@ const handleShutdown = createGracefulShutdownHandler({
   server,
   closeDatabase,
   logger,
+  onShutdown: () => {
+    if (digestInterval) {
+      clearInterval(digestInterval);
+      digestInterval = null;
+    }
+  },
 });
 
 process.once("SIGTERM", () => handleShutdown("SIGTERM"));
