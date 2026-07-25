@@ -339,25 +339,31 @@ export default function App() {
       case "secondary":
         return walletAddress && contractId ? (
           <div className="page-section">
-            <SecondaryRoyaltyConfig
-              contractId={contractId}
-              walletAddress={walletAddress}
-              onSuccess={() => {}}
-              onRateUpdate={setRoyaltyRate}
-              initialRoyaltyRate={royaltyRate}
-            />
-            <RecordSecondarySale
-              contractId={contractId}
-              walletAddress={walletAddress}
-              royaltyRate={royaltyRate}
-              onSuccess={() => {}}
-            />
-            <DistributeSecondaryRoyalties
-              contractId={contractId}
-              walletAddress={walletAddress}
-              onSuccess={() => {}}
-            />
-            <ResaleHistory contractId={contractId} />
+            <div className="secondary-grid">
+              <div className="secondary-grid-col">
+                <SecondaryRoyaltyConfig
+                  contractId={contractId}
+                  walletAddress={walletAddress}
+                  onSuccess={() => {}}
+                  onRateUpdate={setRoyaltyRate}
+                  initialRoyaltyRate={royaltyRate}
+                />
+                <RecordSecondarySale
+                  contractId={contractId}
+                  walletAddress={walletAddress}
+                  royaltyRate={royaltyRate}
+                  onSuccess={() => {}}
+                />
+                <DistributeSecondaryRoyalties
+                  contractId={contractId}
+                  walletAddress={walletAddress}
+                  onSuccess={() => {}}
+                />
+              </div>
+              <div className="secondary-grid-col">
+                <ResaleHistory contractId={contractId} />
+              </div>
+            </div>
           </div>
         ) : (
           <div className="page-empty">
