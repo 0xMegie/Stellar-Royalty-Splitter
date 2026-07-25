@@ -130,8 +130,45 @@ export function initializeDatabase() {
       `,
     },
     {
-      version: 4,
-      sql: `
+      version: 6,
+        sql: `
+          CREATE TABLE IF NOT EXISTS email_digest_subscribers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            walletAddress TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL,
+            timezone TEXT NOT NULL DEFAULT 'UTC',
+            dayOfWeek INTEGER NOT NULL DEFAULT 0,
+            hourOfDay INTEGER NOT NULL DEFAULT 9,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            unsubscribeToken TEXT NOT NULL UNIQUE,
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+
+          CREATE TABLE IF NOT EXISTS email_digest_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subscriberId INTEGER NOT NULL,
+            weekStart TEXT NOT NULL,
+            weekEnd TEXT NOT NULL,
+            sentAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            earningsSummary TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'sent' CHECK(status IN ('sent', 'failed')),
+            FOREIGN KEY(subscriberId) REFERENCES email_digest_subscribers(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_email_digest_subscribers_wallet
+            ON email_digest_subscribers(walletAddress);
+          CREATE INDEX IF NOT EXISTS idx_email_digest_subscribers_enabled
+            ON email_digest_subscribers(enabled);
+          CREATE INDEX IF NOT EXISTS idx_email_digest_log_subscriber
+            ON email_digest_log(subscriberId);
+          CREATE INDEX IF NOT EXISTS idx_email_digest_log_week
+            ON email_digest_log(weekStart, weekEnd);
+        `,
+      },
+      {
+        version: 4,
+        sql: `
         CREATE TABLE IF NOT EXISTS contract_event_archive (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           originalTransactionId INTEGER NOT NULL,
