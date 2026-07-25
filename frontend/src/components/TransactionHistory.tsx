@@ -3,6 +3,7 @@ import { api, TransactionRecord, TransactionDetails } from "../api";
 import "./TransactionHistory.css";
 import { formatNumber } from "../utils/format";
 import { CopyButton } from "./CopyButton";
+import { buildCSV, downloadCSV, filterByDateRange, ExportFilter } from "../utils/csv";
 
 interface TransactionHistoryProps {
   contractId: string;
@@ -18,6 +19,9 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<TransactionDetails | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
+  const [exportFilter, setExportFilter] = useState<ExportFilter>({ startDate: null, endDate: null });
+  const [exporting, setExporting] = useState(false);
+  const [showExportPanel, setShowExportPanel] = useState(false);
   const LIMIT = 10;
 
   const fetchHistory = async () => {
@@ -31,6 +35,27 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
       setError(err instanceof Error ? err.message : "Failed to fetch history");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      // Fetch all transactions (up to 10 000) then filter client-side
+      const result = await api.getTransactionHistory(contractId, 10_000, 0);
+      const all: TransactionRecord[] = result.data ?? [];
+      const filtered = filterByDateRange(all, exportFilter);
+      if (filtered.length === 0) {
+        alert("No transactions found for the selected date range.");
+        return;
+      }
+      const csv = buildCSV(filtered);
+      const datePart = new Date().toISOString().split("T")[0];
+      downloadCSV(csv, `transactions-${contractId.slice(0, 8)}-${datePart}.csv`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -80,10 +105,58 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
     <div className="transaction-history">
       <div className="history-header">
         <h2>Transaction History</h2>
-        <button onClick={fetchHistory} disabled={loading}>
-          {loading ? "Refreshing..." : "Refresh"}
-        </button>
+        <div className="history-header-actions">
+          <button
+            className="export-toggle-btn"
+            onClick={() => setShowExportPanel((v) => !v)}
+            aria-expanded={showExportPanel}
+          >
+            ↓ Export CSV
+          </button>
+          <button onClick={fetchHistory} disabled={loading}>
+            {loading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
       </div>
+
+      {showExportPanel && (
+        <div className="export-panel">
+          <div className="export-filters">
+            <label className="export-label">
+              From
+              <input
+                type="date"
+                className="export-date-input"
+                value={exportFilter.startDate ?? ""}
+                onChange={(e) =>
+                  setExportFilter((f) => ({ ...f, startDate: e.target.value || null }))
+                }
+              />
+            </label>
+            <label className="export-label">
+              To
+              <input
+                type="date"
+                className="export-date-input"
+                value={exportFilter.endDate ?? ""}
+                onChange={(e) =>
+                  setExportFilter((f) => ({ ...f, endDate: e.target.value || null }))
+                }
+              />
+            </label>
+            <button
+              className="export-btn"
+              onClick={handleExport}
+              disabled={exporting}
+            >
+              {exporting ? "Exporting…" : "Download CSV"}
+            </button>
+          </div>
+          <p className="export-hint">
+            Leave dates blank to export all transactions. Amounts are converted from stroops to XLM.
+          </p>
+        </div>
+      )}
 
       {error && <div className="error-message">{error}</div>}
 
