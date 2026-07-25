@@ -167,6 +167,15 @@ export function initializeDatabase() {
         `,
       },
       {
+        version: 7,
+        sql: `
+        ALTER TABLE transactions ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE transactions ADD COLUMN last_retry_time DATETIME;
+        CREATE INDEX IF NOT EXISTS idx_transactions_retry_eligible
+          ON transactions(status, type, retry_count, last_retry_time);
+      `,
+      },
+      {
         version: 4,
         sql: `
         CREATE TABLE IF NOT EXISTS contract_event_archive (
@@ -233,7 +242,9 @@ export function initializeDatabase() {
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
       blockTime DATETIME,
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'confirmed', 'failed')),
-      errorMessage TEXT
+      errorMessage TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      last_retry_time DATETIME
     );
 
     CREATE TABLE IF NOT EXISTS distribution_payouts (
@@ -283,6 +294,8 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_transactions_txHash ON transactions(txHash);
     CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
     CREATE INDEX IF NOT EXISTS idx_transactions_event_time ON transactions(COALESCE(blockTime, timestamp));
+    CREATE INDEX IF NOT EXISTS idx_transactions_retry_eligible
+      ON transactions(status, type, retry_count, last_retry_time);
     CREATE INDEX IF NOT EXISTS idx_secondary_sales_contractId ON secondary_sales(contractId);
     CREATE INDEX IF NOT EXISTS idx_secondary_sales_nftId ON secondary_sales(nftId);
     CREATE INDEX IF NOT EXISTS idx_secondary_sales_timestamp ON secondary_sales(timestamp);
@@ -335,6 +348,18 @@ export function initializeDatabase() {
 
   try {
     db.exec(`ALTER TABLE distribution_payouts ADD COLUMN contractId TEXT NOT NULL DEFAULT ''`);
+  } catch (_) {
+    /* column already exists */
+  }
+
+  try {
+    db.exec(`ALTER TABLE transactions ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
+  } catch (_) {
+    /* column already exists */
+  }
+
+  try {
+    db.exec(`ALTER TABLE transactions ADD COLUMN last_retry_time DATETIME`);
   } catch (_) {
     /* column already exists */
   }

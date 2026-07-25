@@ -23,6 +23,13 @@ export {
   getTransactionHistory,
   getTransactionDetails,
   getTransactionById,
+  getRetryEligibleTransactions,
+  markTransactionRetrying,
+  markTransactionRetryExhausted,
+  getRetryExhaustedTransactions,
+  getTransactionRetryCount,
+  RETRY_BACKOFF_MS,
+  MAX_RETRY_COUNT,
 } from "./transactions.js";
 
 // Webhooks (#295)
