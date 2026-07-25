@@ -1,10 +1,7 @@
-// dotenv is optional - load .env file if needed
-// import "dotenv/config";
-
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import logger from "./logger.js";
 import { resolveCorsOrigin } from "./cors-config.js";
 import { initializeRouter } from "./routes/initialize.js";
@@ -69,13 +66,29 @@ app.use(
   })
 );
 
-// General rate limiter: 100 req / 15 min per IP (skips /api/health)
+// Public rate limiter: 100 req / 1 min per IP (skips /api/health)
+// Authenticated rate limiter: 1000 req / 1 min per API key
 const generalLimiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "900000"),
-  max: parseInt(process.env.RATE_LIMIT_MAX ?? "100"),
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "60000"),
+  max: (req) => {
+    if (req.headers["x-api-key"]) {
+      return parseInt(process.env.RATE_LIMIT_AUTH_MAX ?? "1000");
+    }
+    return parseInt(process.env.RATE_LIMIT_MAX ?? "100");
+  },
+  keyGenerator: (req) => req.headers["x-api-key"] || ipKeyGenerator(req.ip),
   standardHeaders: true,
   legacyHeaders: false,
-  handler: (_req, res) => sendError(res, 429, "too_many_requests", "Too many requests, please try again later."),
+  handler: (req, res) => {
+    logger.warn("Rate limit exceeded", {
+      ip: req.ip,
+      path: req.originalUrl,
+      method: req.method,
+      apiKey: req.headers["x-api-key"] ? "present" : "none",
+    });
+    res.set("Retry-After", "60");
+    sendError(res, 429, "too_many_requests", "Too many requests, please try again later.");
+  },
   skip: (req) => req.path === "/api/v1/health" || req.path === "/api/health",
 });
 
@@ -85,7 +98,15 @@ const writeLimiter = rateLimit({
   max: parseInt(process.env.RATE_LIMIT_WRITE_MAX ?? "10"),
   standardHeaders: true,
   legacyHeaders: false,
-  handler: (_req, res) => sendError(res, 429, "too_many_requests", "Too many write requests, please slow down."),
+  handler: (req, res) => {
+    logger.warn("Write rate limit exceeded", {
+      ip: req.ip,
+      path: req.originalUrl,
+      method: req.method,
+    });
+    res.set("Retry-After", "60");
+    sendError(res, 429, "too_many_requests", "Too many write requests, please slow down.");
+  },
 });
 
 app.use(generalLimiter);
@@ -139,7 +160,15 @@ const adminLimiter = rateLimit({
   max: parseInt(process.env.RATE_LIMIT_ADMIN_MAX ?? "5"),
   standardHeaders: true,
   legacyHeaders: false,
-  handler: (_req, res) => sendError(res, 429, "too_many_requests", "Too many admin requests, please slow down."),
+  handler: (req, res) => {
+    logger.warn("Admin rate limit exceeded", {
+      ip: req.ip,
+      path: req.originalUrl,
+      method: req.method,
+    });
+    res.set("Retry-After", "60");
+    sendError(res, 429, "too_many_requests", "Too many admin requests, please slow down.");
+  },
 });
 app.use("/admin", adminLimiter);
 app.use("/admin", adminRouter);
