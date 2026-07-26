@@ -361,4 +361,109 @@ export const api = {
     }>("/preferences/payment", { walletAddress, paymentMethod }).then(
       (res) => res.data,
     ),
+
+  // #597: CSV Bulk Import
+  downloadCsvTemplate: () => {
+    window.open(`${BASE}/csv-import/template`, "_blank");
+  },
+
+  validateCsv: (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return post<{ success: boolean; data: { valid: Array<{ rowIndex: number; address: string; share: number }>; errors: Array<{ rowIndex: number; address: string; share: string; error: string }> } }>("/csv-import/validate", formData as unknown as Record<string, unknown>);
+  },
+
+  previewCsv: (file: File, contractId?: string) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (contractId) formData.append("contractId", contractId);
+    return post<{ success: boolean; data: { importId: string | null; fileName: string; totalRows: number; validRows: Array<{ rowIndex: number; address: string; share: number }>; errorRows: Array<{ rowIndex: number; address: string; share: string; error: string }>; summary: { total: number; valid: number; errors: number } } }>("/csv-import/preview", formData as unknown as Record<string, unknown>);
+  },
+
+  importCsv: (file: File, contractId: string, importedBy?: string) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("contractId", contractId);
+    if (importedBy) formData.append("importedBy", importedBy);
+    return post<{ success: boolean; data: { importId: number; fileName: string; summary: { total: number; successCount: number; errorCount: number } } }>("/csv-import/import", formData as unknown as Record<string, unknown>);
+  },
+
+  getCsvImportHistory: (contractId: string) =>
+    get<{ success: boolean; data: Array<{ id: number; contractId: string; fileName: string; rowCount: number; importedBy: string; status: string; error_message: string | null; created_at: string; completed_at: string | null }> }>(`/csv-import/history/${contractId}`),
+
+  getCsvImportResults: (importId: number) =>
+    get<{ success: boolean; data: { import: Record<string, unknown>; results: Array<{ id: number; rowIndex: number; address: string; share: number; status: string; errorMessage: string | null }>; summary: { total: number; successCount: number; errorCount: number } } }>(`/csv-import/results/${importId}`),
+
+  // #595: Contributor Tax Information
+  getContributorTax: (walletAddress: string) =>
+    get<{ success: boolean; data: { id: number; walletAddress: string; tax_status: string | null; tax_id: string | null; w9_file_name: string | null; created_at: string; updated_at: string } | null }>(`/contributor-tax/${walletAddress}`),
+
+  saveContributorTax: (walletAddress: string, tax_status: string, tax_id?: string) =>
+    post<{ success: boolean; data: Record<string, unknown> }>("/contributor-tax", { walletAddress, tax_status, tax_id }),
+
+  uploadTaxDocument: (walletAddress: string, file: File) => {
+    const formData = new FormData();
+    formData.append("taxDocument", file);
+    return post<{ success: boolean; data: Record<string, unknown>; file: { name: string; size: number } }>(`/contributor-tax/upload/${walletAddress}`, formData as unknown as Record<string, unknown>);
+  },
+
+  getTaxDocument: (walletAddress: string) => {
+    window.open(`${BASE}/contributor-tax/document/${walletAddress}`, "_blank");
+  },
+
+  getTaxComplianceReport: () =>
+    get<{ success: boolean; data: Array<Record<string, unknown>>; summary: { total: number; compliant: number; nonCompliant: number; missing: number } }>("/contributor-tax/report/compliance"),
+
+  getContributorsMissingTaxInfo: () =>
+    get<{ success: boolean; data: Array<Record<string, unknown>>; count: number }>("/contributor-tax/report/missing"),
+
+  // #594: Real-Time Notifications
+  getNotifications: (walletAddress: string, limit = 50, offset = 0) =>
+    get<{ success: boolean; data: Array<{ id: number; walletAddress: string; type: string; title: string; message: string | null; data: string | null; read: number; created_at: string }>; unreadCount: number }>(`/notifications/${walletAddress}?limit=${limit}&offset=${offset}`),
+
+  getUnreadNotificationCount: (walletAddress: string) =>
+    get<{ success: boolean; count: number }>(`/notifications/${walletAddress}/unread-count`),
+
+  markNotificationRead: (id: number) =>
+    post<{ success: boolean }>(`/notifications/${id}/read`, {}),
+
+  markAllNotificationsRead: (walletAddress: string) =>
+    post<{ success: boolean }>(`/notifications/read-all/${walletAddress}`, {}),
+
+  deleteNotification: (id: number) =>
+    request<{ success: boolean }>(`/notifications/${id}`, { method: "DELETE" }),
+
+  sendNotification: (walletAddress: string, type: string, title: string, message?: string, data?: Record<string, unknown>) =>
+    post<{ success: boolean; data: Record<string, unknown> }>("/notifications/send", { walletAddress, type, title, message, data }),
+
+  getNotificationPreferences: (walletAddress: string) =>
+    get<{ success: boolean; data: { walletAddress: string; email_enabled: number; in_app_enabled: number; sms_enabled: number; notify_distribution: number; notify_payment: number; notify_failure: number; notify_hold: number } }>(`/notifications/preferences/${walletAddress}`),
+
+  saveNotificationPreferences: (prefs: { walletAddress: string; email_enabled?: boolean; in_app_enabled?: boolean; sms_enabled?: boolean; notify_distribution?: boolean; notify_payment?: boolean; notify_failure?: boolean; notify_hold?: boolean }) =>
+    post<{ success: boolean; data: Record<string, unknown> }>("/notifications/preferences", prefs),
+
+  // #596: Payment Hold/Release
+  placePaymentHold: (transactionId: number, holdReason: string, holdUntil?: string, placedBy?: string) =>
+    post<{ success: boolean; data: Record<string, unknown> }>("/payment-holds/place", { transactionId, holdReason, holdUntil, placedBy }),
+
+  releasePaymentHold: (transactionId: number, releasedBy?: string, approvalNote?: string) =>
+    post<{ success: boolean; data: Record<string, unknown> }>("/payment-holds/release", { transactionId, releasedBy, approvalNote }),
+
+  approveHoldRelease: (transactionId: number, approvedBy?: string, approvalNote?: string) =>
+    post<{ success: boolean; data: Record<string, unknown> }>("/payment-holds/approve-release", { transactionId, approvedBy, approvalNote }),
+
+  getTransactionWithHold: (transactionId: number) =>
+    get<{ success: boolean; data: Record<string, unknown> }>(`/payment-holds/transaction/${transactionId}`),
+
+  getHeldTransactions: (contractId: string, status = "active") =>
+    get<{ success: boolean; data: Array<Record<string, unknown>>; count: number }>(`/payment-holds/contract/${contractId}?status=${status}`),
+
+  getAllHeldTransactions: (status = "active") =>
+    get<{ success: boolean; data: Array<Record<string, unknown>>; count: number }>(`/payment-holds/all?status=${status}`),
+
+  getPendingHoldReleases: () =>
+    get<{ success: boolean; data: Array<Record<string, unknown>>; count: number }>("/payment-holds/pending-release"),
+
+  getHoldAuditTrail: (transactionId: number) =>
+    get<{ success: boolean; data: Array<{ id: number; transactionId: number; action: string; reason: string | null; performedBy: string | null; details: string | null; created_at: string }> }>(`/payment-holds/audit/${transactionId}`),
 };
