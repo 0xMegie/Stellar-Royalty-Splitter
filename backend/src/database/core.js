@@ -176,6 +176,87 @@ export function initializeDatabase() {
       `,
       },
       {
+        version: 8,
+        sql: `
+          CREATE TABLE IF NOT EXISTS disputes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticketId TEXT NOT NULL UNIQUE,
+            walletAddress TEXT NOT NULL,
+            contractId TEXT,
+            category TEXT NOT NULL CHECK(category IN ('wrong_amount', 'missing_payment', 'other')),
+            description TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'under_review', 'resolved', 'closed')),
+            adminNote TEXT,
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+
+          CREATE TABLE IF NOT EXISTS dispute_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            disputeId INTEGER NOT NULL,
+            author TEXT NOT NULL CHECK(author IN ('contributor', 'admin')),
+            message TEXT NOT NULL,
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(disputeId) REFERENCES disputes(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_disputes_walletAddress ON disputes(walletAddress);
+          CREATE INDEX IF NOT EXISTS idx_disputes_status ON disputes(status);
+          CREATE INDEX IF NOT EXISTS idx_disputes_contractId ON disputes(contractId);
+          CREATE INDEX IF NOT EXISTS idx_dispute_comments_disputeId ON dispute_comments(disputeId);
+        `,
+      },
+      {
+        // #603: contributor referral tracking
+        version: 9,
+        sql: `
+          CREATE TABLE IF NOT EXISTS referrals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrerAddress TEXT NOT NULL,
+            referredAddress TEXT NOT NULL UNIQUE,
+            referralCode TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'pending'
+              CHECK(status IN ('pending', 'active', 'bonus_paid')),
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            activatedAt DATETIME
+          );
+
+          CREATE TABLE IF NOT EXISTS referral_bonuses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referralId INTEGER NOT NULL,
+            referrerAddress TEXT NOT NULL,
+            bonusAmountStroops INTEGER NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL,
+            awardedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(referralId) REFERENCES referrals(id) ON DELETE CASCADE
+          );
+
+          CREATE TABLE IF NOT EXISTS referral_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            walletAddress TEXT NOT NULL UNIQUE,
+            referralCode TEXT NOT NULL UNIQUE,
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_referrals_referrerAddress
+            ON referrals(referrerAddress);
+          CREATE INDEX IF NOT EXISTS idx_referrals_referredAddress
+            ON referrals(referredAddress);
+          CREATE INDEX IF NOT EXISTS idx_referrals_referralCode
+            ON referrals(referralCode);
+          CREATE INDEX IF NOT EXISTS idx_referrals_status
+            ON referrals(status);
+          CREATE INDEX IF NOT EXISTS idx_referral_bonuses_referralId
+            ON referral_bonuses(referralId);
+          CREATE INDEX IF NOT EXISTS idx_referral_bonuses_referrerAddress
+            ON referral_bonuses(referrerAddress);
+          CREATE INDEX IF NOT EXISTS idx_referral_links_walletAddress
+            ON referral_links(walletAddress);
+          CREATE INDEX IF NOT EXISTS idx_referral_links_referralCode
+            ON referral_links(referralCode);
+        `,
+      },
+      {
         version: 4,
         sql: `
         CREATE TABLE IF NOT EXISTS contract_event_archive (
