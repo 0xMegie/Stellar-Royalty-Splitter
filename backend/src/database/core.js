@@ -176,6 +176,15 @@ export function initializeDatabase() {
       `,
       },
       {
+        version: 8,
+        sql: `
+        ALTER TABLE webhooks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE webhooks ADD COLUMN next_retry_time DATETIME;
+        ALTER TABLE webhooks ADD COLUMN payload TEXT;
+        CREATE INDEX IF NOT EXISTS idx_webhooks_retry ON webhooks(next_retry_time, enabled);
+      `,
+      },
+      {
         version: 4,
         sql: `
         CREATE TABLE IF NOT EXISTS contract_event_archive (

@@ -25,6 +25,7 @@ import emailDigestRouter from "./routes/email-digest.js";
 import { sendWeeklyDigests } from "./jobs/weekly-digest-job.js";
 import { isEmailConfigured } from "./email/email-service.js";
 import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
+import { startWebhookRetryScheduler } from "./jobs/retry-failed-webhooks.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -205,6 +206,9 @@ const server = app.listen(PORT, () => logger.info(`API listening on http://local
 // Start the failed-distribution retry scheduler
 const retryScheduler = startRetryScheduler();
 
+// Start the webhook retry scheduler
+const webhookRetryScheduler = startWebhookRetryScheduler();
+
 // Start weekly email digest scheduler if email is configured
 let digestInterval = null;
 if (isEmailConfigured()) {
@@ -240,6 +244,9 @@ const handleShutdown = createGracefulShutdownHandler({
     }
     if (retryScheduler) {
       retryScheduler.stop();
+    }
+    if (webhookRetryScheduler) {
+      webhookRetryScheduler.stop();
     }
   },
 });
