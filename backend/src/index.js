@@ -23,6 +23,7 @@ import { sendError, normalizeErrorCode } from "./error-response.js";
 import { preferencesRouter } from "./routes/preferences.js";
 import emailDigestRouter from "./routes/email-digest.js";
 import { disputesRouter } from "./routes/disputes.js";
+import { referralsRouter } from "./routes/referrals.js";
 import { sendWeeklyDigests } from "./jobs/weekly-digest-job.js";
 import { isEmailConfigured } from "./email/email-service.js";
 import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
@@ -154,6 +155,8 @@ app.use("/api/v1/preferences", preferencesRouter);
 app.use("/api/v1", emailDigestRouter);
 app.use("/api/v1/disputes", writeLimiter);
 app.use("/api/v1/disputes", disputesRouter);
+app.use("/api/v1/referrals", writeLimiter);
+app.use("/api/v1/referrals", referralsRouter);
 app.use("/metrics", metricsRouter);
 app.use("/api/v1/metrics", metricsRouter);
 
