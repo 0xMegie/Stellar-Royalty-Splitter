@@ -25,6 +25,9 @@ import emailDigestRouter from "./routes/email-digest.js";
 import { sendWeeklyDigests } from "./jobs/weekly-digest-job.js";
 import { isEmailConfigured } from "./email/email-service.js";
 import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
+import { rankingRouter } from "./routes/ranking.js";
+import { docsRouter } from "./routes/docs.js";
+import { attachRole } from "./middleware/rbac.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -112,6 +115,9 @@ const writeLimiter = rateLimit({
 app.use(generalLimiter);
 app.use(express.json({ limit: "10kb" }));
 
+// Attach RBAC role to every request (#572)
+app.use(attachRole);
+
 // Enforce Content-Type: application/json on POST requests
 app.use((req, res, next) => {
   if (req.method === "POST" && !req.is("application/json")) {
@@ -153,6 +159,12 @@ app.use("/api/v1/preferences", preferencesRouter);
 app.use("/api/v1", emailDigestRouter);
 app.use("/metrics", metricsRouter);
 app.use("/api/v1/metrics", metricsRouter);
+
+// Contributor performance rankings (#586)
+app.use("/api/v1/ranking", rankingRouter);
+
+// API documentation (#587)
+app.use("/api/docs", docsRouter);
 
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
 const adminLimiter = rateLimit({

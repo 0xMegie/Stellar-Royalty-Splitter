@@ -176,6 +176,32 @@ export function initializeDatabase() {
       `,
       },
       {
+        // #572: Role-Based Access Control — users and API key tables
+        version: 8,
+        sql: `
+          CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            walletAddress TEXT UNIQUE,
+            role TEXT NOT NULL DEFAULT 'collaborator'
+              CHECK(role IN ('viewer', 'collaborator', 'operator', 'admin')),
+            active INTEGER NOT NULL DEFAULT 1,
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+
+          CREATE TABLE IF NOT EXISTS api_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            keyHash TEXT NOT NULL UNIQUE,
+            userId INTEGER NOT NULL,
+            expiresAt DATETIME,
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_api_keys_keyHash ON api_keys(keyHash);
+          CREATE INDEX IF NOT EXISTS idx_users_walletAddress ON users(walletAddress);
+        `,
+      },
+      {
         version: 4,
         sql: `
         CREATE TABLE IF NOT EXISTS contract_event_archive (
