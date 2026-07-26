@@ -25,6 +25,9 @@ import { CopyButton } from "./components/CopyButton";
 import { api, SESSION_EXPIRED_EVENT } from "./api";
 import { OnboardingWalkthrough } from "./components/OnboardingWalkthrough";
 import { EarningsForecastCalculator } from "./components/EarningsForecastCalculator";
+import { SystemHealthDashboard } from "./components/SystemHealthDashboard";
+import { MultiContractEarnings } from "./components/MultiContractEarnings";
+import { ContributorSuspension } from "./components/ContributorSuspension";
 
 
 import "./App.css";
@@ -329,6 +332,24 @@ export default function App() {
       case "admin":
         return contractId ? (
           <AdminDashboard contractId={contractId} />
+        ) : (
+          <div className="page-empty">
+            <p>Please select a contract first</p>
+          </div>
+        );
+      case "health":
+        return <SystemHealthDashboard />;
+      case "earnings":
+        return walletAddress ? (
+          <MultiContractEarnings walletAddress={walletAddress} />
+        ) : (
+          <div className="page-empty">
+            <p>Please connect your wallet to view your earnings.</p>
+          </div>
+        );
+      case "suspension":
+        return contractId ? (
+          <ContributorSuspension contractId={contractId} walletAddress={walletAddress} />
         ) : (
           <div className="page-empty">
             <p>Please select a contract first</p>

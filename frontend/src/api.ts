@@ -342,6 +342,139 @@ export const api = {
       `/analytics/${contractId}${dateRange ? `?start=${dateRange.start}&end=${dateRange.end}` : ""}`,
     ),
 
+  // Transaction volume report (#590)
+  getTransactionVolume: (
+    contractId: string,
+    opts?: { start?: string; end?: string; bucket?: "day" | "week" | "month" },
+  ) => {
+    const params = new URLSearchParams();
+    if (opts?.start) params.set("start", opts.start);
+    if (opts?.end) params.set("end", opts.end);
+    if (opts?.bucket) params.set("bucket", opts.bucket);
+    const qs = params.toString();
+    return get<{
+      success: boolean;
+      data: {
+        contractId: string;
+        bucket: string;
+        period: { start: string; end: string };
+        successRate: number | null;
+        statusBreakdown: { confirmed: number; failed: number; pending: number; total: number };
+        buckets: Array<{ period: string; transactions: number; volume: number }>;
+      };
+    }>(`/analytics/${contractId}/volume${qs ? `?${qs}` : ""}`);
+  },
+
+  // Multi-contract earnings aggregation (#568)
+  getMultiContractEarnings: (
+    address: string,
+    opts?: { start?: string; end?: string },
+  ) => {
+    const params = new URLSearchParams({ address });
+    if (opts?.start) params.set("start", opts.start);
+    if (opts?.end) params.set("end", opts.end);
+    return get<{
+      success: boolean;
+      data: {
+        address: string;
+        period: { start: string | null; end: string };
+        summary: {
+          totalEarned: number;
+          totalPayouts: number;
+          contractCount: number;
+          avgPerContract: number;
+        };
+        contracts: Array<{
+          contractId: string;
+          totalEarned: number;
+          payoutCount: number;
+          avgPayout: number;
+          lastActivity: string;
+          share: number;
+        }>;
+      };
+    }>(`/analytics/multi-contract?${params.toString()}`);
+  },
+
+  // System health (#592)
+  getHealth: () =>
+    get<{
+      ok: boolean;
+      dbVersion: number;
+      network: string;
+      generatedAt: string;
+      horizon: { connected: boolean; url: string };
+      contract: {
+        configured: boolean;
+        deployed: boolean;
+        initialized: boolean;
+        status: string;
+        contractId: string | null;
+      };
+      dbMetrics?: {
+        transactions: {
+          total: number;
+          confirmed: number;
+          failed: number;
+          pending: number;
+          lastActivity: string | null;
+        };
+      };
+    }>(`/health`),
+
+  // Contributor suspension/deactivation (#593)
+  getContributorStatuses: (contractId: string, includeActive = false) =>
+    get<{
+      success: boolean;
+      data: Array<{
+        contractId: string;
+        address: string;
+        status: "active" | "suspended" | "deactivated";
+        reason: string | null;
+        suspendedAt: string | null;
+        deactivatedAt: string | null;
+        updatedBy: string | null;
+        updatedAt: string;
+      }>;
+    }>(`/contributor-status/${contractId}${includeActive ? "?includeActive=true" : ""}`),
+
+  getContributorStatus: (contractId: string, address: string) =>
+    get<{
+      success: boolean;
+      data: {
+        contractId: string;
+        address: string;
+        status: "active" | "suspended" | "deactivated";
+        reason: string | null;
+        suspendedAt: string | null;
+        deactivatedAt: string | null;
+        updatedBy: string | null;
+      };
+    }>(`/contributor-status/${contractId}/${address}`),
+
+  setContributorStatus: (
+    contractId: string,
+    address: string,
+    body: {
+      status: "active" | "suspended" | "deactivated";
+      reason?: string;
+      updatedBy?: string;
+    },
+  ) =>
+    post<{
+      success: boolean;
+      data: {
+        contractId: string;
+        address: string;
+        status: "active" | "suspended" | "deactivated";
+        reason: string | null;
+        suspendedAt: string | null;
+        deactivatedAt: string | null;
+        updatedBy: string | null;
+        updatedAt: string;
+      };
+    }>(`/contributor-status/${contractId}/${address}`, body),
+
   // Payment Preferences (#584)
   getPaymentPreference: (walletAddress: string) =>
     get<{

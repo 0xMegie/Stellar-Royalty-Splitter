@@ -28,6 +28,7 @@ import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
 import { rankingRouter } from "./routes/ranking.js";
 import { docsRouter } from "./routes/docs.js";
 import { attachRole } from "./middleware/rbac.js";
+import { contributorStatusRouter } from "./routes/contributor-status.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -165,6 +166,9 @@ app.use("/api/v1/ranking", rankingRouter);
 
 // API documentation (#587)
 app.use("/api/docs", docsRouter);
+
+// Contributor suspension/deactivation (#593)
+app.use("/api/v1/contributor-status", contributorStatusRouter);
 
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
 const adminLimiter = rateLimit({

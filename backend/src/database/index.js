@@ -84,6 +84,14 @@ export {
   getEarningsForWeek,
 } from "./email-digest.js";
 
+// Contributor suspension/deactivation (#593)
+export {
+  getContributorStatus,
+  listContributorStatuses,
+  setContributorStatus,
+  isContributorBlocked,
+} from "./contributor-status.js";
+
 // Default export for backwards compatibility
 import { db } from "./core.js";
 export default db;
