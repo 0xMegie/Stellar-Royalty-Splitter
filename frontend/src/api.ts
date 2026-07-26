@@ -361,4 +361,37 @@ export const api = {
     }>("/preferences/payment", { walletAddress, paymentMethod }).then(
       (res) => res.data,
     ),
+
+  // Contributor Tiers (#589)
+  getContractTiers: (contractId: string) =>
+    get<{
+      success: boolean;
+      data: Array<{ walletAddress: string; tier: string; notes: string | null; updatedAt: string }>;
+      validTiers: string[];
+    }>(`/tiers/${contractId}`),
+
+  getContributorTier: (contractId: string, address: string) =>
+    get<{
+      success: boolean;
+      data: { walletAddress: string; tier: string; notes: string | null; updatedAt: string | null };
+    }>(`/tiers/${contractId}/${address}`),
+
+  setContributorTier: (
+    contractId: string,
+    address: string,
+    tier: "vip" | "regular" | "trial",
+    notes?: string | null,
+    apiKey?: string,
+  ) =>
+    request<{ success: boolean; message: string }>(
+      `/tiers/${contractId}/${address}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(apiKey ? { "x-api-key": apiKey } : {}),
+        },
+        body: JSON.stringify({ tier, notes }),
+      },
+    ),
 };

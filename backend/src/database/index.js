@@ -84,6 +84,15 @@ export {
   getEarningsForWeek,
 } from "./email-digest.js";
 
+// Contributor tiers (#589)
+export {
+  getContributorTier,
+  getContractTiers,
+  setContributorTier,
+  removeContributorTier,
+  VALID_TIERS,
+} from "./tiers.js";
+
 // Default export for backwards compatibility
 import { db } from "./core.js";
 export default db;

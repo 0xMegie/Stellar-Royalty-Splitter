@@ -202,6 +202,27 @@ export function initializeDatabase() {
         `,
       },
       {
+        // #589: Contributor Tier System — tier table keyed by wallet address
+        version: 9,
+        sql: `
+          CREATE TABLE IF NOT EXISTS contributor_tiers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contractId TEXT NOT NULL,
+            walletAddress TEXT NOT NULL,
+            tier TEXT NOT NULL DEFAULT 'regular'
+              CHECK(tier IN ('vip', 'regular', 'trial')),
+            notes TEXT,
+            updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(contractId, walletAddress)
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_contributor_tiers_contract
+            ON contributor_tiers(contractId);
+          CREATE INDEX IF NOT EXISTS idx_contributor_tiers_address
+            ON contributor_tiers(walletAddress);
+        `,
+      },
+      {
         version: 4,
         sql: `
         CREATE TABLE IF NOT EXISTS contract_event_archive (

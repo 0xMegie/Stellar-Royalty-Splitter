@@ -3,14 +3,17 @@ import { api, TransactionRecord } from "../api";
 import { QRCodeSVG } from "qrcode.react";
 import { CopyButton } from "./CopyButton";
 import { Skeleton } from "./Skeleton";
+import { KeyRotationPanel } from "./KeyRotationPanel";
 import "./AdminDashboard.css";
 
 interface AdminDashboardProps {
   contractId: string;
+  adminToken?: string;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   contractId,
+  adminToken = "",
 }) => {
   const [showModal, setShowModal] = useState(false);
   const [showQRModal, setShowQRModal] = useState(false);
@@ -174,6 +177,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Key Rotation Panel (#588) */}
+      {adminToken && <KeyRotationPanel adminToken={adminToken} />}
 
       {/* Initialize History */}
       <div className="history-section">

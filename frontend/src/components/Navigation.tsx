@@ -24,6 +24,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: "📊" },
     { id: "transactions", label: "Transactions", icon: "📋" },
+    { id: "timeline", label: "Timeline", icon: "🕐" },
     { id: "forecast", label: "Forecast", icon: "📈" },
     { id: "admin", label: "Admin", icon: "👑" },
     { id: "initialize", label: "Initialize", icon: "⚙️" },

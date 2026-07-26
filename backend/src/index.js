@@ -28,6 +28,7 @@ import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
 import { rankingRouter } from "./routes/ranking.js";
 import { docsRouter } from "./routes/docs.js";
 import { attachRole } from "./middleware/rbac.js";
+import { tiersRouter } from "./routes/tiers.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -162,6 +163,9 @@ app.use("/api/v1/metrics", metricsRouter);
 
 // Contributor performance rankings (#586)
 app.use("/api/v1/ranking", rankingRouter);
+
+// Contributor tiers (#589)
+app.use("/api/v1/tiers", tiersRouter);
 
 // API documentation (#587)
 app.use("/api/docs", docsRouter);
