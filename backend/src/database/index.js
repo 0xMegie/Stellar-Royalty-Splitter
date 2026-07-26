@@ -67,6 +67,52 @@ export {
   updateArchivePolicy,
 } from "./archive.js";
 
+// CSV bulk import (#597)
+export {
+  createCsvImport,
+  markImportSuccess,
+  markImportFailed,
+  getCsvImport,
+  getCsvImportsByContract,
+  addImportResult,
+  getImportResults,
+  getImportSummary,
+} from "./csv-import.js";
+
+// Contributor tax information (#595)
+export {
+  getContributorTax,
+  upsertContributorTax,
+  getTaxComplianceReport,
+  getContributorsMissingTaxInfo,
+  getAllWalletAddresses,
+} from "./contributor-tax.js";
+
+// Real-time notifications (#594)
+export {
+  createNotification,
+  getNotifications,
+  getUnreadNotificationCount,
+  markNotificationRead,
+  markAllNotificationsRead,
+  deleteNotification,
+  getNotificationPreference,
+  upsertNotificationPreference,
+  createSystemNotification,
+} from "./notifications.js";
+
+// Payment hold/release system (#596)
+export {
+  placeHold,
+  releaseHold,
+  approveHoldRelease,
+  getTransactionWithHold,
+  getHeldTransactions,
+  getAllHeldTransactions,
+  getHoldAuditTrail,
+  getTransactionsPendingHoldRelease,
+} from "./payment-holds.js";
+
 // Email digest (#569)
 export {
   subscribeEmailDigest,
