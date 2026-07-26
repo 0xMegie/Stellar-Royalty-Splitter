@@ -8,6 +8,7 @@ import {
   reloadSigningKeyFromSecretsFile,
   rotateSigningKey,
 } from "../signing-key.js";
+import { requireAdminBearerOrRole, createUser } from "../middleware/rbac.js";
 
 export const adminRouter = Router();
 
@@ -23,12 +24,10 @@ const rotateKeySchema = z
     message: "Provide secretKey or set reloadFromFile to true",
   });
 
-function extractBearerToken(req) {
-  const header = req.get("Authorization");
-  if (!header?.startsWith("Bearer ")) return null;
-  return header.slice("Bearer ".length).trim();
-}
-
+/**
+ * Legacy bearer-token guard kept for backward compatibility.
+ * New deployments should prefer RBAC API keys (requireAdminBearerOrRole).
+ */
 function requireAdminRotateToken(req, res, next) {
   if (!process.env.ADMIN_ROTATE_TOKEN) {
     logger.warn("Admin rotate-key rejected: ADMIN_ROTATE_TOKEN not configured", {
@@ -38,7 +37,8 @@ function requireAdminRotateToken(req, res, next) {
     return sendError(res, 503, "service_unavailable", "Key rotation is not configured on this server");
   }
 
-  const token = extractBearerToken(req);
+  const header = req.get("Authorization");
+  const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : null;
   if (!isAdminRotateTokenValid(token)) {
     logger.warn("Admin rotate-key rejected: invalid token", {
       event: "signing_key_rotate_denied",
@@ -70,6 +70,32 @@ adminRouter.post(
         rotatedAt: result.rotatedAt,
         source: result.source,
       });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * POST /admin/users
+ * Create a user with a role. Requires admin privilege (bearer token or RBAC).
+ * Body: { walletAddress, role }
+ * Returns: { userId }
+ */
+const createUserSchema = z.object({
+  walletAddress: z.string().regex(/^G[A-Z2-7]{55}$/, "Invalid Stellar address"),
+  role: z.enum(["viewer", "collaborator", "operator", "admin"]),
+});
+
+adminRouter.post(
+  "/users",
+  requireAdminBearerOrRole("admin"),
+  validate(createUserSchema),
+  (req, res, next) => {
+    try {
+      const userId = createUser(req.body.walletAddress, req.body.role);
+      logger.info("Admin: created user", { userId, role: req.body.role });
+      res.status(201).json({ userId });
     } catch (err) {
       next(err);
     }
