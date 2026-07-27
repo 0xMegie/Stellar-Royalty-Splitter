@@ -317,6 +317,14 @@ export default function App() {
             <p>Please select a contract first</p>
           </div>
         );
+      case "timeline":
+        return contractId ? (
+          <ContractTimeline contractId={contractId} />
+        ) : (
+          <div className="page-empty">
+            <p>Please select a contract first</p>
+          </div>
+        );
       case "initialize":
         return walletAddress ? (
           <div className="page-section">
@@ -497,6 +505,16 @@ export default function App() {
 
       <div className="app-content">
         <div className="app-sidebar">
+          <button
+            className="sidebar-toggle-btn"
+            aria-expanded={sidebarOpen}
+            aria-controls="sidebar-cards"
+            onClick={() => setSidebarOpen((v) => !v)}
+          >
+            ⚙️ Wallet & Contract
+            <span className={`sidebar-toggle-chevron ${sidebarOpen ? "open" : ""}`} aria-hidden="true">▼</span>
+          </button>
+          <div id="sidebar-cards" className={`app-sidebar-cards ${sidebarOpen ? "open" : ""}`}>
           <div className="sidebar-card">
             <h3>🔗 Wallet Connection</h3>
             <WalletConnect
@@ -581,6 +599,7 @@ export default function App() {
               </div>
             </div>
           )}
+          </div>
         </div>
 
         <div className="app-main">{renderPage()}</div>
