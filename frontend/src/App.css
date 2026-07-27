@@ -15,7 +15,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--spacing-sm);
-  max-width: min(420px, calc(100vw - 2rem));
+  max-width: 420px;
   padding: 0.85rem 1rem;
   background: var(--error-light);
   color: var(--error-dark);
@@ -49,16 +49,18 @@
 .app-content {
   display: flex;
   flex: 1;
-  max-width: 1600px;
+  max-width: 1200px;
   margin: 0 auto;
   width: 100%;
-  gap: var(--spacing-lg);
-  padding: var(--spacing-lg);
+  box-sizing: border-box;
+  gap: clamp(var(--spacing-sm), 1.5vw, var(--spacing-md));
+  padding: clamp(var(--spacing-xs), 1.5vw, var(--spacing-md));
+  min-width: 0;
 }
 
 /* Sidebar Styles */
 .app-sidebar {
-  width: 320px;
+  width: clamp(240px, 22vw, 320px);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -443,6 +445,37 @@
   .quick-action-btn {
     padding: 0.5rem 0.75rem;
     font-size: 0.85rem;
+  }
+}
+
+/* Secondary Royalties Grid Layout */
+.secondary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(var(--spacing-md), 2vw, var(--spacing-lg));
+  align-items: start;
+}
+
+.secondary-grid-col {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(var(--spacing-md), 2vw, var(--spacing-lg));
+  min-width: 0;
+}
+
+@media (max-width: 1024px) {
+  .secondary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .secondary-grid {
+    gap: var(--spacing-sm);
+  }
+
+  .secondary-grid-col {
+    gap: var(--spacing-sm);
   }
 }
 

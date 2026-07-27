@@ -23,13 +23,20 @@ export {
   getTransactionHistory,
   getTransactionDetails,
   getTransactionById,
+  getRetryEligibleTransactions,
+  markTransactionRetrying,
+  markTransactionRetryExhausted,
+  getRetryExhaustedTransactions,
+  getTransactionRetryCount,
+  RETRY_BACKOFF_MS,
+  MAX_RETRY_COUNT,
 } from "./transactions.js";
 
 // Webhooks (#295)
 export { registerWebhook, listWebhooks, deleteWebhook } from "./webhooks.js";
 
 // Audit logging
-export { getAuditLog, addAuditLog } from "./audit.js";
+export { getAuditLog, addAuditLog, countAuditLog } from "./audit.js";
 
 // Secondary royalties
 export {
@@ -45,6 +52,9 @@ export {
 // Analytics
 export { getAnalyticsData } from "./analytics.js";
 
+// Payment preferences (#584)
+export { getPaymentPreference, savePaymentPreference } from "./payment-preferences.js";
+
 // Contract event archival
 export {
   DEFAULT_ARCHIVE_BATCH_SIZE,
@@ -56,6 +66,69 @@ export {
   getArchivedEvents,
   updateArchivePolicy,
 } from "./archive.js";
+
+// CSV bulk import (#597)
+export {
+  createCsvImport,
+  markImportSuccess,
+  markImportFailed,
+  getCsvImport,
+  getCsvImportsByContract,
+  addImportResult,
+  getImportResults,
+  getImportSummary,
+} from "./csv-import.js";
+
+// Contributor tax information (#595)
+export {
+  getContributorTax,
+  upsertContributorTax,
+  getTaxComplianceReport,
+  getContributorsMissingTaxInfo,
+  getAllWalletAddresses,
+} from "./contributor-tax.js";
+
+// Real-time notifications (#594)
+export {
+  createNotification,
+  getNotifications,
+  getUnreadNotificationCount,
+  markNotificationRead,
+  markAllNotificationsRead,
+  deleteNotification,
+  getNotificationPreference,
+  upsertNotificationPreference,
+  createSystemNotification,
+} from "./notifications.js";
+
+// Payment hold/release system (#596)
+export {
+  placeHold,
+  releaseHold,
+  approveHoldRelease,
+  getTransactionWithHold,
+  getHeldTransactions,
+  getAllHeldTransactions,
+  getHoldAuditTrail,
+  getTransactionsPendingHoldRelease,
+} from "./payment-holds.js";
+
+// Email digest (#569)
+export {
+  subscribeEmailDigest,
+  getSubscriberByToken,
+  getSubscriberByWallet,
+  unsubscribeByEmailDigest,
+  unsubscribeByWallet,
+  updateSubscriberPreferences,
+  getAllEnabledSubscribers,
+  getSubscribersDueForDigest,
+  wasDigestSentThisWeek,
+  logDigestSent,
+  logDigestFailed,
+  getDigestHistory,
+  getEarningsForWeek,
+} from "./email-digest.js";
 
 // Default export for backwards compatibility
 import { db } from "./core.js";
