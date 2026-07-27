@@ -33,7 +33,14 @@ export {
 } from "./transactions.js";
 
 // Webhooks (#295)
-export { registerWebhook, listWebhooks, deleteWebhook } from "./webhooks.js";
+export {
+  registerWebhook,
+  listWebhooks,
+  deleteWebhook,
+  updateWebhookRetryState,
+  getWebhooksDueForRetry,
+  resetWebhookRetryCount,
+} from "./webhooks.js";
 
 // Audit logging
 export { getAuditLog, addAuditLog, countAuditLog } from "./audit.js";

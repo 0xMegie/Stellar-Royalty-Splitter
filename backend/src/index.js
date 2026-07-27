@@ -251,6 +251,9 @@ const wss = initializeWebSocket(server);
 // Start the failed-distribution retry scheduler
 const retryScheduler = startRetryScheduler();
 
+// Start the webhook retry scheduler
+const webhookRetryScheduler = startWebhookRetryScheduler();
+
 // Start weekly email digest scheduler if email is configured
 let digestInterval = null;
 if (isEmailConfigured()) {
@@ -290,6 +293,9 @@ const handleShutdown = createGracefulShutdownHandler({
     }
     if (retryScheduler) {
       retryScheduler.stop();
+    }
+    if (webhookRetryScheduler) {
+      webhookRetryScheduler.stop();
     }
   },
 });
