@@ -24,14 +24,7 @@ import { Skeleton } from "./components/Skeleton";
 import { CopyButton } from "./components/CopyButton";
 import { api, SESSION_EXPIRED_EVENT } from "./api";
 import { OnboardingWalkthrough } from "./components/OnboardingWalkthrough";
-import { EarningsForecastCalculator } from "./components/EarningsForecastCalculator";
-import { BulkContributorUpload } from "./components/BulkContributorUpload";
-import { ContributorTaxInfo } from "./components/ContributorTaxInfo";
-import { TaxComplianceReport } from "./components/TaxComplianceReport";
-import { PaymentHoldManager } from "./components/PaymentHoldManager";
-import { NotificationBadge } from "./components/NotificationBadge";
-import { useWebSocket } from "./hooks/useWebSocket";
-
+import { ContributorOnboardingChecklist } from "./components/ContributorOnboardingChecklist";
 
 import "./App.css";
 
@@ -424,6 +417,13 @@ export default function App() {
               </p>
             </div>
           </div>
+        );
+      case "onboarding":
+        return (
+          <ContributorOnboardingChecklist
+            walletAddress={walletAddress}
+            onConnectWallet={() => handlePageChange("connect-wallet")}
+          />
         );
       default:
         return null;
