@@ -28,6 +28,11 @@ import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
 import { rankingRouter } from "./routes/ranking.js";
 import { docsRouter } from "./routes/docs.js";
 import { attachRole } from "./middleware/rbac.js";
+import { csvImportRouter } from "./routes/csv-import.js";
+import { contributorTaxRouter } from "./routes/contributor-tax.js";
+import { notificationsRouter } from "./routes/notifications.js";
+import { paymentHoldsRouter } from "./routes/payment-holds.js";
+import { initializeWebSocket } from "./websocket.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -166,6 +171,19 @@ app.use("/api/v1/ranking", rankingRouter);
 // API documentation (#587)
 app.use("/api/docs", docsRouter);
 
+// CSV bulk import (#597)
+app.use("/api/v1/csv-import", csvImportRouter);
+
+// Contributor tax information (#595)
+app.use("/api/v1/contributor-tax", contributorTaxRouter);
+
+// Real-time notifications (#594)
+app.use("/api/v1/notifications", notificationsRouter);
+
+// Payment hold/release system (#596)
+app.use("/api/v1/payment-holds", writeLimiter);
+app.use("/api/v1/payment-holds", paymentHoldsRouter);
+
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
 const adminLimiter = rateLimit({
   windowMs: 60_000,
@@ -214,6 +232,9 @@ app.use((err, _req, res, _next) => {
 const PORT = process.env.PORT ?? 3001;
 const server = app.listen(PORT, () => logger.info(`API listening on http://localhost:${PORT}`));
 
+// Initialize WebSocket for real-time notifications (#594)
+const wss = initializeWebSocket(server);
+
 // Start the failed-distribution retry scheduler
 const retryScheduler = startRetryScheduler();
 
@@ -246,6 +267,10 @@ const handleShutdown = createGracefulShutdownHandler({
   closeDatabase,
   logger,
   onShutdown: () => {
+    if (wss) {
+      wss.close();
+      logger.info("WebSocket server closed");
+    }
     if (digestInterval) {
       clearInterval(digestInterval);
       digestInterval = null;
