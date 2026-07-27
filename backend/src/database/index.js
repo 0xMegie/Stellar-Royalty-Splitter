@@ -195,6 +195,15 @@ export {
   countAllReferrals,
 } from "./referrals.js";
 
+// Contributor performance metrics (#600)
+export {
+  getCachedMetrics,
+  getOrComputeMetrics,
+  recomputeMetrics,
+  recomputeContractMetrics,
+  getContractLeaderboard,
+} from "./contributor-metrics.js";
+
 // Default export for backwards compatibility
 import { db } from "./core.js";
 export default db;

@@ -400,6 +400,26 @@ export function initializeDatabase() {
           ON contract_event_archive(contractId, COALESCE(blockTime, timestamp));
       `,
     },
+    {
+      // #600: Contributor performance metrics cache
+      version: 15,
+      sql: `
+        CREATE TABLE IF NOT EXISTS contributor_metrics (
+          walletAddress    TEXT NOT NULL PRIMARY KEY,
+          successRate      REAL NOT NULL DEFAULT 0,
+          avgPayoutTime    REAL,
+          reliabilityScore INTEGER NOT NULL DEFAULT 0,
+          totalPayouts     INTEGER NOT NULL DEFAULT 0,
+          totalEarned      REAL NOT NULL DEFAULT 0,
+          firstPayoutAt    DATETIME,
+          lastPayoutAt     DATETIME,
+          trendJson        TEXT,
+          computedAt       DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_contributor_metrics_reliability
+          ON contributor_metrics(reliabilityScore DESC);
+      `,
+    },
   ];
 
   const applied = db
