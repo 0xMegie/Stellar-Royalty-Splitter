@@ -50,7 +50,12 @@ export {
 } from "./secondary-royalties.js";
 
 // Analytics
-export { getAnalyticsData } from "./analytics.js";
+export {
+  getAnalyticsData,
+  getContributorEarningsHistory,
+  getContributorEarningsEvents,
+  getContributorContracts,
+} from "./analytics.js";
 
 // Payment preferences (#584)
 export { getPaymentPreference, savePaymentPreference } from "./payment-preferences.js";
