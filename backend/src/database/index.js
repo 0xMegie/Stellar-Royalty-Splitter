@@ -97,6 +97,21 @@ export {
   getDisputeComments,
 } from "./disputes.js";
 
+// API key rate-limit usage tracking (#608)
+export {
+  DEFAULT_AUTH_LIMIT_PER_MINUTE,
+  DEFAULT_IP_LIMIT_PER_MINUTE,
+  ALERT_THRESHOLD_FRACTION,
+  HISTORY_RETENTION_MINUTES,
+  recordApiKeyRequest,
+  getApiKeyCurrentUsage,
+  getApiKeyHistory,
+  getAllApiKeysUsage,
+  setApiKeyLimit,
+  registerApiKey,
+  getApproachingLimitAlerts,
+} from "./rate-limit.js";
+
 // Referral tracking (#603)
 export {
   DEFAULT_REFERRAL_BONUS_STROOPS,

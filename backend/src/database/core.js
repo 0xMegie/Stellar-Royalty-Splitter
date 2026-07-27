@@ -296,6 +296,37 @@ export function initializeDatabase() {
           ON contract_event_archive(contractId, COALESCE(blockTime, timestamp));
       `,
     },
+    {
+      // #608: API rate-limit dashboard — per-key usage tracking
+      version: 10,
+      sql: `
+        CREATE TABLE IF NOT EXISTS api_keys (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          key_value TEXT NOT NULL UNIQUE,
+          label TEXT,
+          custom_limit_per_minute INTEGER,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          last_seen_at DATETIME
+        );
+
+        CREATE TABLE IF NOT EXISTS rate_limit_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          key_id INTEGER NOT NULL,
+          bucket_minute TEXT NOT NULL,
+          request_count INTEGER NOT NULL DEFAULT 0,
+          blocked_count INTEGER NOT NULL DEFAULT 0,
+          UNIQUE(key_id, bucket_minute),
+          FOREIGN KEY(key_id) REFERENCES api_keys(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_api_keys_key_value
+          ON api_keys(key_value);
+        CREATE INDEX IF NOT EXISTS idx_rate_limit_events_key_bucket
+          ON rate_limit_events(key_id, bucket_minute);
+        CREATE INDEX IF NOT EXISTS idx_rate_limit_events_bucket
+          ON rate_limit_events(bucket_minute);
+      `,
+    },
   ];
 
   const applied = db

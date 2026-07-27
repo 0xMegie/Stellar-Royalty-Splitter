@@ -27,6 +27,8 @@ import { referralsRouter } from "./routes/referrals.js";
 import { sendWeeklyDigests } from "./jobs/weekly-digest-job.js";
 import { isEmailConfigured } from "./email/email-service.js";
 import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
+import { adminApiKeysRouter } from "./routes/admin-api-keys.js";
+import { recordApiKeyRequest } from "./database/rate-limit.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -63,7 +65,7 @@ logger.info("CORS origin configured", { origin: corsOrigin });
 app.use(
   cors({
     origin: corsOrigin,
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "PATCH"],
     maxAge: Number.isNaN(corsPreflightMaxAge) ? 86400 : corsPreflightMaxAge,
   })
 );
@@ -82,11 +84,15 @@ const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
+    // Record the blocked request before responding
+    const apiKey = req.headers["x-api-key"];
+    if (apiKey) recordApiKeyRequest(apiKey, true);
+
     logger.warn("Rate limit exceeded", {
       ip: req.ip,
       path: req.originalUrl,
       method: req.method,
-      apiKey: req.headers["x-api-key"] ? "present" : "none",
+      apiKey: apiKey ? "present" : "none",
     });
     res.set("Retry-After", "60");
     sendError(res, 429, "too_many_requests", "Too many requests, please try again later.");
@@ -112,6 +118,16 @@ const writeLimiter = rateLimit({
 });
 
 app.use(generalLimiter);
+
+// #608: Track per-API-key request counts for the rate-limit dashboard.
+// Only records authenticated (keyed) requests that were not blocked by the
+// limiter above (blocked requests are recorded in the limiter's handler).
+app.use((req, _res, next) => {
+  const apiKey = req.headers["x-api-key"];
+  if (apiKey) recordApiKeyRequest(apiKey, false);
+  next();
+});
+
 app.use(express.json({ limit: "10kb" }));
 
 // Enforce Content-Type: application/json on POST requests
@@ -178,6 +194,8 @@ const adminLimiter = rateLimit({
 });
 app.use("/admin", adminLimiter);
 app.use("/admin", adminRouter);
+app.use("/admin/api-keys", adminLimiter);
+app.use("/admin/api-keys", adminApiKeysRouter);
 
 // Legacy /api/* redirect to /api/v1/*
 app.use("/api", (req, res) => {
