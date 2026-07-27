@@ -37,6 +37,8 @@ import { notificationsRouter } from "./routes/notifications.js";
 import { paymentHoldsRouter } from "./routes/payment-holds.js";
 import { earningsHistoryRouter } from "./routes/earnings-history.js";
 import { initializeWebSocket } from "./websocket.js";
+import { paymentSchedulesRouter } from "./routes/payment-schedules.js";
+import { startPaymentScheduleJob } from "./jobs/payment-schedule-job.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -200,6 +202,10 @@ app.use("/api/v1/payment-holds", paymentHoldsRouter);
 // Contributor earnings history (#564)
 app.use("/api/v1", earningsHistoryRouter);
 
+// Payment schedule templates (#599)
+app.use("/api/v1/payment-schedules", writeLimiter);
+app.use("/api/v1/payment-schedules", paymentSchedulesRouter);
+
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
 const adminLimiter = rateLimit({
   windowMs: 60_000,
@@ -257,6 +263,9 @@ const retryScheduler = startRetryScheduler();
 // Start the webhook retry scheduler
 const webhookRetryScheduler = startWebhookRetryScheduler();
 
+// Start the payment schedule job
+const paymentScheduleJobHandle = startPaymentScheduleJob();
+
 // Start weekly email digest scheduler if email is configured
 let digestInterval = null;
 if (isEmailConfigured()) {
@@ -299,6 +308,9 @@ const handleShutdown = createGracefulShutdownHandler({
     }
     if (webhookRetryScheduler) {
       webhookRetryScheduler.stop();
+    }
+    if (paymentScheduleJobHandle) {
+      paymentScheduleJobHandle.stop();
     }
   },
 });

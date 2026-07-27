@@ -195,6 +195,22 @@ export {
   countAllReferrals,
 } from "./referrals.js";
 
+// Payment schedule templates (#599)
+export {
+  createPaymentSchedule,
+  getPaymentSchedule,
+  listPaymentSchedules,
+  countPaymentSchedules,
+  updatePaymentSchedule,
+  disablePaymentSchedule,
+  deletePaymentSchedule,
+  getSchedulesDue,
+  markScheduleRan,
+  setNextRunAt,
+  getUpcomingSchedules,
+  SCHEDULE_TYPES,
+} from "./payment-schedules.js";
+
 // Default export for backwards compatibility
 import { db } from "./core.js";
 export default db;

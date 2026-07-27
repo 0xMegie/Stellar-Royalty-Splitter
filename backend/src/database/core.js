@@ -400,6 +400,37 @@ export function initializeDatabase() {
           ON contract_event_archive(contractId, COALESCE(blockTime, timestamp));
       `,
     },
+    {
+      // #599: Payment schedule templates
+      version: 14,
+      sql: `
+        CREATE TABLE IF NOT EXISTS payment_schedules (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          name          TEXT NOT NULL,
+          type          TEXT NOT NULL
+            CHECK(type IN ('monthly', 'biweekly', 'weekly', 'custom')),
+          contractId    TEXT NOT NULL,
+          tokenId       TEXT NOT NULL,
+          walletAddress TEXT NOT NULL,
+          dayOfMonth    INTEGER,
+          dayOfWeek     INTEGER,
+          intervalDays  INTEGER,
+          anchorDate    TEXT,
+          hourOfDay     INTEGER NOT NULL DEFAULT 0,
+          timezone      TEXT NOT NULL DEFAULT 'UTC',
+          enabled       INTEGER NOT NULL DEFAULT 1,
+          lastRunAt     DATETIME,
+          nextRunAt     DATETIME,
+          metadata      TEXT,
+          createdAt     DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updatedAt     DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_payment_schedules_contractId
+          ON payment_schedules(contractId);
+        CREATE INDEX IF NOT EXISTS idx_payment_schedules_nextRunAt
+          ON payment_schedules(enabled, nextRunAt);
+      `,
+    },
   ];
 
   const applied = db
