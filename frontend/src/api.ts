@@ -361,4 +361,107 @@ export const api = {
     }>("/preferences/payment", { walletAddress, paymentMethod }).then(
       (res) => res.data,
     ),
+
+  // Transaction Fee Display (#606)
+  getContractFees: (contractId: string, limit = 50, offset = 0) =>
+    get<{
+      success: boolean;
+      data: Array<{ transactionId: number; feeStroops: string; recordedAt: string }>;
+      pagination: { limit: number; offset: number };
+    }>(`/fees/${contractId}?limit=${limit}&offset=${offset}`),
+
+  getTransactionFee: (transactionId: number) =>
+    get<{
+      success: boolean;
+      data: { transactionId: number; contractId: string; feeStroops: string; recordedAt: string };
+    }>(`/fees/transaction/${transactionId}`),
+
+  recordTransactionFee: (body: {
+    transactionId: number;
+    contractId: string;
+    feeStroops: number | string;
+  }) =>
+    post<{
+      success: boolean;
+      data: { transactionId: number; contractId: string; feeStroops: string; recordedAt: string };
+    }>("/fees/record", body),
+
+  // Notification Preferences (#605)
+  getNotificationPreferences: (walletAddress: string) =>
+    get<{
+      success: boolean;
+      data: {
+        walletAddress: string;
+        email: number;
+        sms: number;
+        inApp: number;
+        push: number;
+        updatedAt: string | null;
+      };
+    }>(`/preferences/notifications?walletAddress=${encodeURIComponent(walletAddress)}`).then(
+      (res) => res.data,
+    ),
+
+  saveNotificationPreferences: (
+    walletAddress: string,
+    channels: { email?: boolean; sms?: boolean; inApp?: boolean; push?: boolean },
+  ) =>
+    post<{
+      success: boolean;
+      data: {
+        walletAddress: string;
+        email: number;
+        sms: number;
+        inApp: number;
+        push: number;
+        updatedAt: string;
+      };
+    }>("/preferences/notifications", { walletAddress, ...channels }).then(
+      (res) => res.data,
+    ),
+
+  // Contract Upgrade Workflow (#604)
+  upgradeContract: (body: {
+    contractId: string;
+    walletAddress: string;
+    wasmHash: string;
+  }) =>
+    post<{ xdr: string; wasmHash: string }>("/contract/upgrade", body),
+
+  getContractVersion: (contractId: string) =>
+    get<{
+      success: boolean;
+      data: { contractId: string; version: string | null };
+    }>(`/contract/version/${contractId}`),
+
+  // Contributor Verification (#602)
+  getVerification: (walletAddress: string) =>
+    get<{
+      success: boolean;
+      data: {
+        walletAddress: string;
+        step: string;
+        status: string;
+        adminNote: string | null;
+        createdAt: string;
+        updatedAt: string;
+      };
+    }>(`/verification/${encodeURIComponent(walletAddress)}`),
+
+  startVerification: (walletAddress: string) =>
+    post<{
+      success: boolean;
+      data: { walletAddress: string; step: string; status: string; createdAt: string; updatedAt: string };
+    }>("/verification/start", { walletAddress }),
+
+  advanceVerification: (body: {
+    walletAddress: string;
+    step: "email" | "kyc" | "manual_review" | "verified" | "rejected";
+    status: "pending" | "in_progress" | "completed" | "failed";
+    adminNote?: string | null;
+  }) =>
+    post<{
+      success: boolean;
+      data: { walletAddress: string; step: string; status: string; adminNote: string | null; updatedAt: string };
+    }>("/verification/advance", body),
 };

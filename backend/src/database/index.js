@@ -55,6 +55,28 @@ export { getAnalyticsData } from "./analytics.js";
 // Payment preferences (#584)
 export { getPaymentPreference, savePaymentPreference } from "./payment-preferences.js";
 
+// Transaction fee display (#606)
+export {
+  recordTransactionFee,
+  getTransactionFee,
+  getFeesByContract,
+} from "./transaction-fees.js";
+
+// Notification preferences (#605)
+export {
+  getNotificationPreferences,
+  saveNotificationPreferences,
+} from "./notification-preferences.js";
+
+// Contributor verification (#602)
+export {
+  getVerification,
+  upsertVerification,
+  getVerificationsByStep,
+  VERIFICATION_STEPS,
+  VERIFICATION_STATUSES,
+} from "./contributor-verification.js";
+
 // Contract event archival
 export {
   DEFAULT_ARCHIVE_BATCH_SIZE,

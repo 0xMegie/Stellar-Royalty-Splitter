@@ -28,6 +28,10 @@ import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
 import { rankingRouter } from "./routes/ranking.js";
 import { docsRouter } from "./routes/docs.js";
 import { attachRole } from "./middleware/rbac.js";
+import { feesRouter } from "./routes/fees.js";
+import { notificationPreferencesRouter } from "./routes/notification-preferences.js";
+import { upgradeRouter } from "./routes/upgrade.js";
+import { verificationRouter } from "./routes/verification.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -165,6 +169,18 @@ app.use("/api/v1/ranking", rankingRouter);
 
 // API documentation (#587)
 app.use("/api/docs", docsRouter);
+
+// Transaction fee display (#606)
+app.use("/api/v1/fees", feesRouter);
+
+// Notification preferences (#605)
+app.use("/api/v1/preferences", notificationPreferencesRouter);
+
+// Contract upgrade workflow (#604)
+app.use("/api/v1/contract", upgradeRouter);
+
+// Contributor verification workflow (#602)
+app.use("/api/v1/verification", verificationRouter);
 
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
 const adminLimiter = rateLimit({
