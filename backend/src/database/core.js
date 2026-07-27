@@ -176,84 +176,132 @@ export function initializeDatabase() {
       `,
       },
       {
+        // #572: Role-Based Access Control — users and API key tables
         version: 8,
         sql: `
-          CREATE TABLE IF NOT EXISTS disputes (
+          CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticketId TEXT NOT NULL UNIQUE,
-            walletAddress TEXT NOT NULL,
-            contractId TEXT,
-            category TEXT NOT NULL CHECK(category IN ('wrong_amount', 'missing_payment', 'other')),
-            description TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'under_review', 'resolved', 'closed')),
-            adminNote TEXT,
-            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-          );
-
-          CREATE TABLE IF NOT EXISTS dispute_comments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            disputeId INTEGER NOT NULL,
-            author TEXT NOT NULL CHECK(author IN ('contributor', 'admin')),
-            message TEXT NOT NULL,
-            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(disputeId) REFERENCES disputes(id) ON DELETE CASCADE
-          );
-
-          CREATE INDEX IF NOT EXISTS idx_disputes_walletAddress ON disputes(walletAddress);
-          CREATE INDEX IF NOT EXISTS idx_disputes_status ON disputes(status);
-          CREATE INDEX IF NOT EXISTS idx_disputes_contractId ON disputes(contractId);
-          CREATE INDEX IF NOT EXISTS idx_dispute_comments_disputeId ON dispute_comments(disputeId);
-        `,
-      },
-      {
-        // #603: contributor referral tracking
-        version: 9,
-        sql: `
-          CREATE TABLE IF NOT EXISTS referrals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            referrerAddress TEXT NOT NULL,
-            referredAddress TEXT NOT NULL UNIQUE,
-            referralCode TEXT NOT NULL UNIQUE,
-            status TEXT NOT NULL DEFAULT 'pending'
-              CHECK(status IN ('pending', 'active', 'bonus_paid')),
-            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-            activatedAt DATETIME
-          );
-
-          CREATE TABLE IF NOT EXISTS referral_bonuses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            referralId INTEGER NOT NULL,
-            referrerAddress TEXT NOT NULL,
-            bonusAmountStroops INTEGER NOT NULL DEFAULT 0,
-            reason TEXT NOT NULL,
-            awardedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(referralId) REFERENCES referrals(id) ON DELETE CASCADE
-          );
-
-          CREATE TABLE IF NOT EXISTS referral_links (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            walletAddress TEXT NOT NULL UNIQUE,
-            referralCode TEXT NOT NULL UNIQUE,
+            walletAddress TEXT UNIQUE,
+            role TEXT NOT NULL DEFAULT 'collaborator'
+              CHECK(role IN ('viewer', 'collaborator', 'operator', 'admin')),
+            active INTEGER NOT NULL DEFAULT 1,
             createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
           );
 
-          CREATE INDEX IF NOT EXISTS idx_referrals_referrerAddress
-            ON referrals(referrerAddress);
-          CREATE INDEX IF NOT EXISTS idx_referrals_referredAddress
-            ON referrals(referredAddress);
-          CREATE INDEX IF NOT EXISTS idx_referrals_referralCode
-            ON referrals(referralCode);
-          CREATE INDEX IF NOT EXISTS idx_referrals_status
-            ON referrals(status);
-          CREATE INDEX IF NOT EXISTS idx_referral_bonuses_referralId
-            ON referral_bonuses(referralId);
-          CREATE INDEX IF NOT EXISTS idx_referral_bonuses_referrerAddress
-            ON referral_bonuses(referrerAddress);
-          CREATE INDEX IF NOT EXISTS idx_referral_links_walletAddress
-            ON referral_links(walletAddress);
-          CREATE INDEX IF NOT EXISTS idx_referral_links_referralCode
-            ON referral_links(referralCode);
+          CREATE TABLE IF NOT EXISTS api_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            keyHash TEXT NOT NULL UNIQUE,
+            userId INTEGER NOT NULL,
+            expiresAt DATETIME,
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_api_keys_keyHash ON api_keys(keyHash);
+          CREATE INDEX IF NOT EXISTS idx_users_walletAddress ON users(walletAddress);
+        `,
+      },
+      {
+        // #570: Add database index on transactions(status) column
+        // #597: CSV bulk import tracking, contributor tax, notifications
+        version: 9,
+        sql: `
+          CREATE INDEX IF NOT EXISTS idx_transactions_status
+            ON transactions(status);
+
+          CREATE TABLE IF NOT EXISTS csv_imports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contractId TEXT NOT NULL,
+            fileName TEXT NOT NULL,
+            rowCount INTEGER NOT NULL DEFAULT 0,
+            importedBy TEXT NOT NULL DEFAULT 'unknown',
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'completed', 'failed')),
+            error_message TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME
+          );
+          CREATE INDEX IF NOT EXISTS idx_csv_imports_contractId ON csv_imports(contractId);
+
+          CREATE TABLE IF NOT EXISTS csv_import_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            importId INTEGER NOT NULL,
+            rowIndex INTEGER NOT NULL,
+            address TEXT NOT NULL DEFAULT '',
+            share INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL CHECK(status IN ('success', 'error')),
+            errorMessage TEXT,
+            FOREIGN KEY(importId) REFERENCES csv_imports(id) ON DELETE CASCADE
+          );
+          CREATE INDEX IF NOT EXISTS idx_csv_import_results_importId ON csv_import_results(importId);
+
+          CREATE TABLE IF NOT EXISTS contributor_tax (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            walletAddress TEXT NOT NULL UNIQUE,
+            tax_status TEXT CHECK(tax_status IN ('not_collected', 'pending', 'completed', 'exempt')),
+            tax_id TEXT,
+            w9_file_path TEXT,
+            w9_file_name TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX IF NOT EXISTS idx_contributor_tax_wallet ON contributor_tax(walletAddress);
+          CREATE INDEX IF NOT EXISTS idx_contributor_tax_status ON contributor_tax(tax_status);
+
+          CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            walletAddress TEXT NOT NULL,
+            type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            message TEXT,
+            data TEXT,
+            read INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX IF NOT EXISTS idx_notifications_wallet ON notifications(walletAddress);
+          CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(walletAddress, read);
+
+          CREATE TABLE IF NOT EXISTS notification_preferences (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            walletAddress TEXT NOT NULL UNIQUE,
+            email_enabled INTEGER NOT NULL DEFAULT 1,
+            in_app_enabled INTEGER NOT NULL DEFAULT 1,
+            sms_enabled INTEGER NOT NULL DEFAULT 0,
+            notify_distribution INTEGER NOT NULL DEFAULT 1,
+            notify_payment INTEGER NOT NULL DEFAULT 1,
+            notify_failure INTEGER NOT NULL DEFAULT 1,
+            notify_hold INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX IF NOT EXISTS idx_notification_prefs_wallet ON notification_preferences(walletAddress);
+        `,
+      },
+      {
+        // #596: Payment hold/release system
+        version: 10,
+        sql: `
+          ALTER TABLE transactions ADD COLUMN hold_reason TEXT;
+          ALTER TABLE transactions ADD COLUMN hold_until DATETIME;
+          ALTER TABLE transactions ADD COLUMN hold_placed_at DATETIME;
+          ALTER TABLE transactions ADD COLUMN hold_placed_by TEXT;
+          ALTER TABLE transactions ADD COLUMN hold_released_at DATETIME;
+          ALTER TABLE transactions ADD COLUMN hold_released_by TEXT;
+          ALTER TABLE transactions ADD COLUMN hold_approved_by TEXT;
+          ALTER TABLE transactions ADD COLUMN hold_approved_at DATETIME;
+          ALTER TABLE transactions ADD COLUMN hold_approval_note TEXT;
+          ALTER TABLE transactions ADD COLUMN hold_status TEXT DEFAULT NULL CHECK(hold_status IN (NULL, 'active', 'released'));
+
+          CREATE TABLE IF NOT EXISTS hold_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transactionId INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            reason TEXT,
+            performedBy TEXT,
+            details TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(transactionId) REFERENCES transactions(id) ON DELETE CASCADE
+          );
+          CREATE INDEX IF NOT EXISTS idx_hold_audit_transaction ON hold_audit(transactionId);
         `,
       },
       {
