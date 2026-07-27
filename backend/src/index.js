@@ -37,6 +37,8 @@ import { notificationsRouter } from "./routes/notifications.js";
 import { paymentHoldsRouter } from "./routes/payment-holds.js";
 import { earningsHistoryRouter } from "./routes/earnings-history.js";
 import { initializeWebSocket } from "./websocket.js";
+import { complianceReportsRouter } from "./routes/compliance-reports.js";
+import { startComplianceReportScheduler } from "./jobs/compliance-report-job.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -200,6 +202,10 @@ app.use("/api/v1/payment-holds", paymentHoldsRouter);
 // Contributor earnings history (#564)
 app.use("/api/v1", earningsHistoryRouter);
 
+// Automated compliance reports (#601)
+app.use("/api/v1/compliance-reports", writeLimiter);
+app.use("/api/v1/compliance-reports", complianceReportsRouter);
+
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
 const adminLimiter = rateLimit({
   windowMs: 60_000,
@@ -257,6 +263,9 @@ const retryScheduler = startRetryScheduler();
 // Start the webhook retry scheduler
 const webhookRetryScheduler = startWebhookRetryScheduler();
 
+// Start compliance report scheduler (#601)
+const complianceReportScheduler = startComplianceReportScheduler();
+
 // Start weekly email digest scheduler if email is configured
 let digestInterval = null;
 if (isEmailConfigured()) {
@@ -299,6 +308,9 @@ const handleShutdown = createGracefulShutdownHandler({
     }
     if (webhookRetryScheduler) {
       webhookRetryScheduler.stop();
+    }
+    if (complianceReportScheduler) {
+      complianceReportScheduler.stop();
     }
   },
 });

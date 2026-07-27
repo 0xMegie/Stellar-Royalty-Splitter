@@ -195,6 +195,20 @@ export {
   countAllReferrals,
 } from "./referrals.js";
 
+// Automated compliance reports (#601)
+export {
+  createComplianceReport,
+  getComplianceReport,
+  listComplianceReports,
+  countComplianceReports,
+  markReportGenerating,
+  markReportCompleted,
+  markReportFailed,
+  reportExistsForPeriod,
+  REPORT_TYPES,
+  REPORT_STATUSES,
+} from "./compliance-reports.js";
+
 // Default export for backwards compatibility
 import { db } from "./core.js";
 export default db;
