@@ -89,6 +89,52 @@ export {
   updateArchivePolicy,
 } from "./archive.js";
 
+// CSV bulk import (#597)
+export {
+  createCsvImport,
+  markImportSuccess,
+  markImportFailed,
+  getCsvImport,
+  getCsvImportsByContract,
+  addImportResult,
+  getImportResults,
+  getImportSummary,
+} from "./csv-import.js";
+
+// Contributor tax information (#595)
+export {
+  getContributorTax,
+  upsertContributorTax,
+  getTaxComplianceReport,
+  getContributorsMissingTaxInfo,
+  getAllWalletAddresses,
+} from "./contributor-tax.js";
+
+// Real-time notifications (#594)
+export {
+  createNotification,
+  getNotifications,
+  getUnreadNotificationCount,
+  markNotificationRead,
+  markAllNotificationsRead,
+  deleteNotification,
+  getNotificationPreference,
+  upsertNotificationPreference,
+  createSystemNotification,
+} from "./notifications.js";
+
+// Payment hold/release system (#596)
+export {
+  placeHold,
+  releaseHold,
+  approveHoldRelease,
+  getTransactionWithHold,
+  getHeldTransactions,
+  getAllHeldTransactions,
+  getHoldAuditTrail,
+  getTransactionsPendingHoldRelease,
+} from "./payment-holds.js";
+
 // Email digest (#569)
 export {
   subscribeEmailDigest,
@@ -105,6 +151,37 @@ export {
   getDigestHistory,
   getEarningsForWeek,
 } from "./email-digest.js";
+
+// Disputes / ticket system (#607)
+export {
+  createDispute,
+  getDisputeByTicketId,
+  getDisputesByWallet,
+  countDisputesByWallet,
+  getAllDisputes,
+  countAllDisputes,
+  updateDisputeStatus,
+  addDisputeComment,
+  getDisputeComments,
+} from "./disputes.js";
+
+// Referral tracking (#603)
+export {
+  DEFAULT_REFERRAL_BONUS_STROOPS,
+  generateReferralLink,
+  getReferralLinkByWallet,
+  getReferralLinkByCode,
+  registerReferral,
+  activateReferral,
+  getReferralByReferred,
+  getReferralsByReferrer,
+  countReferralsByReferrer,
+  awardReferralBonus,
+  getBonusesByReferrer,
+  getReferralDashboard,
+  getAllReferrals,
+  countAllReferrals,
+} from "./referrals.js";
 
 // Default export for backwards compatibility
 import { db } from "./core.js";

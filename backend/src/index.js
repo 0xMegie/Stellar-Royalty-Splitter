@@ -14,6 +14,7 @@ import webhooksRouter from "./routes/webhooks.js";
 import { analyticsRouter } from "./routes/analytics.js";
 import { contractRouter } from "./routes/contract.js";
 import { healthRouter } from "./routes/health.js";
+import onboardingRouter from "./routes/onboarding.js";
 import { closeDatabase, initializeDatabase } from "./database/index.js";
 import { createGracefulShutdownHandler } from "./shutdown.js";
 import { adminRouter } from "./routes/admin.js";
@@ -22,16 +23,19 @@ import { initializeSigningKey } from "./signing-key.js";
 import { sendError, normalizeErrorCode } from "./error-response.js";
 import { preferencesRouter } from "./routes/preferences.js";
 import emailDigestRouter from "./routes/email-digest.js";
+import { disputesRouter } from "./routes/disputes.js";
+import { referralsRouter } from "./routes/referrals.js";
 import { sendWeeklyDigests } from "./jobs/weekly-digest-job.js";
 import { isEmailConfigured } from "./email/email-service.js";
 import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
 import { rankingRouter } from "./routes/ranking.js";
 import { docsRouter } from "./routes/docs.js";
 import { attachRole } from "./middleware/rbac.js";
-import { feesRouter } from "./routes/fees.js";
-import { notificationPreferencesRouter } from "./routes/notification-preferences.js";
-import { upgradeRouter } from "./routes/upgrade.js";
-import { verificationRouter } from "./routes/verification.js";
+import { csvImportRouter } from "./routes/csv-import.js";
+import { contributorTaxRouter } from "./routes/contributor-tax.js";
+import { notificationsRouter } from "./routes/notifications.js";
+import { paymentHoldsRouter } from "./routes/payment-holds.js";
+import { initializeWebSocket } from "./websocket.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -68,7 +72,7 @@ logger.info("CORS origin configured", { origin: corsOrigin });
 app.use(
   cors({
     origin: corsOrigin,
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "PATCH"],
     maxAge: Number.isNaN(corsPreflightMaxAge) ? 86400 : corsPreflightMaxAge,
   })
 );
@@ -148,12 +152,14 @@ app.use("/api/v1/initialize", writeLimiter);
 app.use("/api/v1/distribute", writeLimiter);
 app.use("/api/v1/secondary-royalty", writeLimiter);
 app.use("/api/v1/webhooks", writeLimiter);
+app.use("/api/v1/onboarding", writeLimiter);
 
 app.use("/api/v1/initialize", initializeRouter);
 app.use("/api/v1/distribute", distributeRouter);
 app.use("/api/v1/collaborators", collaboratorsRouter);
 app.use("/api/v1/secondary-royalty", secondaryRoyaltyRouter);
 app.use("/api/v1/simulate", simulateRouter);
+app.use("/api/v1/onboarding", onboardingRouter);
 app.use("/api/v1", historyRouter);
 app.use("/api/v1", webhooksRouter);
 app.use("/api/v1", analyticsRouter);
@@ -161,6 +167,10 @@ app.use("/api/v1/contract", contractRouter);
 app.use("/api/v1/health", healthRouter);
 app.use("/api/v1/preferences", preferencesRouter);
 app.use("/api/v1", emailDigestRouter);
+app.use("/api/v1/disputes", writeLimiter);
+app.use("/api/v1/disputes", disputesRouter);
+app.use("/api/v1/referrals", writeLimiter);
+app.use("/api/v1/referrals", referralsRouter);
 app.use("/metrics", metricsRouter);
 app.use("/api/v1/metrics", metricsRouter);
 
@@ -170,17 +180,18 @@ app.use("/api/v1/ranking", rankingRouter);
 // API documentation (#587)
 app.use("/api/docs", docsRouter);
 
-// Transaction fee display (#606)
-app.use("/api/v1/fees", feesRouter);
+// CSV bulk import (#597)
+app.use("/api/v1/csv-import", csvImportRouter);
 
-// Notification preferences (#605)
-app.use("/api/v1/preferences", notificationPreferencesRouter);
+// Contributor tax information (#595)
+app.use("/api/v1/contributor-tax", contributorTaxRouter);
 
-// Contract upgrade workflow (#604)
-app.use("/api/v1/contract", upgradeRouter);
+// Real-time notifications (#594)
+app.use("/api/v1/notifications", notificationsRouter);
 
-// Contributor verification workflow (#602)
-app.use("/api/v1/verification", verificationRouter);
+// Payment hold/release system (#596)
+app.use("/api/v1/payment-holds", writeLimiter);
+app.use("/api/v1/payment-holds", paymentHoldsRouter);
 
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
 const adminLimiter = rateLimit({
@@ -230,6 +241,9 @@ app.use((err, _req, res, _next) => {
 const PORT = process.env.PORT ?? 3001;
 const server = app.listen(PORT, () => logger.info(`API listening on http://localhost:${PORT}`));
 
+// Initialize WebSocket for real-time notifications (#594)
+const wss = initializeWebSocket(server);
+
 // Start the failed-distribution retry scheduler
 const retryScheduler = startRetryScheduler();
 
@@ -262,6 +276,10 @@ const handleShutdown = createGracefulShutdownHandler({
   closeDatabase,
   logger,
   onShutdown: () => {
+    if (wss) {
+      wss.close();
+      logger.info("WebSocket server closed");
+    }
     if (digestInterval) {
       clearInterval(digestInterval);
       digestInterval = null;

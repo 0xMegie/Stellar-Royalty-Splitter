@@ -84,7 +84,7 @@ export class BackendApiError extends Error {
   }
 }
 
-function readErrorBody(status: number, data: unknown): BackendApiError {
+export function readErrorBody(status: number, data: unknown): BackendApiError {
   const parsed = extractContractError(data ?? { error: "Request failed" });
   return new BackendApiError(
     status,
@@ -97,6 +97,14 @@ function readErrorBody(status: number, data: unknown): BackendApiError {
 async function post<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -172,7 +180,11 @@ export const api = {
     contractId: string;
     walletAddress: string;
     tokenId: string;
+    amount?: number;
   }) => post<{ xdr: string; transactionId: number }>("/distribute", body),
+
+  getContractVersion: (contractId: string) =>
+    get<{ version: string }>(`/contract/version/${contractId}`),
 
   getContractBalance: (contractId: string, tokenId: string) =>
     get<{ balance: string }>(
@@ -342,126 +354,71 @@ export const api = {
       `/analytics/${contractId}${dateRange ? `?start=${dateRange.start}&end=${dateRange.end}` : ""}`,
     ),
 
-  // Payment Preferences (#584)
-  getPaymentPreference: (walletAddress: string) =>
-    get<{
-      success: boolean;
-      data: { walletAddress: string; paymentMethod: string; updatedAt: string };
-    }>(`/preferences/payment?walletAddress=${encodeURIComponent(walletAddress)}`).then(
-      (res) => res.data,
-    ),
+  // Contributor Onboarding APIs (#567)
+  getOnboardingStatus: (walletAddress: string) =>
+    get<OnboardingStatusResponse>(`/v1/onboarding/${walletAddress}`),
 
-  savePaymentPreference: (
+  updateOnboardingStatus: (
     walletAddress: string,
-    paymentMethod: "direct_transfer" | "usdc" | "xlm",
+    data: OnboardingUpdateRequest,
   ) =>
-    post<{
-      success: boolean;
-      data: { walletAddress: string; paymentMethod: string; updatedAt: string };
-    }>("/preferences/payment", { walletAddress, paymentMethod }).then(
-      (res) => res.data,
-    ),
+    patch<{
+      message: string;
+      summary: OnboardingStatusResponse;
+    }>(`/v1/onboarding/${walletAddress}`, data),
 
-  // Transaction Fee Display (#606)
-  getContractFees: (contractId: string, limit = 50, offset = 0) =>
-    get<{
-      success: boolean;
-      data: Array<{ transactionId: number; feeStroops: string; recordedAt: string }>;
-      pagination: { limit: number; offset: number };
-    }>(`/fees/${contractId}?limit=${limit}&offset=${offset}`),
-
-  getTransactionFee: (transactionId: number) =>
-    get<{
-      success: boolean;
-      data: { transactionId: number; contractId: string; feeStroops: string; recordedAt: string };
-    }>(`/fees/transaction/${transactionId}`),
-
-  recordTransactionFee: (body: {
-    transactionId: number;
-    contractId: string;
-    feeStroops: number | string;
-  }) =>
-    post<{
-      success: boolean;
-      data: { transactionId: number; contractId: string; feeStroops: string; recordedAt: string };
-    }>("/fees/record", body),
-
-  // Notification Preferences (#605)
-  getNotificationPreferences: (walletAddress: string) =>
-    get<{
-      success: boolean;
-      data: {
-        walletAddress: string;
-        email: number;
-        sms: number;
-        inApp: number;
-        push: number;
-        updatedAt: string | null;
-      };
-    }>(`/preferences/notifications?walletAddress=${encodeURIComponent(walletAddress)}`).then(
-      (res) => res.data,
-    ),
-
-  saveNotificationPreferences: (
-    walletAddress: string,
-    channels: { email?: boolean; sms?: boolean; inApp?: boolean; push?: boolean },
-  ) =>
-    post<{
-      success: boolean;
-      data: {
-        walletAddress: string;
-        email: number;
-        sms: number;
-        inApp: number;
-        push: number;
-        updatedAt: string;
-      };
-    }>("/preferences/notifications", { walletAddress, ...channels }).then(
-      (res) => res.data,
-    ),
-
-  // Contract Upgrade Workflow (#604)
-  upgradeContract: (body: {
-    contractId: string;
-    walletAddress: string;
-    wasmHash: string;
-  }) =>
-    post<{ xdr: string; wasmHash: string }>("/contract/upgrade", body),
-
-  getContractVersion: (contractId: string) =>
-    get<{
-      success: boolean;
-      data: { contractId: string; version: string | null };
-    }>(`/contract/version/${contractId}`),
-
-  // Contributor Verification (#602)
-  getVerification: (walletAddress: string) =>
-    get<{
-      success: boolean;
-      data: {
-        walletAddress: string;
-        step: string;
-        status: string;
-        adminNote: string | null;
-        createdAt: string;
-        updatedAt: string;
-      };
-    }>(`/verification/${encodeURIComponent(walletAddress)}`),
-
-  startVerification: (walletAddress: string) =>
-    post<{
-      success: boolean;
-      data: { walletAddress: string; step: string; status: string; createdAt: string; updatedAt: string };
-    }>("/verification/start", { walletAddress }),
-
-  advanceVerification: (body: {
-    walletAddress: string;
-    step: "email" | "kyc" | "manual_review" | "verified" | "rejected";
-    status: "pending" | "in_progress" | "completed" | "failed";
-    adminNote?: string | null;
-  }) =>
-    post<{
-      success: boolean;
-      data: { walletAddress: string; step: string; status: string; adminNote: string | null; updatedAt: string };
-    }>("/verification/advance", body),
+  sendOnboardingReminder: (walletAddress: string, email: string) =>
+    post<OnboardingReminderResponse>(`/v1/onboarding/${walletAddress}/remind`, {
+      email,
+    }),
 };
+
+export interface OnboardingItem {
+  id: string;
+  label: string;
+  description: string;
+  completed: boolean;
+  required: boolean;
+  category: "setup" | "compliance" | "finance" | "milestone";
+}
+
+export interface OnboardingStatusResponse {
+  walletAddress: string;
+  email: string;
+  kycStatus: "unverified" | "pending" | "verified";
+  payoutToken: string;
+  paymentPreferencesSet: boolean;
+  taxInfoSubmitted: boolean;
+  items: OnboardingItem[];
+  completedCount: number;
+  totalCount: number;
+  completionPercentage: number;
+  requiredComplete: boolean;
+  actionsLocked: boolean;
+  nextStep: {
+    id: string;
+    label: string;
+    description: string;
+  } | null;
+}
+
+export interface OnboardingUpdateRequest {
+  email?: string;
+  kycStatus?: "unverified" | "pending" | "verified";
+  paymentPreferencesSet?: boolean;
+  payoutToken?: string;
+  taxInfoSubmitted?: boolean;
+}
+
+export interface OnboardingReminderResponse {
+  success: boolean;
+  message: string;
+  emailDetails: {
+    to: string;
+    subject: string;
+    completionPercentage: number;
+    incompleteCount: number;
+    previewText: string;
+  };
+}
+

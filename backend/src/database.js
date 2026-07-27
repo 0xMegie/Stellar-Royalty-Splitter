@@ -86,6 +86,21 @@ export function initializeDatabase() {
         PRAGMA foreign_keys = ON;
       `,
     },
+    {
+      version: 3,
+      sql: `
+        CREATE TABLE IF NOT EXISTS contributor_onboarding (
+          walletAddress TEXT PRIMARY KEY,
+          email TEXT,
+          kycStatus TEXT DEFAULT 'pending' CHECK(kycStatus IN ('unverified', 'pending', 'verified')),
+          paymentPreferencesSet INTEGER DEFAULT 0,
+          payoutToken TEXT DEFAULT 'XLM',
+          taxInfoSubmitted INTEGER DEFAULT 0,
+          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `,
+    },
   ];
 
   const applied = db
@@ -157,6 +172,17 @@ export function initializeDatabase() {
       user TEXT,
       details TEXT,
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS contributor_onboarding (
+      walletAddress TEXT PRIMARY KEY,
+      email TEXT,
+      kycStatus TEXT DEFAULT 'pending' CHECK(kycStatus IN ('unverified', 'pending', 'verified')),
+      paymentPreferencesSet INTEGER DEFAULT 0,
+      payoutToken TEXT DEFAULT 'XLM',
+      taxInfoSubmitted INTEGER DEFAULT 0,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE INDEX IF NOT EXISTS idx_transactions_contractId ON transactions(contractId);
@@ -705,4 +731,70 @@ export function getAnalyticsData(contractId, startDate, endDate) {
   return { summary, trends, topEarners, collaboratorStats };
 }
 
+// Contributor Onboarding database functions (#567)
+export function getContributorOnboarding(walletAddress) {
+  if (!walletAddress) return null;
+  const stmt = db.prepare(`SELECT * FROM contributor_onboarding WHERE walletAddress = ?`);
+  const record = stmt.get(walletAddress);
+
+  const payoutStmt = db.prepare(`SELECT COUNT(*) as count FROM distribution_payouts WHERE collaboratorAddress = ?`);
+  const payoutCount = payoutStmt.get(walletAddress)?.count || 0;
+  const firstDistributionReceived = payoutCount > 0 ? 1 : 0;
+
+  if (!record) {
+    return {
+      walletAddress,
+      email: "",
+      kycStatus: "pending",
+      paymentPreferencesSet: 0,
+      payoutToken: "XLM",
+      taxInfoSubmitted: 0,
+      firstDistributionReceived,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  return {
+    ...record,
+    firstDistributionReceived: record.firstDistributionReceived || firstDistributionReceived ? 1 : 0,
+  };
+}
+
+export function upsertContributorOnboarding(walletAddress, data = {}) {
+  if (!walletAddress) return null;
+
+  const existing = getContributorOnboarding(walletAddress);
+  const email = data.email !== undefined ? data.email : (existing?.email || "");
+  const kycStatus = data.kycStatus !== undefined ? data.kycStatus : (existing?.kycStatus || "pending");
+  const paymentPreferencesSet =
+    data.paymentPreferencesSet !== undefined
+      ? data.paymentPreferencesSet
+        ? 1
+        : 0
+      : existing?.paymentPreferencesSet || 0;
+  const payoutToken = data.payoutToken !== undefined ? data.payoutToken : (existing?.payoutToken || "XLM");
+  const taxInfoSubmitted =
+    data.taxInfoSubmitted !== undefined ? (data.taxInfoSubmitted ? 1 : 0) : existing?.taxInfoSubmitted || 0;
+
+  const stmt = db.prepare(`
+    INSERT INTO contributor_onboarding (
+      walletAddress, email, kycStatus, paymentPreferencesSet, payoutToken, taxInfoSubmitted, updatedAt
+    ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(walletAddress) DO UPDATE SET
+      email = excluded.email,
+      kycStatus = excluded.kycStatus,
+      paymentPreferencesSet = excluded.paymentPreferencesSet,
+      payoutToken = excluded.payoutToken,
+      taxInfoSubmitted = excluded.taxInfoSubmitted,
+      updatedAt = CURRENT_TIMESTAMP
+  `);
+
+  stmt.run(walletAddress, email, kycStatus, paymentPreferencesSet, payoutToken, taxInfoSubmitted);
+  countWrite();
+
+  return getContributorOnboarding(walletAddress);
+}
+
 export default db;
+
