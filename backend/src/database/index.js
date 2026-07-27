@@ -130,6 +130,37 @@ export {
   getEarningsForWeek,
 } from "./email-digest.js";
 
+// Disputes / ticket system (#607)
+export {
+  createDispute,
+  getDisputeByTicketId,
+  getDisputesByWallet,
+  countDisputesByWallet,
+  getAllDisputes,
+  countAllDisputes,
+  updateDisputeStatus,
+  addDisputeComment,
+  getDisputeComments,
+} from "./disputes.js";
+
+// Referral tracking (#603)
+export {
+  DEFAULT_REFERRAL_BONUS_STROOPS,
+  generateReferralLink,
+  getReferralLinkByWallet,
+  getReferralLinkByCode,
+  registerReferral,
+  activateReferral,
+  getReferralByReferred,
+  getReferralsByReferrer,
+  countReferralsByReferrer,
+  awardReferralBonus,
+  getBonusesByReferrer,
+  getReferralDashboard,
+  getAllReferrals,
+  countAllReferrals,
+} from "./referrals.js";
+
 // Default export for backwards compatibility
 import { db } from "./core.js";
 export default db;
