@@ -25,6 +25,9 @@ import { CopyButton } from "./components/CopyButton";
 import { api, SESSION_EXPIRED_EVENT } from "./api";
 import { OnboardingWalkthrough } from "./components/OnboardingWalkthrough";
 import { ContributorOnboardingChecklist } from "./components/ContributorOnboardingChecklist";
+import { EarningsHistoryChart } from "./components/EarningsHistoryChart";
+import { EarningsForecastCalculator } from "./components/EarningsForecastCalculator";
+import { useWebSocket } from "./hooks/useWebSocket";
 
 import "./App.css";
 
@@ -296,6 +299,14 @@ export default function App() {
         ) : (
           <div className="page-empty">
             <p>Please select a contract first</p>
+          </div>
+        );
+      case "earnings-history":
+        return walletAddress ? (
+          <EarningsHistoryChart walletAddress={walletAddress} />
+        ) : (
+          <div className="page-empty">
+            <p>Please connect your wallet to view earnings history</p>
           </div>
         );
       case "forecast":
