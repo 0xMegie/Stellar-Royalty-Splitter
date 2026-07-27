@@ -3,7 +3,10 @@ import { api, TransactionRecord } from "../api";
 import { QRCodeSVG } from "qrcode.react";
 import { CopyButton } from "./CopyButton";
 import { Skeleton } from "./Skeleton";
-import { KeyRotationPanel } from "./KeyRotationPanel";
+import { BulkContributorUpload } from "./BulkContributorUpload";
+import { ContributorTaxInfo } from "./ContributorTaxInfo";
+import { TaxComplianceReport } from "./TaxComplianceReport";
+import { PaymentHoldManager } from "./PaymentHoldManager";
 import "./AdminDashboard.css";
 
 interface AdminDashboardProps {
@@ -384,6 +387,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </div>
       )}
+
+      {/* Admin Management Sections */}
+      <div className="admin-management-sections">
+        <h2>Management Tools</h2>
+        <div className="management-grid">
+          <div className="management-card">
+            <h3>Bulk Contributor Upload</h3>
+            <p>Import multiple contributors at once via CSV file</p>
+            {contractId && <BulkContributorUpload contractId={contractId} />}
+          </div>
+          <div className="management-card">
+            <h3>Tax Information</h3>
+            <p>Manage contributor tax compliance documentation</p>
+            <TaxComplianceReport />
+          </div>
+          <div className="management-card">
+            <h3>Payment Holds</h3>
+            <p>Manage payment holds and release workflows</p>
+            <PaymentHoldManager contractId={contractId} isAdmin={true} />
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

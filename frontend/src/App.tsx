@@ -24,9 +24,10 @@ import { Skeleton } from "./components/Skeleton";
 import { CopyButton } from "./components/CopyButton";
 import { api, SESSION_EXPIRED_EVENT } from "./api";
 import { OnboardingWalkthrough } from "./components/OnboardingWalkthrough";
+import { ContributorOnboardingChecklist } from "./components/ContributorOnboardingChecklist";
+import { EarningsHistoryChart } from "./components/EarningsHistoryChart";
 import { EarningsForecastCalculator } from "./components/EarningsForecastCalculator";
-import { ContractTimeline } from "./components/ContractTimeline";
-
+import { useWebSocket } from "./hooks/useWebSocket";
 
 import "./App.css";
 
@@ -52,7 +53,15 @@ export default function App() {
   );
   const [initialLoading, setInitialLoading] = useState(true);
   const [sessionToast, setSessionToast] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false); // #591 collapsed by default on mobile
+  const [notifications, setNotifications] = useState<Array<{ id: number; title: string; message: string | null; type: string }>>([]);
+
+  const { connected: wsConnected } = useWebSocket({
+    walletAddress,
+    onNotification: (data: unknown) => {
+      const n = data as { id: number; title: string; message: string | null; type: string };
+      setNotifications(prev => [...prev, n]);
+    },
+  });
 
   function handleWalletConnect(address: string) {
     setWalletAddress(address);
@@ -292,6 +301,14 @@ export default function App() {
             <p>Please select a contract first</p>
           </div>
         );
+      case "earnings-history":
+        return walletAddress ? (
+          <EarningsHistoryChart walletAddress={walletAddress} />
+        ) : (
+          <div className="page-empty">
+            <p>Please connect your wallet to view earnings history</p>
+          </div>
+        );
       case "forecast":
         return contractId ? (
           <EarningsForecastCalculator contractId={contractId} />
@@ -346,6 +363,37 @@ export default function App() {
         );
       case "settings":
         return <Settings contractId={contractId} walletAddress={walletAddress} onClearContract={clearSavedContract} />;
+      case "bulk-import":
+        return walletAddress && contractId ? (
+          <div className="page-section">
+            <BulkContributorUpload contractId={contractId} />
+          </div>
+        ) : (
+          <div className="page-empty">
+            <p>Please connect your wallet and select a contract first</p>
+          </div>
+        );
+      case "tax-info":
+        return walletAddress ? (
+          <div className="page-section">
+            <ContributorTaxInfo walletAddress={walletAddress} isAdmin={true} />
+            <TaxComplianceReport />
+          </div>
+        ) : (
+          <div className="page-empty">
+            <p>Please connect your wallet first</p>
+          </div>
+        );
+      case "payment-holds":
+        return contractId ? (
+          <div className="page-section">
+            <PaymentHoldManager contractId={contractId} isAdmin={true} />
+          </div>
+        ) : (
+          <div className="page-empty">
+            <p>Please select a contract first</p>
+          </div>
+        );
       case "secondary":
         return walletAddress && contractId ? (
           <div className="page-section">
@@ -389,6 +437,13 @@ export default function App() {
             </div>
           </div>
         );
+      case "onboarding":
+        return (
+          <ContributorOnboardingChecklist
+            walletAddress={walletAddress}
+            onConnectWallet={() => handlePageChange("connect-wallet")}
+          />
+        );
       default:
         return null;
     }
@@ -427,6 +482,7 @@ export default function App() {
         onPageChange={handlePageChange}
         walletAddress={walletAddress}
         onDisconnect={handleDisconnect}
+        wsConnected={wsConnected}
       />
 
       <div className="app-content">

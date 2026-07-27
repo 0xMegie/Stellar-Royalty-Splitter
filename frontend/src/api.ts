@@ -84,7 +84,7 @@ export class BackendApiError extends Error {
   }
 }
 
-function readErrorBody(status: number, data: unknown): BackendApiError {
+export function readErrorBody(status: number, data: unknown): BackendApiError {
   const parsed = extractContractError(data ?? { error: "Request failed" });
   return new BackendApiError(
     status,
@@ -97,6 +97,14 @@ function readErrorBody(status: number, data: unknown): BackendApiError {
 async function post<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -172,7 +180,11 @@ export const api = {
     contractId: string;
     walletAddress: string;
     tokenId: string;
+    amount?: number;
   }) => post<{ xdr: string; transactionId: number }>("/distribute", body),
+
+  getContractVersion: (contractId: string) =>
+    get<{ version: string }>(`/contract/version/${contractId}`),
 
   getContractBalance: (contractId: string, tokenId: string) =>
     get<{ balance: string }>(
@@ -342,56 +354,97 @@ export const api = {
       `/analytics/${contractId}${dateRange ? `?start=${dateRange.start}&end=${dateRange.end}` : ""}`,
     ),
 
-  // Payment Preferences (#584)
-  getPaymentPreference: (walletAddress: string) =>
-    get<{
-      success: boolean;
-      data: { walletAddress: string; paymentMethod: string; updatedAt: string };
-    }>(`/preferences/payment?walletAddress=${encodeURIComponent(walletAddress)}`).then(
-      (res) => res.data,
-    ),
+  // Contributor Onboarding APIs (#567)
+  getOnboardingStatus: (walletAddress: string) =>
+    get<OnboardingStatusResponse>(`/v1/onboarding/${walletAddress}`),
 
-  savePaymentPreference: (
+  updateOnboardingStatus: (
     walletAddress: string,
-    paymentMethod: "direct_transfer" | "usdc" | "xlm",
+    data: OnboardingUpdateRequest,
   ) =>
-    post<{
-      success: boolean;
-      data: { walletAddress: string; paymentMethod: string; updatedAt: string };
-    }>("/preferences/payment", { walletAddress, paymentMethod }).then(
-      (res) => res.data,
-    ),
+    patch<{
+      message: string;
+      summary: OnboardingStatusResponse;
+    }>(`/v1/onboarding/${walletAddress}`, data),
 
-  // Contributor Tiers (#589)
-  getContractTiers: (contractId: string) =>
-    get<{
-      success: boolean;
-      data: Array<{ walletAddress: string; tier: string; notes: string | null; updatedAt: string }>;
-      validTiers: string[];
-    }>(`/tiers/${contractId}`),
+  sendOnboardingReminder: (walletAddress: string, email: string) =>
+    post<OnboardingReminderResponse>(`/v1/onboarding/${walletAddress}/remind`, {
+      email,
+    }),
 
-  getContributorTier: (contractId: string, address: string) =>
-    get<{
+  getEarningsHistory: (
+    walletAddress: string,
+    params?: { start?: string; end?: string; contracts?: string[] },
+  ) => {
+    const search = new URLSearchParams();
+    if (params?.start) search.set("start", params.start);
+    if (params?.end) search.set("end", params.end);
+    if (params?.contracts?.length) search.set("contracts", params.contracts.join(","));
+    const query = search.toString();
+    return get<{
       success: boolean;
-      data: { walletAddress: string; tier: string; notes: string | null; updatedAt: string | null };
-    }>(`/tiers/${contractId}/${address}`),
-
-  setContributorTier: (
-    contractId: string,
-    address: string,
-    tier: "vip" | "regular" | "trial",
-    notes?: string | null,
-    apiKey?: string,
-  ) =>
-    request<{ success: boolean; message: string }>(
-      `/tiers/${contractId}/${address}`,
-      {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...(apiKey ? { "x-api-key": apiKey } : {}),
-        },
-        body: JSON.stringify({ tier, notes }),
-      },
-    ),
+      message?: string;
+      data: {
+        walletAddress: string;
+        snapshots: Array<{ date: string; contractId: string; amount: number }>;
+        events: Array<{
+          type: "contract_added" | "distribution_failure" | "contract_removed";
+          contractId: string;
+          date: string;
+          label: string;
+        }>;
+        contracts: string[];
+      };
+    }>(`/v1/earnings-history/${walletAddress}${query ? `?${query}` : ""}`);
+  },
 };
+
+export interface OnboardingItem {
+  id: string;
+  label: string;
+  description: string;
+  completed: boolean;
+  required: boolean;
+  category: "setup" | "compliance" | "finance" | "milestone";
+}
+
+export interface OnboardingStatusResponse {
+  walletAddress: string;
+  email: string;
+  kycStatus: "unverified" | "pending" | "verified";
+  payoutToken: string;
+  paymentPreferencesSet: boolean;
+  taxInfoSubmitted: boolean;
+  items: OnboardingItem[];
+  completedCount: number;
+  totalCount: number;
+  completionPercentage: number;
+  requiredComplete: boolean;
+  actionsLocked: boolean;
+  nextStep: {
+    id: string;
+    label: string;
+    description: string;
+  } | null;
+}
+
+export interface OnboardingUpdateRequest {
+  email?: string;
+  kycStatus?: "unverified" | "pending" | "verified";
+  paymentPreferencesSet?: boolean;
+  payoutToken?: string;
+  taxInfoSubmitted?: boolean;
+}
+
+export interface OnboardingReminderResponse {
+  success: boolean;
+  message: string;
+  emailDetails: {
+    to: string;
+    subject: string;
+    completionPercentage: number;
+    incompleteCount: number;
+    previewText: string;
+  };
+}
+
