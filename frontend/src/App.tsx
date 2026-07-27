@@ -353,6 +353,24 @@ export default function App() {
             <p>Please select a contract first</p>
           </div>
         );
+      case "health":
+        return <SystemHealthDashboard />;
+      case "earnings":
+        return walletAddress ? (
+          <MultiContractEarnings walletAddress={walletAddress} />
+        ) : (
+          <div className="page-empty">
+            <p>Please connect your wallet to view your earnings.</p>
+          </div>
+        );
+      case "suspension":
+        return contractId ? (
+          <ContributorSuspension contractId={contractId} walletAddress={walletAddress} />
+        ) : (
+          <div className="page-empty">
+            <p>Please select a contract first</p>
+          </div>
+        );
       case "settings":
         return <Settings contractId={contractId} walletAddress={walletAddress} onClearContract={clearSavedContract} />;
       case "bulk-import":

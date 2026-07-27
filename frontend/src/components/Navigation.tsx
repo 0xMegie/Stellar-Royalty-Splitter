@@ -30,6 +30,8 @@ export const Navigation: React.FC<NavigationProps> = ({
     { id: "onboarding", label: "Onboarding", icon: "🚀" },
     { id: "transactions", label: "Transactions", icon: "📋" },
     { id: "forecast", label: "Forecast", icon: "📈" },
+    { id: "earnings", label: "My Earnings", icon: "💎" },
+    { id: "health", label: "System Health", icon: "🩺" },
     { id: "admin", label: "Admin", icon: "👑" },
     { id: "initialize", label: "Initialize", icon: "⚙️" },
     { id: "distribute", label: "Distribute", icon: "💰" },

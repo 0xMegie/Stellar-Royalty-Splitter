@@ -522,6 +522,28 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_contract_event_archive_contractId ON contract_event_archive(contractId);
     CREATE INDEX IF NOT EXISTS idx_contract_event_archive_timestamp ON contract_event_archive(COALESCE(blockTime, timestamp));
     CREATE INDEX IF NOT EXISTS idx_contract_event_archive_contract_time ON contract_event_archive(contractId, COALESCE(blockTime, timestamp));
+
+    CREATE TABLE IF NOT EXISTS contributor_status (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      contractId TEXT NOT NULL,
+      address TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active', 'suspended', 'deactivated')),
+      reason TEXT,
+      suspendedAt DATETIME,
+      deactivatedAt DATETIME,
+      updatedBy TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(contractId, address)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_contributor_status_contract
+      ON contributor_status(contractId);
+    CREATE INDEX IF NOT EXISTS idx_contributor_status_address
+      ON contributor_status(contractId, address);
+    CREATE INDEX IF NOT EXISTS idx_contributor_status_status
+      ON contributor_status(contractId, status);
   `);
 
   // Migration guards for existing databases
