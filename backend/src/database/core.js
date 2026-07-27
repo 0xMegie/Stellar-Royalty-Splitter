@@ -361,6 +361,28 @@ export function initializeDatabase() {
         `,
       },
       {
+        // #598: KYC provider integration — stores raw callback events
+        version: 13,
+        sql: `
+          CREATE TABLE IF NOT EXISTS kyc_events (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider           TEXT NOT NULL CHECK(provider IN ('veriff', 'jumio')),
+            providerSessionId  TEXT NOT NULL,
+            walletAddress      TEXT,
+            outcome            TEXT NOT NULL
+              CHECK(outcome IN ('approved', 'declined', 'resubmission_requested', 'expired', 'abandoned')),
+            rawPayload         TEXT NOT NULL,
+            receivedAt         DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX IF NOT EXISTS idx_kyc_events_walletAddress
+            ON kyc_events(walletAddress);
+          CREATE INDEX IF NOT EXISTS idx_kyc_events_provider_session
+            ON kyc_events(provider, providerSessionId);
+          CREATE INDEX IF NOT EXISTS idx_kyc_events_receivedAt
+            ON kyc_events(receivedAt);
+        `,
+      },
+      {
         version: 4,
         sql: `
         CREATE TABLE IF NOT EXISTS contract_event_archive (

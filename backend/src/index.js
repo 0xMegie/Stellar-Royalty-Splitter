@@ -37,6 +37,7 @@ import { notificationsRouter } from "./routes/notifications.js";
 import { paymentHoldsRouter } from "./routes/payment-holds.js";
 import { earningsHistoryRouter } from "./routes/earnings-history.js";
 import { initializeWebSocket } from "./websocket.js";
+import { kycWebhooksRouter } from "./routes/kyc-webhooks.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -199,6 +200,9 @@ app.use("/api/v1/payment-holds", paymentHoldsRouter);
 
 // Contributor earnings history (#564)
 app.use("/api/v1", earningsHistoryRouter);
+
+// KYC provider integration hooks (#598)
+app.use("/api/v1/kyc", kycWebhooksRouter);
 
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
 const adminLimiter = rateLimit({

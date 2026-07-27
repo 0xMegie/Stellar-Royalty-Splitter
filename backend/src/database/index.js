@@ -89,6 +89,17 @@ export {
   VERIFICATION_STATUSES,
 } from "./contributor-verification.js";
 
+// KYC provider integration hooks (#598)
+export {
+  recordKycEvent,
+  getKycEventBySession,
+  getKycEventsByWallet,
+  countKycEventsByWallet,
+  linkKycSessionToWallet,
+  KYC_PROVIDERS,
+  KYC_EVENT_OUTCOMES,
+} from "./kyc.js";
+
 // Contract event archival
 export {
   DEFAULT_ARCHIVE_BATCH_SIZE,
