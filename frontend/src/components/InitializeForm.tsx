@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { api } from "../api";
 import { signAndSubmitTransaction } from "../stellar";
 import { useNetwork } from "../context/NetworkContext";
 import FormStatus from "./FormStatus";
 import { useFormStatus } from "../hooks/useFormStatus";
+import { parseRoyaltyConfigImport, RoyaltyConfigImportError } from "../utils/royaltyConfig";
 
 
 interface Collaborator {
@@ -104,6 +105,32 @@ export default function InitializeForm({
   >({});
   const { status, setStatus } = useFormStatus();
   const [loading, setLoading] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  function triggerImport() {
+    importInputRef.current?.click();
+  }
+
+  async function handleImportFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Allow re-selecting the same file after a failed import.
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const imported = parseRoyaltyConfigImport(text);
+      setCollaborators(imported);
+      setErrors({});
+      setStatus("ok", `Imported ${imported.length} collaborator(s) from ${file.name}.`);
+    } catch (e: unknown) {
+      if (e instanceof RoyaltyConfigImportError) {
+        setStatus("error", e.errors.join(" "));
+      } else {
+        setStatus("error", "Could not read the selected file.");
+      }
+    }
+  }
 
   function update(i: number, field: keyof Collaborator, value: string) {
     setCollaborators((prev: Collaborator[]) =>
@@ -332,6 +359,16 @@ export default function InitializeForm({
         <button className="btn-add" onClick={addRow} disabled={collaborators.length >= MAX_COLLABORATORS}>
           + Add collaborator
         </button>
+        <button className="btn-add" type="button" onClick={triggerImport}>
+          Import from JSON
+        </button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          onChange={handleImportFile}
+          style={{ display: "none" }}
+        />
         <button
           className="btn-primary"
           onClick={submit}
