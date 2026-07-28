@@ -3,6 +3,7 @@ import { api } from "../api";
 import { signAndSubmitTransaction } from "../stellar";
 import { useNetwork } from "../context/NetworkContext";
 import FormStatus from "./FormStatus";
+import ValidationSummary, { type ValidationSummaryIssue } from "./ValidationSummary";
 import { useFormStatus } from "../hooks/useFormStatus";
 import {
   parseRoyaltyConfigImport,
@@ -223,6 +224,65 @@ export default function InitializeForm({
   const hasEmptyFields = collaborators.some((c: Collaborator) => !c.address || !c.basisPoints);
   const hasInvalidPercentages = collaborators.some((c: Collaborator) => getPercentageError(c.basisPoints));
 
+  // Issue #694 — one summary of every active validation issue, derived from
+  // the same per-row (getPercentageError, STELLAR_ADDRESS_RE) and aggregate
+  // (share total, duplicate address) checks submit() already runs, so there
+  // is only one validation implementation.
+  const validationIssues: ValidationSummaryIssue[] = [];
+  collaborators.forEach((c: Collaborator, i: number) => {
+    if (!c.address) {
+      validationIssues.push({
+        index: i,
+        field: "address",
+        message: `Collaborator ${i + 1}: wallet address is required.`,
+      });
+    } else if (!STELLAR_ADDRESS_RE.test(c.address)) {
+      validationIssues.push({
+        index: i,
+        field: "address",
+        message: `Collaborator ${i + 1}: must be a valid Stellar address (G..., 56 chars).`,
+      });
+    }
+
+    const percentageError = getPercentageError(c.basisPoints);
+    if (percentageError) {
+      validationIssues.push({
+        index: i,
+        field: "basisPoints",
+        message: `Collaborator ${i + 1}: ${percentageError}`,
+      });
+    }
+  });
+  {
+    const seen = new Set<string>();
+    collaborators.forEach((c: Collaborator, i: number) => {
+      if (!c.address) return;
+      if (seen.has(c.address)) {
+        validationIssues.push({
+          index: i,
+          field: "address",
+          message: `Collaborator ${i + 1}: duplicate address.`,
+        });
+      }
+      seen.add(c.address);
+    });
+  }
+  if (Math.round(total * 100) !== 10_000) {
+    validationIssues.push({
+      index: -1,
+      field: "basisPoints",
+      message: `Percentages must sum to 100% (currently ${total.toFixed(2)}%).`,
+    });
+  }
+
+  function focusField(index: number, field: "address" | "basisPoints") {
+    if (field === "address") {
+      addressRefs.current[index]?.focus();
+    } else {
+      percentageRefs.current[index]?.focus();
+    }
+  }
+
   async function submit() {
     if (networkMismatch)
       return setStatus("error", "Your wallet is on the wrong network. Switch it before submitting.");
@@ -396,6 +456,8 @@ export default function InitializeForm({
           </span>
         )}
       </div>
+
+      <ValidationSummary issues={validationIssues} onFocusField={focusField} />
 
       {collaborators.length >= MAX_COLLABORATORS - 5 && collaborators.length < MAX_COLLABORATORS && (
         <div className="status info">
