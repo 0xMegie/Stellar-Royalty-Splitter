@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { api } from "../api";
+import React, { useState, useEffect, useCallback } from "react";
+import { api, RoyaltyTemplate, RoyaltyTemplateAllocation } from "../api";
 import { signAndSubmitTransaction } from "../stellar";
 import { useNetwork } from "../context/NetworkContext";
 import FormStatus from "./FormStatus";
@@ -55,6 +55,24 @@ function isAllowedPercentageInput(value: string) {
   return PERCENTAGE_INPUT_RE.test(value);
 }
 
+/**
+ * Mirrors the backend's template allocation validation (#652) so a
+ * template can be checked both before it's saved and again before it's
+ * applied to the form (templates are app-level data and could in theory
+ * have been created under different rules).
+ */
+function validateTemplateAllocations(allocations: RoyaltyTemplateAllocation[]) {
+  const addresses = allocations.map((a) => a.address);
+  if (new Set(addresses).size !== addresses.length) {
+    return "Duplicate collaborator addresses are not allowed.";
+  }
+  const totalPct = allocations.reduce((sum, a) => sum + a.percentage, 0);
+  if (Math.round(totalPct * 100) !== 10_000) {
+    return `Percentages must sum to 100% (got ${totalPct.toFixed(2)}%).`;
+  }
+  return null;
+}
+
 function updatePercentageError(
   setErrors: React.Dispatch<
     React.SetStateAction<Record<number, { address?: string; basisPoints?: string }>>
@@ -104,6 +122,33 @@ export default function InitializeForm({
   >({});
   const { status, setStatus } = useFormStatus();
   const [loading, setLoading] = useState(false);
+
+  // Reusable royalty split templates (#652)
+  const [templates, setTemplates] = useState<RoyaltyTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+  const [templateName, setTemplateName] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateStatus, setTemplateStatus] = useState<
+    { type: "ok" | "error"; message: string } | null
+  >(null);
+
+  const fetchTemplates = useCallback(() => {
+    if (!walletAddress) return;
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+    api
+      .listTemplates(walletAddress)
+      .then((res) => setTemplates(res.data))
+      .catch((e: unknown) =>
+        setTemplatesError(e instanceof Error ? e.message : "Failed to load templates"),
+      )
+      .finally(() => setTemplatesLoading(false));
+  }, [walletAddress]);
+
+  useEffect(() => {
+    fetchTemplates();
+  }, [fetchTemplates]);
 
   function update(i: number, field: keyof Collaborator, value: string) {
     setCollaborators((prev: Collaborator[]) =>
@@ -162,6 +207,82 @@ export default function InitializeForm({
       });
       return next;
     });
+  }
+
+  async function saveAsTemplate() {
+    setTemplateStatus(null);
+
+    const name = templateName.trim();
+    if (!name) {
+      setTemplateStatus({ type: "error", message: "Enter a name for the template." });
+      return;
+    }
+    if (hasErrors || hasEmptyFields || hasInvalidPercentages) {
+      setTemplateStatus({
+        type: "error",
+        message: "Fix the collaborator allocation errors before saving as a template.",
+      });
+      return;
+    }
+
+    const allocations: RoyaltyTemplateAllocation[] = collaborators.map((c) => ({
+      address: c.address,
+      percentage: parseFloat(c.basisPoints),
+    }));
+    const allocationError = validateTemplateAllocations(allocations);
+    if (allocationError) {
+      setTemplateStatus({ type: "error", message: allocationError });
+      return;
+    }
+
+    setSavingTemplate(true);
+    try {
+      await api.createTemplate({ walletAddress, name, allocations });
+      setTemplateName("");
+      setTemplateStatus({ type: "ok", message: `Saved template "${name}".` });
+      fetchTemplates();
+    } catch (e: unknown) {
+      setTemplateStatus({
+        type: "error",
+        message: e instanceof Error ? e.message : "Failed to save template.",
+      });
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  function applyTemplate(template: RoyaltyTemplate) {
+    const allocationError = validateTemplateAllocations(template.allocations);
+    if (allocationError) {
+      setTemplateStatus({
+        type: "error",
+        message: `Cannot apply "${template.name}": ${allocationError}`,
+      });
+      return;
+    }
+
+    setCollaborators(
+      template.allocations.map((a) => ({
+        address: a.address,
+        basisPoints: String(a.percentage),
+      })),
+    );
+    setErrors({});
+    setTemplateStatus({ type: "ok", message: `Applied template "${template.name}".` });
+  }
+
+  async function handleDeleteTemplate(id: number, name: string) {
+    setTemplateStatus(null);
+    try {
+      await api.deleteTemplate(id, walletAddress);
+      setTemplates((prev) => prev.filter((t) => t.id !== id));
+      setTemplateStatus({ type: "ok", message: `Deleted template "${name}".` });
+    } catch (e: unknown) {
+      setTemplateStatus({
+        type: "error",
+        message: e instanceof Error ? e.message : "Failed to delete template.",
+      });
+    }
   }
 
   const total = collaborators.reduce(
@@ -248,6 +369,60 @@ export default function InitializeForm({
   return (
     <div className="card">
       <span className="badge">Initialize</span>
+
+      <div className="royalty-templates" data-testid="royalty-templates">
+        <h4>Royalty split templates</h4>
+
+        {templatesLoading && <div className="loading">Loading templates...</div>}
+        {templatesError && <div className="error-message">{templatesError}</div>}
+        {!templatesLoading && !templatesError && templates.length === 0 && (
+          <div className="empty-state">No saved templates yet.</div>
+        )}
+
+        {templates.length > 0 && (
+          <ul className="royalty-templates__list">
+            {templates.map((t) => (
+              <li key={t.id} className="royalty-templates__item">
+                <span className="royalty-templates__name">
+                  {t.name}{" "}
+                  <span className="royalty-templates__count">
+                    ({t.allocations.length} collaborator{t.allocations.length === 1 ? "" : "s"})
+                  </span>
+                </span>
+                <span className="royalty-templates__actions">
+                  <button type="button" onClick={() => applyTemplate(t)}>
+                    Apply
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-danger"
+                    onClick={() => handleDeleteTemplate(t.id, t.name)}
+                  >
+                    Delete
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="royalty-templates__save row">
+          <input
+            placeholder="Template name"
+            value={templateName}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTemplateName(e.target.value)}
+          />
+          <button type="button" onClick={saveAsTemplate} disabled={savingTemplate}>
+            {savingTemplate ? "Saving…" : "Save current split as template"}
+          </button>
+        </div>
+
+        {templateStatus && (
+          <div className={templateStatus.type === "ok" ? "status ok" : "status error"}>
+            {templateStatus.message}
+          </div>
+        )}
+      </div>
 
       {collaborators.map((c: Collaborator, i: number) => (
         <div key={i}>
