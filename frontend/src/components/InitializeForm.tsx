@@ -112,6 +112,8 @@ export default function InitializeForm({
   const { status, setStatus } = useFormStatus();
   const [loading, setLoading] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const addressRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const percentageRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   function triggerImport() {
     importInputRef.current?.click();
