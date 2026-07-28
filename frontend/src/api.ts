@@ -118,7 +118,7 @@ export interface TransactionRecord {
   id: number;
   txHash: string | null;
   contractId: string;
-  type: "initialize" | "distribute";
+  type: "initialize" | "distribute" | "secondary_royalty" | "secondary_distribute";
   initiatorAddress: string;
   requestedAmount: string | null;
   tokenId: string | null;

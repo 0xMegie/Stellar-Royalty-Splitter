@@ -82,6 +82,17 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
 
   const closeModal = () => { setSelected(null); };
 
+  const TYPE_LABELS: Record<string, string> = {
+    distribute: "Primary Distribution",
+    secondary_royalty: "Secondary Royalty",
+    secondary_distribute: "Secondary Distribution",
+    initialize: "Initialization",
+  };
+
+  const isSecondary = (type: string) => type.startsWith("secondary_");
+
+  const getTypeLabel = (type: string) => TYPE_LABELS[type] ?? type;
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "confirmed": return "#4ade80";
@@ -186,7 +197,12 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                     onClick={() => openModal(tx)}
                     title="Click to view details"
                   >
-                    <td><span className="tx-type">{tx.type}</span></td>
+                    <td>
+                      <span className={`tx-category ${isSecondary(tx.type) ? "tx-category-secondary" : "tx-category-primary"}`}>
+                        {isSecondary(tx.type) ? "Secondary" : "Primary"}
+                      </span>
+                      <span className="tx-type">{getTypeLabel(tx.type)}</span>
+                    </td>
                     <td title={tx.initiatorAddress}>{truncateAddress(tx.initiatorAddress)}</td>
                     <td>{tx.requestedAmount ? formatNumber(tx.requestedAmount) : "—"}</td>
                     <td
@@ -251,7 +267,12 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
             <div className="tx-modal-body">
               <div className="tx-detail-row">
                 <span className="tx-detail-label">Type</span>
-                <span className="tx-type">{selected.type}</span>
+                <span>
+                  <span className={`tx-category ${isSecondary(selected.type) ? "tx-category-secondary" : "tx-category-primary"}`}>
+                    {isSecondary(selected.type) ? "Secondary" : "Primary"}
+                  </span>
+                  <span className="tx-type">{getTypeLabel(selected.type)}</span>
+                </span>
               </div>
 
               <div className="tx-detail-row">
