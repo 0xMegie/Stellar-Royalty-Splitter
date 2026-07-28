@@ -215,14 +215,14 @@ export function validateInitializePayloadSize(req, res, next) {
   const totalBodyBytes = getJsonByteLength(req.body);
 
   if (totalBodyBytes > INITIALIZE_PAYLOAD_LIMIT_BYTES) {
-    return res.status(413).json({ error: "Payload too large" });
+    return sendError(res, 413, "payload_too_large", "Payload too large");
   }
 
   if (Array.isArray(req.body?.collaborators)) {
     const collaboratorsBytes = getJsonByteLength(req.body.collaborators);
 
     if (collaboratorsBytes > INITIALIZE_COLLABORATORS_PAYLOAD_LIMIT_BYTES) {
-      return res.status(413).json({ error: "Collaborators payload too large" });
+      return sendError(res, 413, "payload_too_large", "Collaborators payload too large");
     }
   }
 

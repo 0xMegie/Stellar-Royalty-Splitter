@@ -22,7 +22,7 @@ import { snapshotRouter } from "./routes/snapshots.js";
 import { communicationsRouter } from "./routes/communications.js";
 import { metricsRouter } from "./routes/metrics.js";
 import { initializeSigningKey } from "./signing-key.js";
-import { sendError, normalizeErrorCode } from "./error-response.js";
+import { sendError, notFoundHandler, errorHandler } from "./error-response.js";
 import { preferencesRouter } from "./routes/preferences.js";
 import emailDigestRouter from "./routes/email-digest.js";
 import { disputesRouter } from "./routes/disputes.js";
@@ -234,26 +234,12 @@ app.use("/api", (req, res) => {
   res.redirect(308, `/api/v1${req.url}`);
 });
 
-// Central error handler
-app.use((err, _req, res, _next) => {
-  if (err.type === "entity.too.large") {
-    return sendError(res, 413, "payload_too_large", "Payload too large");
-  }
-  logger.error(err);
+// Any request that didn't match a route above gets the standard error shape
+// instead of Express's default HTML 404 page (#662).
+app.use(notFoundHandler);
 
-  // Structured errors thrown by stellar.js (Soroban / RPC errors)
-  if (err.status && err.code) {
-    return sendError(res, err.status, err.code, err.message ?? "Error", {
-      detail: err.detail,
-    });
-  }
-
-  if (err.status) {
-    return sendError(res, err.status, undefined, err.message ?? "Error");
-  }
-
-  return sendError(res, 500, "internal_server_error", err.message ?? "Internal server error");
-});
+// Central error handler — must be mounted last.
+app.use(errorHandler);
 
 const PORT = process.env.PORT ?? 3001;
 const server = app.listen(PORT, () => logger.info(`API listening on http://localhost:${PORT}`));
