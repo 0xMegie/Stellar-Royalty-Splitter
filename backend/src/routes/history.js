@@ -24,6 +24,7 @@ import { sendError } from "../error-response.js";
 import { pollHorizonTransaction } from "../stellar.js";
 import { deliverDistributeWebhooks } from "../webhook-delivery.js";
 import logger from "../logger.js";
+import { cacheGet, cacheSet, cacheKey, TTL } from "../cache.js";
 
 const router = express.Router();
 
@@ -53,11 +54,20 @@ router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
       );
     }
 
+    // Cache check — keyed by contractId + pagination + optional type filter
+    const suffix = `${limit}:${offset}:${type ?? ""}`;
+    const key = cacheKey("history", contractId, suffix);
+    const cached = cacheGet(key);
+    if (cached !== undefined) {
+      logger.debug(`[cache] HIT history ${contractId} (${suffix})`);
+      return res.json(cached);
+    }
+
     const filters = type ? { type } : {};
     const history = getTransactionHistory(contractId, limit, offset, filters);
     const total = getTransactionCount(contractId, filters);
 
-    res.json({
+    const body = {
       success: true,
       data: history,
       pagination: {
@@ -67,7 +77,10 @@ router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
         hasNextPage: offset + limit < total,
         hasPrevPage: offset > 0,
       },
-    });
+    };
+
+    cacheSet(key, body, TTL.history);
+    res.json(body);
   } catch (error) {
     logger.error("Error fetching transaction history:", error);
     sendError(res, 500, "internal_server_error", error.message ?? "Failed to fetch transaction history");
