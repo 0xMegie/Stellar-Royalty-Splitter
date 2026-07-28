@@ -4,6 +4,7 @@ import { signAndSubmitTransaction } from "../stellar";
 import { useNetwork } from "../context/NetworkContext";
 import FormStatus from "./FormStatus";
 import { useFormStatus } from "../hooks/useFormStatus";
+import { RoyaltyPayoutPreview } from "./RoyaltyPayoutPreview";
 
 
 interface Collaborator {
@@ -294,6 +295,14 @@ export default function InitializeForm({
   const hasEmptyFields = collaborators.some((c: Collaborator) => !c.address || !c.basisPoints);
   const hasInvalidPercentages = collaborators.some((c: Collaborator) => getPercentageError(c.basisPoints));
 
+  const allocationsSumTo100 = Math.round(total * 100) === 10_000;
+  const previewValid = !hasErrors && !hasEmptyFields && !hasInvalidPercentages && allocationsSumTo100;
+  const previewInvalidReason = previewValid
+    ? undefined
+    : hasErrors || hasEmptyFields || hasInvalidPercentages
+      ? "Fix the collaborator allocation errors to see an accurate preview."
+      : `Percentages must sum to 100% (currently ${total.toFixed(2)}%) to see an accurate preview.`;
+
   async function submit() {
     if (!contractId)
       return setStatus("error", "Enter a contract ID first.");
@@ -491,6 +500,12 @@ export default function InitializeForm({
           </span>
         )}
       </div>
+
+      <RoyaltyPayoutPreview
+        collaborators={collaborators}
+        isValid={previewValid}
+        invalidReason={previewInvalidReason}
+      />
 
       {collaborators.length >= MAX_COLLABORATORS - 5 && collaborators.length < MAX_COLLABORATORS && (
         <div className="status info">

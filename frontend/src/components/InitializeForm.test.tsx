@@ -164,7 +164,7 @@ describe("InitializeForm royalty split templates", () => {
     );
 
     expect(
-      screen.getByText(/Fix the collaborator allocation errors/i),
+      screen.getByText(/Fix the collaborator allocation errors before saving as a template/i),
     ).toBeInTheDocument();
     expect(mockApi.createTemplate).not.toHaveBeenCalled();
   });
