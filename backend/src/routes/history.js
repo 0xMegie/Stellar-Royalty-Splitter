@@ -43,7 +43,8 @@ router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
     if (!pagination) return;
     const { limit, offset } = pagination;
 
-    const { type } = req.query;
+    const { type, recipient, startDate, endDate } = req.query;
+
     if (type !== undefined && !VALID_HISTORY_TYPES.includes(type)) {
       return sendError(
         res,
@@ -53,7 +54,20 @@ router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
       );
     }
 
-    const filters = type ? { type } : {};
+    if (startDate !== undefined && isNaN(new Date(startDate).getTime())) {
+      return sendError(res, 400, "invalid_query_parameter", "Invalid startDate. Use ISO 8601 or YYYY-MM-DD format.");
+    }
+
+    if (endDate !== undefined && isNaN(new Date(endDate).getTime())) {
+      return sendError(res, 400, "invalid_query_parameter", "Invalid endDate. Use ISO 8601 or YYYY-MM-DD format.");
+    }
+
+    const filters = {};
+    if (type) filters.type = type;
+    if (recipient) filters.recipient = recipient;
+    if (startDate) filters.startDate = startDate;
+    if (endDate) filters.endDate = endDate;
+
     const history = getTransactionHistory(contractId, limit, offset, filters);
     const total = getTransactionCount(contractId, filters);
 
