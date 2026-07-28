@@ -4756,3 +4756,239 @@ fn test_regression_single_admin_insufficient_after_multisig_activated() {
     assert!(!client.is_paused());
 }
 
+// ── Issue #661: structured events for royalty configuration and payouts ─────
+
+/// initialize() emits a ("royalty", "init") event carrying the collaborator
+/// list and their shares.
+#[test]
+fn test_initialize_emits_init_event() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let collaborators = vec![&env, admin.clone(), b.clone()];
+    let shares = vec![&env, 6000_u32, 4000_u32];
+
+    client.initialize(&collaborators, &shares);
+
+    let events = env.events().all();
+    let found = events.iter().any(|(cid, topics, data)| {
+        cid == contract_id
+            && topics
+                == vec![
+                    &env,
+                    symbol_short!("royalty").into_val(&env),
+                    symbol_short!("init").into_val(&env),
+                ]
+            && val_eq(&env, data, (collaborators.clone(), shares.clone()))
+    });
+    assert!(found, "init event not emitted");
+}
+
+/// Per-recipient payouts from distribute() emit a ("royalty", "dist") event
+/// per recipient carrying (address, amount, token, distribution_type) — this
+/// is the structured, indexer-friendly event, distinct from the ("royalty",
+/// "dist_all") per-token summary.
+#[test]
+fn test_distribute_emits_per_recipient_dist_events_with_metadata() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 6000_u32, 4000_u32],
+    );
+    mint(&env, &token, &contract_id, 1000);
+    client.distribute(&token);
+
+    let events = env.events().all();
+
+    let admin_payout_event = events.iter().any(|(cid, topics, data)| {
+        cid == contract_id
+            && topics
+                == vec![
+                    &env,
+                    symbol_short!("royalty").into_val(&env),
+                    symbol_short!("dist").into_val(&env),
+                ]
+            && val_eq(
+                &env,
+                data,
+                (admin.clone(), 600_i128, token.clone(), symbol_short!("primary")),
+            )
+    });
+    assert!(
+        admin_payout_event,
+        "per-recipient dist event with (address, amount, token, type) not emitted for admin"
+    );
+
+    let b_payout_event = events.iter().any(|(cid, topics, data)| {
+        cid == contract_id
+            && topics
+                == vec![
+                    &env,
+                    symbol_short!("royalty").into_val(&env),
+                    symbol_short!("dist").into_val(&env),
+                ]
+            && val_eq(
+                &env,
+                data,
+                (b.clone(), 400_i128, token.clone(), symbol_short!("primary")),
+            )
+    });
+    assert!(
+        b_payout_event,
+        "per-recipient dist event with (address, amount, token, type) not emitted for b"
+    );
+}
+
+/// batch_distribute() tags its per-recipient ("royalty", "dist") events with
+/// distribution_type "batch" so indexers can distinguish batch payouts from
+/// single-token distribute() payouts (tagged "primary").
+#[test]
+fn test_batch_distribute_emits_per_recipient_dist_events_tagged_batch() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+    mint(&env, &token, &contract_id, 1000);
+    client.batch_distribute(&vec![&env, token.clone()]);
+
+    let events = env.events().all();
+    let found = events.iter().any(|(cid, topics, data)| {
+        cid == contract_id
+            && topics
+                == vec![
+                    &env,
+                    symbol_short!("royalty").into_val(&env),
+                    symbol_short!("dist").into_val(&env),
+                ]
+            && val_eq(
+                &env,
+                data,
+                (admin.clone(), 500_i128, token.clone(), symbol_short!("batch")),
+            )
+    });
+    assert!(found, "batch-tagged per-recipient dist event not emitted");
+}
+
+/// Per-recipient secondary royalty payouts emit a ("royalty", "sec_pay")
+/// event carrying (address, amount, token, "secondary") — distinct from the
+/// ("royalty", "sec_dist") pool-level summary event.
+#[test]
+fn test_distribute_secondary_royalties_emits_per_recipient_events_with_metadata() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 6000_u32, 4000_u32],
+    );
+    mint(&env, &token, &admin, 500);
+    client.record_secondary_royalty(&token, &admin, &500_i128);
+    client.distribute_secondary_royalties();
+
+    let events = env.events().all();
+    let found = events.iter().any(|(cid, topics, data)| {
+        cid == contract_id
+            && topics
+                == vec![
+                    &env,
+                    symbol_short!("royalty").into_val(&env),
+                    symbol_short!("sec_pay").into_val(&env),
+                ]
+            && val_eq(
+                &env,
+                data,
+                (admin.clone(), 300_i128, token.clone(), symbol_short!("secondary")),
+            )
+    });
+    assert!(found, "per-recipient sec_pay event not emitted");
+}
+
+/// update_share() emits a ("share", "updated") event with the collaborator
+/// and their new share.
+#[test]
+fn test_update_share_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+    client.update_share(&b, &6000_u32);
+
+    let events = env.events().all();
+    let found = events.iter().any(|(cid, topics, data)| {
+        cid == contract_id
+            && topics
+                == vec![
+                    &env,
+                    symbol_short!("share").into_val(&env),
+                    symbol_short!("updated").into_val(&env),
+                ]
+            && val_eq(&env, data, (b.clone(), 6000_u32))
+    });
+    assert!(found, "share/updated event not emitted");
+}
+
+/// set_admins() emits a ("royalty", "adms_set") event with the admin count
+/// and threshold.
+#[test]
+fn test_set_admins_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let co_admin = Address::generate(&env);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+    client.set_admins(&vec![&env, admin.clone(), co_admin.clone()], &2_u32);
+
+    let events = env.events().all();
+    let found = events.iter().any(|(cid, topics, data)| {
+        cid == contract_id
+            && topics
+                == vec![
+                    &env,
+                    symbol_short!("royalty").into_val(&env),
+                    symbol_short!("adms_set").into_val(&env),
+                ]
+            && val_eq(&env, data, (2_u32, 2_u32))
+    });
+    assert!(found, "adms_set event not emitted");
+}
+
