@@ -5173,3 +5173,372 @@ fn test_set_admins_emits_event() {
     assert!(found, "adms_set event not emitted");
 }
 
+
+// =============================================================================
+// Issue #674 — Failed royalty transfer scenarios
+// =============================================================================
+// These tests verify that the contract behaves atomically and consistently
+// when transfers cannot complete.  Contract state must be left unchanged on
+// every failure path; no partial payouts or corrupted counters may occur.
+// =============================================================================
+
+/// #674 — Zero contract balance: distribute must return Underfunded and must
+/// not modify DistributeHistory or LastDistribution.
+#[test]
+fn test_distribute_fails_zero_balance_no_state_change() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    // No mint — balance is zero
+    let result = client.try_distribute(&token);
+    assert_eq!(result, Err(Ok(ContractError::Underfunded)));
+
+    // Neither counter nor timestamp must be written
+    env.as_contract(&contract_id, || {
+        assert!(!env.storage().instance().has(&StorageKey::LastDistribution));
+        assert!(!env.storage().instance().has(&StorageKey::DistributeHistory));
+    });
+
+    // Collaborator balances remain zero
+    assert_eq!(TokenClient::new(&env, &token).balance(&admin), 0);
+    assert_eq!(TokenClient::new(&env, &token).balance(&b), 0);
+}
+
+/// #674 — Paused contract: distribute must return ContractPaused and must not
+/// alter state or payout any funds.
+#[test]
+fn test_distribute_fails_when_contract_is_paused() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+    mint(&env, &token, &contract_id, 1_000);
+
+    client.pause();
+    assert!(client.is_paused());
+
+    let result = client.try_distribute(&token);
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+
+    // Funds must remain in the contract; collaborators receive nothing
+    assert_eq!(TokenClient::new(&env, &token).balance(&contract_id), 1_000);
+    assert_eq!(TokenClient::new(&env, &token).balance(&admin), 0);
+    assert_eq!(TokenClient::new(&env, &token).balance(&b), 0);
+
+    // No distribution state must have been written
+    env.as_contract(&contract_id, || {
+        assert!(!env.storage().instance().has(&StorageKey::LastDistribution));
+        assert!(!env.storage().instance().has(&StorageKey::DistributeHistory));
+    });
+}
+
+/// #674 — Insufficient balance for a meaningful split: when the amount is
+/// positive but too small to produce a non-zero payout for any collaborator
+/// the contract must reject with AmountTooSmall.
+#[test]
+fn test_distribute_fails_amount_too_small() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    // 9 999 collaborators each holding 1 bp — a payout of 1 stroop (1 * 1 / 10 000 = 0)
+    // is too small for the first collaborator; the contract should reject.
+    //
+    // For a simpler reproducible case use the minimum: 1 stroop with a 50/50 split.
+    // 1 * 5000 / 10_000 = 0 (integer division) → AmountTooSmall.
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+    mint(&env, &token, &contract_id, 1);
+
+    let result = client.try_distribute(&token);
+    assert_eq!(result, Err(Ok(ContractError::AmountTooSmall)));
+
+    // Contract balance must be untouched
+    assert_eq!(TokenClient::new(&env, &token).balance(&contract_id), 1);
+    assert_eq!(TokenClient::new(&env, &token).balance(&admin), 0);
+    assert_eq!(TokenClient::new(&env, &token).balance(&b), 0);
+
+    // No distribution state written
+    env.as_contract(&contract_id, || {
+        assert!(!env.storage().instance().has(&StorageKey::LastDistribution));
+        assert!(!env.storage().instance().has(&StorageKey::DistributeHistory));
+    });
+}
+
+/// #674 — Successful distribution after a failed one: the distribute counter
+/// must reflect only successful calls, not failed attempts.
+#[test]
+fn test_distribute_count_unchanged_after_failure() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    // Fail: zero balance
+    assert_eq!(
+        client.try_distribute(&token),
+        Err(Ok(ContractError::Underfunded))
+    );
+
+    // Succeed: mint enough funds
+    mint(&env, &token, &contract_id, 1_000);
+    client.distribute(&token);
+
+    // Counter must be 1, not 2
+    assert_eq!(client.get_distribute_count(), 1);
+}
+
+/// #674 — distribute_secondary_royalties with zero pool must return
+/// NoSecondaryRoyalties and must not corrupt the secondary pool balance.
+#[test]
+fn test_distribute_secondary_royalties_fails_empty_pool() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (_, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    // No secondary royalties recorded — pool is 0
+    let result = client.try_distribute_secondary_royalties();
+    assert_eq!(result, Err(Ok(ContractError::NoSecondaryRoyalties)));
+
+    // Secondary pool must stay at 0 (not written as negative or garbage)
+    assert_eq!(client.get_secondary_pool(), 0);
+}
+
+// =============================================================================
+// Issue #685 — Invariant / property tests for royalty distribution logic
+// =============================================================================
+// Each test generates multiple valid allocation combinations and verifies core
+// distribution guarantees across all of them.  Inputs are bounded to reflect
+// real Soroban contract limits (max 10 collaborators, shares sum to 10 000,
+// amounts up to 10^15 stroops).
+// =============================================================================
+
+/// Helper: build a split with `n` collaborators from a pre-computed share list.
+/// Returns (contract_id, client, list_of_addresses, token).
+fn setup_split(
+    env: &Env,
+    shares: &[u32],
+) -> (Address, RoyaltySplitterClient<'_>, SorobanVec<Address>, Address) {
+    let contract_id = env.register_contract(None, stellar_royalty_splitter::RoyaltySplitter);
+    let client = RoyaltySplitterClient::new(env, &contract_id);
+
+    let mut addrs: SorobanVec<Address> = SorobanVec::new(&env);
+    for _ in 0..shares.len() {
+        addrs.push_back(Address::generate(env));
+    }
+
+    let mut share_vec: SorobanVec<u32> = SorobanVec::new(&env);
+    for &s in shares {
+        share_vec.push_back(s);
+    }
+
+    let token_admin = Address::generate(env);
+    let token = env.register_stellar_asset_contract(token_admin.clone());
+
+    client.initialize(&addrs, &share_vec);
+
+    (contract_id, client, addrs, token)
+}
+
+/// #685 Invariant 1 — Total payouts must never exceed the input amount.
+/// Tested over a matrix of share configurations and distribution amounts.
+#[test]
+fn test_invariant_payouts_never_exceed_input() {
+    let share_configs: &[&[u32]] = &[
+        &[10_000],                         // single collaborator
+        &[5_000, 5_000],                   // equal 50/50
+        &[3_000, 3_000, 4_000],            // 3-way
+        &[1_000, 2_000, 3_000, 4_000],     // 4-way ascending
+        &[9_999, 1],                        // extreme 99.99 / 0.01
+        &[1, 1, 1, 1, 1, 1, 1, 1, 1, 9_991], // 10 collaborators, dust at start
+    ];
+    let amounts: &[i128] = &[1, 2, 10, 100, 1_000, 9_999, 10_000, 1_000_000, 999_999_999_999_999];
+
+    for &shares in share_configs {
+        for &amount in amounts {
+            let env = Env::default();
+            env.mock_all_auths_allowing_non_root_auth();
+            let (contract_id, client, addrs, token) = setup_split(&env, shares);
+
+            StellarAssetClient::new(&env, &token).mint(&contract_id, &amount);
+
+            // Some tiny amounts legitimately trigger AmountTooSmall — skip those.
+            if client.try_distribute(&token).is_err() {
+                continue;
+            }
+
+            let mut total_paid: i128 = 0;
+            for addr in addrs.iter() {
+                total_paid += TokenClient::new(&env, &token).balance(&addr);
+            }
+
+            assert!(
+                total_paid <= amount,
+                "payouts ({total_paid}) exceeded input ({amount}) for shares {shares:?}"
+            );
+        }
+    }
+}
+
+/// #685 Invariant 2 — For valid allocations (shares summing to 10 000) the
+/// full input amount is always distributed (no funds are stranded in the contract).
+#[test]
+fn test_invariant_full_distribution_no_stranded_funds() {
+    let share_configs: &[&[u32]] = &[
+        &[10_000],
+        &[5_000, 5_000],
+        &[3_334, 3_333, 3_333],            // rounding: 3334+3333+3333=10000
+        &[2_500, 2_500, 2_500, 2_500],
+        &[9_999, 1],
+        &[1_111, 1_111, 1_111, 1_111, 1_111, 1_111, 1_111, 1_111, 1_111, 1_001],
+    ];
+    // Amounts large enough that every collaborator receives at least 1 stroop.
+    let amounts: &[i128] = &[10_000, 100_000, 1_000_000, 10_000_000_000_i128];
+
+    for &shares in share_configs {
+        for &amount in amounts {
+            let env = Env::default();
+            env.mock_all_auths_allowing_non_root_auth();
+            let (contract_id, client, addrs, token) = setup_split(&env, shares);
+
+            StellarAssetClient::new(&env, &token).mint(&contract_id, &amount);
+            client.distribute(&token);
+
+            let mut total_paid: i128 = 0;
+            for addr in addrs.iter() {
+                total_paid += TokenClient::new(&env, &token).balance(&addr);
+            }
+
+            assert_eq!(
+                total_paid, amount,
+                "stranded funds: paid {total_paid} but input was {amount} for shares {shares:?}"
+            );
+
+            // Contract balance must be exactly 0 after distribution
+            assert_eq!(
+                TokenClient::new(&env, &token).balance(&contract_id),
+                0,
+                "contract retained funds for shares {shares:?} with amount {amount}"
+            );
+        }
+    }
+}
+
+/// #685 Invariant 3 — No collaborator ever receives a negative payout.
+#[test]
+fn test_invariant_no_negative_payouts() {
+    let share_configs: &[&[u32]] = &[
+        &[5_000, 5_000],
+        &[1, 9_999],
+        &[9_999, 1],
+        &[3_000, 3_000, 4_000],
+        &[1_000, 1_000, 1_000, 1_000, 1_000, 1_000, 1_000, 1_000, 1_000, 1_000],
+    ];
+    let amounts: &[i128] = &[10_000, 100_000, 1_000_000_000_i128];
+
+    for &shares in share_configs {
+        for &amount in amounts {
+            let env = Env::default();
+            env.mock_all_auths_allowing_non_root_auth();
+            let (contract_id, client, addrs, token) = setup_split(&env, shares);
+
+            StellarAssetClient::new(&env, &token).mint(&contract_id, &amount);
+            client.distribute(&token);
+
+            for addr in addrs.iter() {
+                let payout = TokenClient::new(&env, &token).balance(&addr);
+                assert!(
+                    payout >= 0,
+                    "negative payout ({payout}) for shares {shares:?} amount {amount}"
+                );
+            }
+        }
+    }
+}
+
+/// #685 Invariant 4 — Collaborator allocations (stored shares) must remain
+/// unchanged after a distribution.  distribute() must be a read-only operation
+/// with respect to the share map.
+#[test]
+fn test_invariant_shares_unchanged_after_distribution() {
+    let share_configs: &[&[u32]] = &[
+        &[5_000, 5_000],
+        &[3_000, 3_000, 4_000],
+        &[9_999, 1],
+        &[1_000, 1_000, 1_000, 1_000, 1_000, 1_000, 1_000, 1_000, 1_000, 1_000],
+    ];
+
+    for &shares in share_configs {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, client, addrs, token) = setup_split(&env, shares);
+
+        StellarAssetClient::new(&env, &token).mint(&contract_id, &1_000_000_i128);
+        client.distribute(&token);
+
+        // Verify each collaborator's stored share is identical to what was set
+        for (i, addr) in addrs.iter().enumerate() {
+            let stored = client.get_share(&addr);
+            assert_eq!(
+                stored, shares[i],
+                "share for collaborator {i} changed after distribution (shares {shares:?})"
+            );
+        }
+
+        // Total shares must still be 10 000
+        let mut total: u32 = 0;
+        for addr in addrs.iter() {
+            total += client.get_share(&addr);
+        }
+        assert_eq!(
+            total, 10_000,
+            "share total diverged from 10 000 after distribution (shares {shares:?})"
+        );
+    }
+}
