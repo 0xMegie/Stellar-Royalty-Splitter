@@ -14,6 +14,7 @@ import webhooksRouter from "./routes/webhooks.js";
 import { analyticsRouter } from "./routes/analytics.js";
 import { contractRouter } from "./routes/contract.js";
 import { healthRouter } from "./routes/health.js";
+import { livenessRouter } from "./routes/liveness.js";
 import onboardingRouter from "./routes/onboarding.js";
 import { closeDatabase, initializeDatabase } from "./database/index.js";
 import { createGracefulShutdownHandler } from "./shutdown.js";
@@ -106,7 +107,11 @@ const generalLimiter = rateLimit({
     res.set("Retry-After", "60");
     sendError(res, 429, "too_many_requests", "Too many requests, please try again later.");
   },
-  skip: (req) => req.path === "/api/v1/health" || req.path === "/api/health",
+  skip: (req) =>
+    req.path === "/api/v1/health" ||
+    req.path === "/api/health" ||
+    req.path === "/health" ||
+    req.path === "/ready",
 });
 
 // Write limiter: 10 req / 1 min per IP
@@ -171,6 +176,7 @@ app.use("/api/v1", webhooksRouter);
 app.use("/api/v1", analyticsRouter);
 app.use("/api/v1/contract", contractRouter);
 app.use("/api/v1/health", healthRouter);
+app.use(livenessRouter);
 app.use("/api/v1/preferences", preferencesRouter);
 app.use("/api/v1/templates", templatesRouter);
 app.use("/api/v1", emailDigestRouter);

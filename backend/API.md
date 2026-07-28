@@ -7,9 +7,41 @@ JSON request bodies are limited to `10kb`; oversized requests return `413 Payloa
 
 ## Health
 
+### `GET /health`
+
+Liveness probe — confirms the API process is running. Does not touch the
+database or Horizon, so it's safe to poll frequently (deployment platforms,
+uptime monitors). Always returns `200` if the process can respond at all.
+
+**Response**
+
+```json
+{ "status": "ok", "network": "Testnet", "uptime": 1234.5 }
+```
+
+### `GET /ready`
+
+Readiness probe — confirms the dependencies required to serve traffic
+(local SQLite database, Stellar Horizon) are reachable. Returns `503` when
+any dependency is down so orchestrators can hold traffic until the service
+recovers. Never runs contract transactions or expensive RPC calls.
+
+**Response**
+
+```json
+{
+  "status": "ready",
+  "dependencies": { "database": true, "horizon": true }
+}
+```
+
+`status` is `"not_ready"` and the HTTP status is `503` when any dependency
+in `dependencies` is `false`.
+
 ### `GET /api/v1/health`
 
-Operator health check for the backend and Stellar connectivity.
+Operator health check for the backend and Stellar connectivity — richer
+than `/health`, includes contract deployment status and DB metrics.
 
 **Response**
 
