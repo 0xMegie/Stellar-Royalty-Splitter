@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { Navigation } from "./components/Navigation";
 import HelpModal from "./components/HelpModal";
 import { OfflineIndicator } from "./components/OfflineIndicator";
+import { NetworkMismatchBanner } from "./components/NetworkMismatchBanner";
 import { useTheme } from "./context/ThemeContext";
 import {
   useKeyboardShortcuts,
@@ -490,6 +491,7 @@ export default function App() {
   return (
     <div className="app-wrapper">
       <OfflineIndicator />
+      {walletAddress && <NetworkMismatchBanner />}
       {showHelp && <HelpModal onClose={closeHelp} shortcuts={shortcuts} />}
       {sessionToast && (
         <div className="session-toast" role="alert" aria-live="assertive">
