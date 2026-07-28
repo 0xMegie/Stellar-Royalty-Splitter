@@ -358,6 +358,187 @@ fn test_storage_snapshot_after_distribute() {
     });
 }
 
+/// Issue #667 — a failed `initialize` (invalid share total) must not write
+/// any storage entry. Uses `try_initialize` so the assertion failure (were
+/// it to fire) reports cleanly rather than unwinding through a panic.
+#[test]
+fn test_failed_initialize_does_not_write_any_storage() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    // Shares sum to 9,000, not 10,000 — initialize must reject and write nothing.
+    let result = client.try_initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 4000_u32],
+    );
+    assert_eq!(result, Err(Ok(ContractError::InvalidShareTotal)));
+
+    env.as_contract(&contract_id, || {
+        assert!(!env.storage().instance().has(&StorageKey::Admin));
+        assert!(!env.storage().instance().has(&StorageKey::ContractVersion));
+        assert!(!env.storage().persistent().has(&StorageKey::Collaborators));
+        assert!(!env.storage().persistent().has(&StorageKey::ShareMap));
+    });
+}
+
+/// Issue #667 — a failed `update_share` (new total != 10,000) must leave the
+/// share map and collaborator list exactly as they were before the call.
+#[test]
+fn test_failed_update_share_does_not_change_share_map() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (_, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    // 5000 -> 7000 makes the total 12,000; must be rejected.
+    let result = client.try_update_share(&admin, &7000_u32);
+    assert_eq!(result, Err(Ok(ContractError::InvalidUpdatedShareTotal)));
+
+    assert_eq!(client.get_share(&admin), 5000);
+    assert_eq!(client.get_share(&b), 5000);
+    assert_eq!(client.get_total_shares(), 10_000);
+}
+
+/// Issue #667 — a failed `distribute` (zero balance) must not advance the
+/// distribution counter/timestamp or move any token balance.
+#[test]
+fn test_failed_distribute_does_not_change_counters_or_balances() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (_, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    // Contract balance is 0 — distribute must fail without touching state.
+    let result = client.try_distribute(&token);
+    assert_eq!(result, Err(Ok(ContractError::Underfunded)));
+
+    assert_eq!(client.get_distribute_count(), 0);
+    assert!(client.get_last_distribution().is_none());
+    assert_eq!(TokenClient::new(&env, &token).balance(&admin), 0);
+    assert_eq!(TokenClient::new(&env, &token).balance(&b), 0);
+}
+
+/// Issue #667 — repeated successful distributions must keep advancing the
+/// counter/timestamp while the collaborator list and share map stay fixed.
+#[test]
+fn test_repeated_distribution_sequence_preserves_storage_consistency() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 6000_u32, 4000_u32],
+    );
+
+    let mut expected_admin_balance: i128 = 0;
+    let mut expected_b_balance: i128 = 0;
+
+    for round in 1..=3_u64 {
+        let amount: i128 = 1_000;
+        mint(&env, &token, &contract_id, amount);
+        env.ledger()
+            .with_mut(|ledger| ledger.timestamp = 1_700_000_000 + round);
+
+        client.distribute(&token);
+
+        assert_eq!(client.get_distribute_count(), round);
+        assert_eq!(
+            client.get_last_distribution().unwrap(),
+            1_700_000_000 + round
+        );
+
+        expected_admin_balance += amount * 6000 / 10_000;
+        expected_b_balance += amount * 4000 / 10_000;
+        assert_eq!(
+            TokenClient::new(&env, &token).balance(&admin),
+            expected_admin_balance
+        );
+        assert_eq!(
+            TokenClient::new(&env, &token).balance(&b),
+            expected_b_balance
+        );
+
+        // Configuration storage must never drift across repeated distributions.
+        assert_eq!(client.get_share(&admin), 6000);
+        assert_eq!(client.get_share(&b), 4000);
+        assert_eq!(client.get_collaborators().len(), 2);
+    }
+}
+
+/// Issue #667 — collaborator allocations must remain unchanged after a
+/// sequence of unrelated successful operations (rate change, pause/unpause,
+/// secondary royalty recording) and after both a successful and a failed
+/// distribute.
+#[test]
+fn test_collaborator_allocations_unchanged_across_operations() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 6500_u32, 3500_u32],
+    );
+
+    let snapshot_collaborators = client.get_collaborators();
+    let snapshot_admin_share = client.get_share(&admin);
+    let snapshot_b_share = client.get_share(&b);
+
+    client.set_royalty_rate(&500_u32);
+    client.pause();
+    client.unpause();
+    client.record_secondary_royalty(&token, &admin, &100_i128);
+
+    // A failed distribute (zero balance for this call) must not disturb shares.
+    let failed = client.try_distribute(&token);
+    assert!(failed.is_err());
+
+    mint(&env, &token, &contract_id, 10_000);
+    client.distribute(&token);
+
+    let collaborators = client.get_collaborators();
+    assert_eq!(collaborators.len(), snapshot_collaborators.len());
+    for i in 0..collaborators.len() {
+        assert_eq!(
+            collaborators.get(i).unwrap(),
+            snapshot_collaborators.get(i).unwrap()
+        );
+    }
+    assert_eq!(client.get_share(&admin), snapshot_admin_share);
+    assert_eq!(client.get_share(&b), snapshot_b_share);
+    assert_eq!(client.get_total_shares(), 10_000);
+}
+
 /// Events — distribute emits a ("royalty", "dist_all") event with (token, amount).
 #[test]
 fn test_distribute_emits_event() {
