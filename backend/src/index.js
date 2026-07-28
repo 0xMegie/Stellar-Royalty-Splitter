@@ -82,10 +82,13 @@ app.use(
   })
 );
 
+const RATE_LIMIT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "60000");
+const RATE_LIMIT_WRITE_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WRITE_WINDOW_MS ?? "60000");
+
 // Public rate limiter: 100 req / 1 min per IP (skips /api/health)
 // Authenticated rate limiter: 1000 req / 1 min per API key
 const generalLimiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "60000"),
+  windowMs: RATE_LIMIT_WINDOW_MS,
   max: (req) => {
     if (req.headers["x-api-key"]) {
       return parseInt(process.env.RATE_LIMIT_AUTH_MAX ?? "1000");
@@ -102,15 +105,15 @@ const generalLimiter = rateLimit({
       method: req.method,
       apiKey: req.headers["x-api-key"] ? "present" : "none",
     });
-    res.set("Retry-After", "60");
+    res.set("Retry-After", String(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)));
     sendError(res, 429, "too_many_requests", "Too many requests, please try again later.");
   },
   skip: (req) => req.path === "/api/v1/health" || req.path === "/api/health",
 });
 
-// Write limiter: 10 req / 1 min per IP
+// Write limiter: 10 req / configurable window per IP
 const writeLimiter = rateLimit({
-  windowMs: 60_000,
+  windowMs: RATE_LIMIT_WRITE_WINDOW_MS,
   max: parseInt(process.env.RATE_LIMIT_WRITE_MAX ?? "10"),
   standardHeaders: true,
   legacyHeaders: false,
@@ -120,7 +123,7 @@ const writeLimiter = rateLimit({
       path: req.originalUrl,
       method: req.method,
     });
-    res.set("Retry-After", "60");
+    res.set("Retry-After", String(Math.ceil(RATE_LIMIT_WRITE_WINDOW_MS / 1000)));
     sendError(res, 429, "too_many_requests", "Too many write requests, please slow down.");
   },
 });
@@ -211,8 +214,9 @@ app.use("/api/v1/snapshots", snapshotRouter);
 app.use("/api/v1/communications", communicationsRouter);
 
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
+const RATE_LIMIT_ADMIN_WINDOW_MS = 60_000;
 const adminLimiter = rateLimit({
-  windowMs: 60_000,
+  windowMs: RATE_LIMIT_ADMIN_WINDOW_MS,
   max: parseInt(process.env.RATE_LIMIT_ADMIN_MAX ?? "5"),
   standardHeaders: true,
   legacyHeaders: false,
@@ -222,7 +226,7 @@ const adminLimiter = rateLimit({
       path: req.originalUrl,
       method: req.method,
     });
-    res.set("Retry-After", "60");
+    res.set("Retry-After", String(Math.ceil(RATE_LIMIT_ADMIN_WINDOW_MS / 1000)));
     sendError(res, 429, "too_many_requests", "Too many admin requests, please slow down.");
   },
 });
