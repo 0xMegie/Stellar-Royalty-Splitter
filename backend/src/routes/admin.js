@@ -147,3 +147,26 @@ adminRouter.post(
     }
   },
 );
+
+/**
+ * GET /admin/roles/me
+ * #658 — Returns the resolved role for the current API key caller.
+ * Unauthenticated requests resolve to "viewer".
+ * Returns: { role: "viewer" | "collaborator" | "operator" | "admin" }
+ */
+adminRouter.get("/roles/me", (req, res) => {
+  res.json({ role: req.role ?? "viewer" });
+});
+
+/**
+ * GET /admin/roles
+ * #658 — Returns the full role hierarchy so the frontend can use it for
+ * UI permission checks without hard-coding the order.
+ * Returns: { roles: string[], hierarchy: Record<string, number> }
+ */
+import { ROLES } from "../middleware/rbac.js";
+
+adminRouter.get("/roles", (_req, res) => {
+  const hierarchy = Object.fromEntries(ROLES.map((r, i) => [r, i]));
+  res.json({ roles: ROLES, hierarchy });
+});
