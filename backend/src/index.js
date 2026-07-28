@@ -32,6 +32,7 @@ import { isEmailConfigured } from "./email/email-service.js";
 import { rankingRouter } from "./routes/ranking.js";
 import { docsRouter } from "./routes/docs.js";
 import { attachRole } from "./middleware/rbac.js";
+import { requestLogger } from "./middleware/request-logger.js";
 import { csvImportRouter } from "./routes/csv-import.js";
 import { contributorTaxRouter } from "./routes/contributor-tax.js";
 import { notificationsRouter } from "./routes/notifications.js";
@@ -49,20 +50,8 @@ initializeSigningKey();
 
 const app = express();
 
-// Request logging middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    logger.info(`${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`, {
-      method: req.method,
-      path: req.originalUrl,
-      status: res.statusCode,
-      duration,
-    });
-  });
-  next();
-});
+// Structured request logging with correlation IDs (#673)
+app.use(requestLogger);
 
 // Security headers
 app.use(helmet());

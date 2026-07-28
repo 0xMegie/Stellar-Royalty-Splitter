@@ -1,9 +1,10 @@
-import React, { useRef, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import { api } from "../api";
 import { signAndSubmitTransaction } from "../stellar";
 import { useNetwork } from "../context/NetworkContext";
 import FormStatus from "./FormStatus";
 import { useFormStatus } from "../hooks/useFormStatus";
+import { useRoyaltyDraft } from "../hooks/useRoyaltyDraft";
 import {
   parseRoyaltyConfigImport,
   RoyaltyConfigImportError,
@@ -112,6 +113,18 @@ export default function InitializeForm({
   const { status, setStatus } = useFormStatus();
   const [loading, setLoading] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const addressRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const percentageRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  const handleRestore = useCallback((restored: Collaborator[]) => {
+    setCollaborators(restored);
+    setErrors({});
+  }, []);
+
+  const { pendingDraft, acceptDraft, discardDraft } = useRoyaltyDraft(
+    collaborators,
+    handleRestore,
+  );
 
   function triggerImport() {
     importInputRef.current?.click();
@@ -307,6 +320,27 @@ export default function InitializeForm({
   return (
     <div className="card">
       <span className="badge">Initialize</span>
+
+      {pendingDraft && (
+        <div className="status info" role="alert" aria-live="polite" data-testid="draft-restore-banner">
+          A saved draft from {new Date(pendingDraft.savedAt).toLocaleString()} was found.{" "}
+          <button
+            type="button"
+            onClick={acceptDraft}
+            style={{ marginRight: "0.5rem" }}
+            data-testid="draft-restore-accept"
+          >
+            Restore draft
+          </button>
+          <button
+            type="button"
+            onClick={discardDraft}
+            data-testid="draft-restore-discard"
+          >
+            Discard
+          </button>
+        </div>
+      )}
 
       {collaborators.map((c: Collaborator, i: number) => (
         <div key={i}>
