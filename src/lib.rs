@@ -744,8 +744,10 @@ impl RoyaltySplitter {
 
         for (addr, payout) in payouts.iter() {
             token_client.transfer(&env.current_contract_address(), &addr, &payout);
-            env.events()
-                .publish((symbol_short!("dist"),), (addr, payout));
+            env.events().publish(
+                (symbol_short!("royalty"), symbol_short!("dist")),
+                (addr, payout, token.clone(), symbol_short!("primary")),
+            );
         }
 
         env.events().publish(
@@ -941,8 +943,10 @@ impl RoyaltySplitter {
             // Execute transfers for this token
             for (addr, payout) in payouts.iter() {
                 token_client.transfer(&env.current_contract_address(), &addr, &payout);
-                env.events()
-                    .publish((symbol_short!("dist"),), (addr, payout));
+                env.events().publish(
+                    (symbol_short!("royalty"), symbol_short!("dist")),
+                    (addr, payout, token.clone(), symbol_short!("batch")),
+                );
             }
 
             // Emit distribution event for this token
@@ -1107,8 +1111,10 @@ impl RoyaltySplitter {
 
         for (addr, payout) in payouts.iter() {
             token_client.transfer(&env.current_contract_address(), &addr, &payout);
-            env.events()
-                .publish((symbol_short!("sec_dist"),), (addr, payout));
+            env.events().publish(
+                (symbol_short!("royalty"), symbol_short!("sec_pay")),
+                (addr, payout, token.clone(), symbol_short!("secondary")),
+            );
         }
 
         storage::instance_set(&env, &StorageKey::SecondaryPool, &0_i128);

@@ -15,7 +15,7 @@ export default function DistributeSecondaryRoyalties({
   walletAddress,
   onSuccess,
 }: Props) {
-  const { network } = useNetwork();
+  const { network, networkMismatch } = useNetwork();
   const [tokenId, setTokenId] = useState<string>("");
   const [status, setStatus] = useState<{
     type: "ok" | "error" | "info";
@@ -39,6 +39,12 @@ export default function DistributeSecondaryRoyalties({
   }, [contractId]);
 
   async function submit() {
+    if (networkMismatch) {
+      return setStatus({
+        type: "error",
+        msg: "Your wallet is on the wrong network. Switch it before submitting.",
+      });
+    }
     if (!contractId || !tokenId) {
       return setStatus({ type: "error", msg: "Please fill in all fields." });
     }
@@ -130,11 +136,16 @@ export default function DistributeSecondaryRoyalties({
         />
       </div>
 
+      {networkMismatch && (
+        <div className="message error">
+          Your wallet is on the wrong network. Switch it to {network === "mainnet" ? "Mainnet" : "Testnet"} to distribute secondary royalties.
+        </div>
+      )}
       {status && <div className={`message ${status.type}`}>{status.msg}</div>}
 
       <button
         onClick={submit}
-        disabled={loading || poolBalance === "0"}
+        disabled={loading || poolBalance === "0" || networkMismatch}
         className="btn-primary"
       >
         {loading ? "Processing..." : "Distribute Royalties"}

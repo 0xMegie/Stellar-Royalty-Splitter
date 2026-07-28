@@ -4,6 +4,13 @@ import { signAndSubmitTransaction } from "../stellar";
 import { useNetwork } from "../context/NetworkContext";
 import FormStatus from "./FormStatus";
 import { useFormStatus } from "../hooks/useFormStatus";
+import {
+  parseRoyaltyConfigImport,
+  RoyaltyConfigImportError,
+  buildRoyaltyConfigExport,
+  downloadRoyaltyConfig,
+  RoyaltyConfigExportError,
+} from "../utils/royaltyConfig";
 
 
 interface Collaborator {
@@ -95,7 +102,7 @@ export default function InitializeForm({
   walletAddress,
   onSuccess,
 }: Props) {
-  const { network } = useNetwork();
+  const { network, networkMismatch } = useNetwork();
   const [collaborators, setCollaborators] = useState<Collaborator[]>([
     { address: "", basisPoints: "" },
   ]);
@@ -104,8 +111,47 @@ export default function InitializeForm({
   >({});
   const { status, setStatus } = useFormStatus();
   const [loading, setLoading] = useState(false);
-  const addressRefs = useRef<(HTMLInputElement | null)[]>([]);
-  const percentageRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  function triggerImport() {
+    importInputRef.current?.click();
+  }
+
+  async function handleImportFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Allow re-selecting the same file after a failed import.
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const imported = parseRoyaltyConfigImport(text);
+      setCollaborators(imported);
+      setErrors({});
+      setStatus("ok", `Imported ${imported.length} collaborator(s) from ${file.name}.`);
+    } catch (e: unknown) {
+      if (e instanceof RoyaltyConfigImportError) {
+        setStatus("error", e.errors.join(" "));
+      } else {
+        setStatus("error", "Could not read the selected file.");
+      }
+    }
+  }
+
+  function handleExport() {
+    try {
+      const config = buildRoyaltyConfigExport(collaborators, new Date().toISOString());
+      const suffix = contractId ? contractId.slice(0, 8) : "draft";
+      downloadRoyaltyConfig(config, `royalty-split-${suffix}.json`);
+      setStatus("ok", "Exported royalty split configuration.");
+    } catch (e: unknown) {
+      if (e instanceof RoyaltyConfigExportError) {
+        setStatus("error", e.errors.join(" "));
+      } else {
+        setStatus("error", "Could not export the current configuration.");
+      }
+    }
+  }
 
   function update(i: number, field: keyof Collaborator, value: string) {
     setCollaborators((prev: Collaborator[]) =>
@@ -176,6 +222,8 @@ export default function InitializeForm({
   const hasInvalidPercentages = collaborators.some((c: Collaborator) => getPercentageError(c.basisPoints));
 
   async function submit() {
+    if (networkMismatch)
+      return setStatus("error", "Your wallet is on the wrong network. Switch it before submitting.");
     if (!contractId)
       return setStatus("error", "Enter a contract ID first.");
     const nextErrors = collaborators.reduce<
@@ -367,19 +415,34 @@ export default function InitializeForm({
         >
           + Add collaborator
         </button>
+        <button className="btn-add" type="button" onClick={triggerImport}>
+          Import from JSON
+        </button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          onChange={handleImportFile}
+          style={{ display: "none" }}
+        />
+        <button className="btn-add" type="button" onClick={handleExport}>
+          Export to JSON
+        </button>
         <button
           className="btn-primary"
           onClick={submit}
-          disabled={loading || hasErrors || hasEmptyFields || hasInvalidPercentages}
-          aria-busy={loading}
+          disabled={loading || hasErrors || hasEmptyFields || hasInvalidPercentages || networkMismatch}
         >
           {loading ? "Submitting…" : "Initialize contract"}
         </button>
       </div>
 
-      <div aria-live="assertive" aria-atomic="true">
-        {status && <FormStatus type={status.type} message={status.message} />}
-      </div>
+      {networkMismatch && (
+        <div className="status error" role="alert">
+          Your wallet is on the wrong network. Switch it to {network === "mainnet" ? "Mainnet" : "Testnet"} to initialize this contract.
+        </div>
+      )}
+      {status && <FormStatus type={status.type} message={status.message} />}
     </div>
   );
 }

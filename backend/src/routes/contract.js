@@ -99,18 +99,24 @@ function resolveStateRequest(req, res) {
   const tokenId = firstQueryValue(req.query.tokenId) ?? getConfiguredTokenId();
 
   if (!contractId) {
-    res.status(400).json({
-      error: "contractId query param required when no default contract is configured",
-    });
+    sendError(
+      res,
+      400,
+      "bad_request",
+      "contractId query param required when no default contract is configured",
+    );
     return null;
   }
 
   if (!validateContractId(contractId, res)) return null;
 
   if (!tokenId) {
-    res.status(400).json({
-      error: "tokenId query param required when no default token is configured",
-    });
+    sendError(
+      res,
+      400,
+      "bad_request",
+      "tokenId query param required when no default token is configured",
+    );
     return null;
   }
 
@@ -142,7 +148,7 @@ contractRouter.get("/state", async (req, res, next) => {
     res.json(state);
   } catch (err) {
     if (err.status) {
-      return res.status(err.status).json({ error: err.message });
+      return sendError(res, err.status, undefined, err.message);
     }
     next(err);
   }
