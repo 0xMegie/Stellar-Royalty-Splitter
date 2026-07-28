@@ -4,7 +4,13 @@ import { signAndSubmitTransaction } from "../stellar";
 import { useNetwork } from "../context/NetworkContext";
 import FormStatus from "./FormStatus";
 import { useFormStatus } from "../hooks/useFormStatus";
-import { parseRoyaltyConfigImport, RoyaltyConfigImportError } from "../utils/royaltyConfig";
+import {
+  parseRoyaltyConfigImport,
+  RoyaltyConfigImportError,
+  buildRoyaltyConfigExport,
+  downloadRoyaltyConfig,
+  RoyaltyConfigExportError,
+} from "../utils/royaltyConfig";
 
 
 interface Collaborator {
@@ -128,6 +134,21 @@ export default function InitializeForm({
         setStatus("error", e.errors.join(" "));
       } else {
         setStatus("error", "Could not read the selected file.");
+      }
+    }
+  }
+
+  function handleExport() {
+    try {
+      const config = buildRoyaltyConfigExport(collaborators, new Date().toISOString());
+      const suffix = contractId ? contractId.slice(0, 8) : "draft";
+      downloadRoyaltyConfig(config, `royalty-split-${suffix}.json`);
+      setStatus("ok", "Exported royalty split configuration.");
+    } catch (e: unknown) {
+      if (e instanceof RoyaltyConfigExportError) {
+        setStatus("error", e.errors.join(" "));
+      } else {
+        setStatus("error", "Could not export the current configuration.");
       }
     }
   }
@@ -369,6 +390,9 @@ export default function InitializeForm({
           onChange={handleImportFile}
           style={{ display: "none" }}
         />
+        <button className="btn-add" type="button" onClick={handleExport}>
+          Export to JSON
+        </button>
         <button
           className="btn-primary"
           onClick={submit}

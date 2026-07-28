@@ -124,3 +124,88 @@ export function parseRoyaltyConfigImport(raw: string): RoyaltyConfigCollaborator
 
   return result;
 }
+
+export class RoyaltyConfigExportError extends Error {
+  errors: string[];
+
+  constructor(errors: string[]) {
+    super(errors[0] ?? "Royalty configuration is not valid for export.");
+    this.name = "RoyaltyConfigExportError";
+    this.errors = errors;
+  }
+}
+
+/**
+ * Builds a portable, public-only royalty configuration file from the current
+ * setup form state. Only addresses and allocation percentages are included —
+ * no wallet secrets or private application data ever pass through this form.
+ *
+ * Validates the collaborator list before generating the file (structure,
+ * address format, duplicates, and that percentages sum to 100%) so an
+ * export can never encode a configuration the contract would reject.
+ */
+export function buildRoyaltyConfigExport(
+  collaborators: RoyaltyConfigCollaborator[],
+  createdAt: string,
+): RoyaltyConfigFile {
+  const errors: string[] = [];
+  const seenAddresses = new Set<string>();
+  const entries: Array<{ address: string; percentage: number }> = [];
+  let total = 0;
+
+  if (collaborators.length === 0) {
+    throw new RoyaltyConfigExportError(["Add at least one collaborator before exporting."]);
+  }
+
+  collaborators.forEach((c, i) => {
+    const row = i + 1;
+    if (!STELLAR_ADDRESS_RE.test(c.address)) {
+      errors.push(`Row ${row}: "${c.address}" is not a valid Stellar address.`);
+      return;
+    }
+    if (seenAddresses.has(c.address)) {
+      errors.push(`Row ${row}: duplicate collaborator address "${c.address}".`);
+      return;
+    }
+
+    const percentage = Number(c.basisPoints);
+    if (!Number.isFinite(percentage) || percentage <= 0 || percentage > 100) {
+      errors.push(`Row ${row}: allocation must be a number greater than 0 and up to 100.`);
+      return;
+    }
+
+    seenAddresses.add(c.address);
+    total += percentage;
+    entries.push({ address: c.address, percentage });
+  });
+
+  if (errors.length > 0) {
+    throw new RoyaltyConfigExportError(errors);
+  }
+
+  if (Math.round(total * 100) !== 10_000) {
+    throw new RoyaltyConfigExportError([
+      `Collaborator percentages must sum to 100% before exporting (currently ${total.toFixed(2)}%).`,
+    ]);
+  }
+
+  return {
+    version: ROYALTY_CONFIG_VERSION,
+    createdAt,
+    collaborators: entries,
+  };
+}
+
+/** Triggers a browser download of the given royalty configuration as JSON. */
+export function downloadRoyaltyConfig(config: RoyaltyConfigFile, filename: string): void {
+  const json = JSON.stringify(config, null, 2);
+  const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
