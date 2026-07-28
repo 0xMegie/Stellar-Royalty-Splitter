@@ -5,6 +5,7 @@ import {
   INITIALIZE_COLLABORATORS_PAYLOAD_LIMIT_BYTES,
   INITIALIZE_PAYLOAD_LIMIT_BYTES,
 } from "../src/validation.js";
+import { notFoundHandler, errorHandler } from "../src/error-response.js";
 
 // Capture mock functions at factory time so we hold the same instances the route uses
 const retryBuildTx = jest.fn();
@@ -35,12 +36,8 @@ const { initializeRouter } = await import("../src/routes/initialize.js");
 const app = express();
 app.use(express.json({ limit: "10kb" }));
 app.use("/api/v1/initialize", initializeRouter);
-app.use((err, _req, res, _next) => {
-  if (err.type === "entity.too.large") {
-    return res.status(413).json({ error: "Payload too large" });
-  }
-  res.status(500).json({ error: err.message ?? "Internal server error" });
-});
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const WALLET = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";

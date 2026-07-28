@@ -95,7 +95,7 @@ export default function InitializeForm({
   walletAddress,
   onSuccess,
 }: Props) {
-  const { network } = useNetwork();
+  const { network, networkMismatch } = useNetwork();
   const [collaborators, setCollaborators] = useState<Collaborator[]>([
     { address: "", basisPoints: "" },
   ]);
@@ -174,6 +174,8 @@ export default function InitializeForm({
   const hasInvalidPercentages = collaborators.some((c: Collaborator) => getPercentageError(c.basisPoints));
 
   async function submit() {
+    if (networkMismatch)
+      return setStatus("error", "Your wallet is on the wrong network. Switch it before submitting.");
     if (!contractId)
       return setStatus("error", "Enter a contract ID first.");
     const nextErrors = collaborators.reduce<
@@ -335,12 +337,17 @@ export default function InitializeForm({
         <button
           className="btn-primary"
           onClick={submit}
-          disabled={loading || hasErrors || hasEmptyFields || hasInvalidPercentages}
+          disabled={loading || hasErrors || hasEmptyFields || hasInvalidPercentages || networkMismatch}
         >
           {loading ? "Submitting…" : "Initialize contract"}
         </button>
       </div>
 
+      {networkMismatch && (
+        <div className="status error" role="alert">
+          Your wallet is on the wrong network. Switch it to {network === "mainnet" ? "Mainnet" : "Testnet"} to initialize this contract.
+        </div>
+      )}
       {status && <FormStatus type={status.type} message={status.message} />}
     </div>
   );
