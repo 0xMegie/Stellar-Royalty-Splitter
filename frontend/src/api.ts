@@ -129,11 +129,26 @@ export interface TransactionRecord {
   payoutCount?: number;
 }
 
+export interface PayoutDetail {
+  collaboratorAddress: string;
+  amountReceived: string;
+  sharePercentage?: number;
+}
+
+export interface ContractEventItem {
+  id: string;
+  type: string;
+  contractId: string;
+  topics: string[];
+  data: Record<string, unknown>;
+  timestamp: string;
+}
+
 export interface TransactionDetails extends TransactionRecord {
-  payouts?: Array<{
-    collaboratorAddress: string;
-    amountReceived: string;
-  }>;
+  payouts?: PayoutDetail[];
+  totalPayout?: string;
+  auditHistory?: AuditLogEntry[];
+  contractEvents?: ContractEventItem[];
 }
 
 export interface AuditLogEntry {
@@ -180,7 +195,7 @@ export const api = {
     contractId: string;
     walletAddress: string;
     tokenId: string;
-    amount?: number;
+    amount?: string | number;
   }) => post<{ xdr: string; transactionId: number }>("/distribute", body),
 
   getContractVersion: (contractId: string) =>

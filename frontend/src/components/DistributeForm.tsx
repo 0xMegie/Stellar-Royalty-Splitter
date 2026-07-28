@@ -55,7 +55,7 @@ export default function DistributeForm({
   walletAddress,
   onSuccess,
 }: Props) {
-  const { network } = useNetwork();
+  const { network, networkMismatch } = useNetwork();
   const [tokenId, setTokenId] = useState("");
   const [amount, setAmount] = useState("");
   const [contractBalance, setContractBalance] = useState<string | null>(null);
@@ -169,6 +169,8 @@ export default function DistributeForm({
   );
 
   async function submit() {
+    if (networkMismatch)
+      return setStatus("error", "Your wallet is on the wrong network. Switch it before submitting.");
     if (!contractId)
       return setStatus("error", "Enter a contract ID first.");
     if (!tokenId)
@@ -339,11 +341,16 @@ export default function DistributeForm({
         </div>
       )}
       <p className="description">Distributes the specified amount to all collaborators.</p>
+      {networkMismatch && (
+        <div className="status error" role="alert">
+          Your wallet is on the wrong network. Switch it to {network === "mainnet" ? "Mainnet" : "Testnet"} to distribute funds.
+        </div>
+      )}
       <div className="form-actions">
         <button
           type="submit"
           className="btn-primary btn-with-spinner"
-          disabled={loading || exceedsBalance || !amount || !tokenIdValid}
+          disabled={loading || exceedsBalance || !amount || !tokenIdValid || networkMismatch}
           aria-busy={loading}
         >
           {loading && <span className="btn-spinner" aria-hidden="true" />}

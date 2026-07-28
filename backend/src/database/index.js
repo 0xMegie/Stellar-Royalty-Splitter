@@ -206,6 +206,30 @@ export {
   countAllReferrals,
 } from "./referrals.js";
 
+// Contract state snapshots (#613)
+export {
+  ensureSnapshotTable,
+  createSnapshot,
+  listSnapshots,
+  getSnapshot,
+  verifySnapshotIntegrity,
+  countSnapshots,
+  getAllSnapshots,
+  pruneSnapshots,
+} from "./contract-snapshots.js";
+
+// Contributor communication history (#612)
+export {
+  ensureCommunicationsTable,
+  recordCommunication,
+  getCommunicationsByWallet,
+  getCommunicationsByContract,
+  searchCommunications,
+  addInternalNote,
+  getCommunicationTimeline,
+  countCommunications,
+} from "./contributor-communications.js";
+
 // Default export for backwards compatibility
 import { db } from "./core.js";
 export default db;

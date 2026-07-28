@@ -1,9 +1,16 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { api } from "../api";
 import { signAndSubmitTransaction } from "../stellar";
 import { useNetwork } from "../context/NetworkContext";
 import FormStatus from "./FormStatus";
 import { useFormStatus } from "../hooks/useFormStatus";
+import {
+  parseRoyaltyConfigImport,
+  RoyaltyConfigImportError,
+  buildRoyaltyConfigExport,
+  downloadRoyaltyConfig,
+  RoyaltyConfigExportError,
+} from "../utils/royaltyConfig";
 
 
 interface Collaborator {
@@ -95,7 +102,7 @@ export default function InitializeForm({
   walletAddress,
   onSuccess,
 }: Props) {
-  const { network } = useNetwork();
+  const { network, networkMismatch } = useNetwork();
   const [collaborators, setCollaborators] = useState<Collaborator[]>([
     { address: "", basisPoints: "" },
   ]);
@@ -104,6 +111,47 @@ export default function InitializeForm({
   >({});
   const { status, setStatus } = useFormStatus();
   const [loading, setLoading] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  function triggerImport() {
+    importInputRef.current?.click();
+  }
+
+  async function handleImportFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Allow re-selecting the same file after a failed import.
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const imported = parseRoyaltyConfigImport(text);
+      setCollaborators(imported);
+      setErrors({});
+      setStatus("ok", `Imported ${imported.length} collaborator(s) from ${file.name}.`);
+    } catch (e: unknown) {
+      if (e instanceof RoyaltyConfigImportError) {
+        setStatus("error", e.errors.join(" "));
+      } else {
+        setStatus("error", "Could not read the selected file.");
+      }
+    }
+  }
+
+  function handleExport() {
+    try {
+      const config = buildRoyaltyConfigExport(collaborators, new Date().toISOString());
+      const suffix = contractId ? contractId.slice(0, 8) : "draft";
+      downloadRoyaltyConfig(config, `royalty-split-${suffix}.json`);
+      setStatus("ok", "Exported royalty split configuration.");
+    } catch (e: unknown) {
+      if (e instanceof RoyaltyConfigExportError) {
+        setStatus("error", e.errors.join(" "));
+      } else {
+        setStatus("error", "Could not export the current configuration.");
+      }
+    }
+  }
 
   function update(i: number, field: keyof Collaborator, value: string) {
     setCollaborators((prev: Collaborator[]) =>
@@ -174,6 +222,8 @@ export default function InitializeForm({
   const hasInvalidPercentages = collaborators.some((c: Collaborator) => getPercentageError(c.basisPoints));
 
   async function submit() {
+    if (networkMismatch)
+      return setStatus("error", "Your wallet is on the wrong network. Switch it before submitting.");
     if (!contractId)
       return setStatus("error", "Enter a contract ID first.");
     const nextErrors = collaborators.reduce<
@@ -198,6 +248,15 @@ export default function InitializeForm({
     }, {});
     if (Object.keys(nextErrors).length > 0) {
       setErrors((prev) => ({ ...prev, ...nextErrors }));
+      const firstErrorIdx = Object.keys(nextErrors).map(Number).sort((a, b) => a - b)[0];
+      if (firstErrorIdx !== undefined) {
+        const fieldErrors = nextErrors[firstErrorIdx];
+        if (fieldErrors?.address) {
+          addressRefs.current[firstErrorIdx]?.focus();
+        } else if (fieldErrors?.basisPoints) {
+          percentageRefs.current[firstErrorIdx]?.focus();
+        }
+      }
       return setStatus("error", "Please fix all field errors before submitting.");
     }
     if (Math.round(total * 100) !== 10_000)
@@ -253,19 +312,33 @@ export default function InitializeForm({
         <div key={i}>
           <div className="collaborator-row">
             <div style={{ flex: 3, display: "flex", flexDirection: "column" }}>
+              <label htmlFor={`collaborator-${i}-address`}>
+                Collaborator {i + 1} wallet address
+              </label>
               <input
+                id={`collaborator-${i}-address`}
+                ref={(el) => { addressRefs.current[i] = el; }}
                 placeholder="Wallet address (G...)"
                 value={c.address}
+                aria-invalid={Boolean(errors[i]?.address)}
+                aria-describedby={errors[i]?.address ? `collaborator-${i}-address-error` : undefined}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => update(i, "address", e.target.value)}
                 onBlur={(e: React.FocusEvent<HTMLInputElement>) => handleBlur(i, "address", e.target.value)}
                 style={{ marginBottom: errors[i]?.address ? "0.25rem" : undefined }}
               />
               {errors[i]?.address && (
-                <span className="field-error">{errors[i].address}</span>
+                <span id={`collaborator-${i}-address-error`} className="field-error" role="alert">
+                  {errors[i].address}
+                </span>
               )}
             </div>
             <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              <label htmlFor={`collaborator-${i}-percentage`}>
+                Collaborator {i + 1} percentage
+              </label>
               <input
+                id={`collaborator-${i}-percentage`}
+                ref={(el) => { percentageRefs.current[i] = el; }}
                 placeholder="% (0–100)"
                 type="number"
                 min={0}
@@ -273,7 +346,6 @@ export default function InitializeForm({
                 step="any"
                 value={c.basisPoints}
                 className={errors[i]?.basisPoints ? "input-error" : ""}
-                aria-label={`Royalty percentage for collaborator ${i + 1}`}
                 aria-invalid={Boolean(errors[i]?.basisPoints)}
                 aria-describedby={errors[i]?.basisPoints ? `collaborator-${i}-percentage-error` : undefined}
                 onKeyDown={handlePercentageKeyDown}
@@ -290,11 +362,17 @@ export default function InitializeForm({
                 style={{ marginBottom: errors[i]?.basisPoints ? "0.25rem" : undefined }}
               />
               {errors[i]?.basisPoints && (
-                <span id={`collaborator-${i}-percentage-error`} className="field-error">{errors[i].basisPoints}</span>
+                <span id={`collaborator-${i}-percentage-error`} className="field-error" role="alert">
+                  {errors[i].basisPoints}
+                </span>
               )}
             </div>
             {collaborators.length > 1 && (
-              <button className="btn-danger" onClick={() => removeRow(i)}>
+              <button
+                className="btn-danger"
+                aria-label={`Remove collaborator ${i + 1}`}
+                onClick={() => removeRow(i)}
+              >
                 ✕
               </button>
             )}
@@ -329,18 +407,41 @@ export default function InitializeForm({
       )}
 
       <div className="row">
-        <button className="btn-add" onClick={addRow} disabled={collaborators.length >= MAX_COLLABORATORS}>
+        <button
+          className="btn-add"
+          onClick={addRow}
+          disabled={collaborators.length >= MAX_COLLABORATORS}
+          aria-label={`Add collaborator (${collaborators.length} of ${MAX_COLLABORATORS})`}
+        >
           + Add collaborator
+        </button>
+        <button className="btn-add" type="button" onClick={triggerImport}>
+          Import from JSON
+        </button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          onChange={handleImportFile}
+          style={{ display: "none" }}
+        />
+        <button className="btn-add" type="button" onClick={handleExport}>
+          Export to JSON
         </button>
         <button
           className="btn-primary"
           onClick={submit}
-          disabled={loading || hasErrors || hasEmptyFields || hasInvalidPercentages}
+          disabled={loading || hasErrors || hasEmptyFields || hasInvalidPercentages || networkMismatch}
         >
           {loading ? "Submitting…" : "Initialize contract"}
         </button>
       </div>
 
+      {networkMismatch && (
+        <div className="status error" role="alert">
+          Your wallet is on the wrong network. Switch it to {network === "mainnet" ? "Mainnet" : "Testnet"} to initialize this contract.
+        </div>
+      )}
       {status && <FormStatus type={status.type} message={status.message} />}
     </div>
   );
