@@ -39,6 +39,10 @@ export const initializeSchema = z
 export const INITIALIZE_PAYLOAD_LIMIT_BYTES = 10 * 1024;
 export const INITIALIZE_COLLABORATORS_PAYLOAD_LIMIT_BYTES = 8 * 1024;
 
+// Named size limits — kept in sync with on-chain MAX_COLLABORATORS / MAX_RECIPIENTS constants.
+export const MAX_COLLABORATORS_BACKEND = 20;
+export const MAX_NFT_ID_LENGTH = 256;
+
 export const distributeSchema = z.object({
   contractId: contractAddress,
   walletAddress: stellarAddress,
@@ -54,7 +58,10 @@ export const setRoyaltyRateSchema = z.object({
 export const recordSecondarySaleSchema = z.object({
   contractId: contractAddress,
   walletAddress: stellarAddress,
-  nftId: z.string().min(1),
+  nftId: z
+    .string()
+    .min(1, "nftId must not be empty")
+    .max(MAX_NFT_ID_LENGTH, `nftId must not exceed ${MAX_NFT_ID_LENGTH} characters`),
   previousOwner: stellarAddress,
   newOwner: stellarAddress,
   salePrice: z.number().int().positive(),

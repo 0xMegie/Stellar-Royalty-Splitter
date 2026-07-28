@@ -57,6 +57,17 @@ pub enum StorageKey {
 /// Older entries are dropped when the cap is reached.
 pub const RATE_HISTORY_CAP: u32 = 20;
 
+/// Maximum number of collaborators accepted by `initialize`.
+/// Bounded by Soroban execution and storage costs.
+pub const MAX_COLLABORATORS: u32 = 10;
+
+/// Maximum number of recipients accepted by `set_recipients`, `set_default_recipients`,
+/// and `distribute_with_override`.
+pub const MAX_RECIPIENTS: u32 = 10;
+
+/// Maximum number of admins in the multi-sig admin list (`set_admins`).
+pub const MAX_ADMIN_LIST: u32 = 10;
+
 /// Backward-compatible alias for integration tests and external references.
 pub type DataKey = StorageKey;
 
@@ -103,6 +114,7 @@ pub enum ContractError {
     CollaboratorNotFound,
     InvalidUpdatedShareTotal,
     SalePriceNotPositive,
+    InputTooLarge,
 }
 
 #[contract]
@@ -181,7 +193,7 @@ impl RoyaltySplitter {
             Self::fail(&env, ContractError::EmptyCollaborators);
         }
 
-        if collaborators.len() > 10 {
+        if collaborators.len() > MAX_COLLABORATORS {
             Self::fail(&env, ContractError::TooManyRecipients);
         }
 
@@ -1364,6 +1376,9 @@ impl RoyaltySplitter {
         if admins.is_empty() {
             panic!("admin list cannot be empty");
         }
+        if admins.len() > MAX_ADMIN_LIST {
+            Self::fail(&env, ContractError::InputTooLarge);
+        }
         if threshold < 1 {
             panic!("threshold must be at least 1");
         }
@@ -1406,7 +1421,7 @@ impl RoyaltySplitter {
             Self::fail(env, ContractError::EmptyRecipients);
         }
 
-        if recipients.len() > 10 {
+        if recipients.len() > MAX_RECIPIENTS {
             Self::fail(env, ContractError::TooManyRecipients);
         }
 
