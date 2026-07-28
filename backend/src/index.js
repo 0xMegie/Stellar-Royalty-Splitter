@@ -37,6 +37,7 @@ import { contributorTaxRouter } from "./routes/contributor-tax.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { paymentHoldsRouter } from "./routes/payment-holds.js";
 import { earningsHistoryRouter } from "./routes/earnings-history.js";
+import { versionRouter } from "./routes/version.js";
 import { initializeWebSocket } from "./websocket.js";
 import { startSnapshotScheduler } from "./jobs/snapshot-job.js";
 import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
@@ -128,6 +129,12 @@ const writeLimiter = rateLimit({
 app.use(generalLimiter);
 app.use(express.json({ limit: "10kb" }));
 
+// Attach X-API-Version header to all versioned responses
+app.use("/api/v1", (_req, res, next) => {
+  res.set("X-API-Version", "v1");
+  next();
+});
+
 // Attach RBAC role to every request (#572)
 app.use(attachRole);
 
@@ -210,6 +217,9 @@ app.use("/api/v1/snapshots", snapshotRouter);
 // Contributor communication history (#612)
 app.use("/api/v1/communications", communicationsRouter);
 
+// API version discovery (#676)
+app.use("/api/v1/version", versionRouter);
+
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
 const adminLimiter = rateLimit({
   windowMs: 60_000,
@@ -229,8 +239,10 @@ const adminLimiter = rateLimit({
 app.use("/admin", adminLimiter);
 app.use("/admin", adminRouter);
 
-// Legacy /api/* redirect to /api/v1/*
+// Legacy /api/* redirect to /api/v1/* — routes under /api/v1/* are canonical
 app.use("/api", (req, res) => {
+  res.set("Deprecation", "true");
+  res.set("Link", `</api/v1${req.url}>; rel="successor-version"`);
   res.redirect(308, `/api/v1${req.url}`);
 });
 

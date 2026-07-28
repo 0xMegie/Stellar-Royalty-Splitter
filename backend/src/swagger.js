@@ -13,8 +13,12 @@ export const openApiSpec = {
       "HTTP API for managing royalty distribution smart contracts on the Stellar/Soroban network.",
     contact: { url: "https://github.com/Just-Bamford/Stellar-Royalty-Splitter" },
   },
-  servers: [{ url: "/api/v1", description: "Current version" }],
+  servers: [
+    { url: "/api/v1", description: "Current version (v1)" },
+    { url: "/api", description: "Legacy (deprecated) — redirects to /api/v1 with HTTP 308" },
+  ],
   tags: [
+    { name: "Version", description: "API version discovery" },
     { name: "Health", description: "Operational health probes" },
     { name: "Contract", description: "Contract initialization and state" },
     { name: "Distribution", description: "Royalty distribution transactions" },
@@ -77,6 +81,42 @@ export const openApiSpec = {
     },
   },
   paths: {
+    "/version": {
+      get: {
+        tags: ["Version"],
+        summary: "API version discovery",
+        description:
+          "Returns the current API version, list of supported versions, deprecated versions, and a link to documentation. " +
+          "Legacy routes under `/api/*` (without the version prefix) redirect permanently (HTTP 308) to `/api/v1/*` " +
+          "and include `Deprecation: true` and `Link` headers pointing to the canonical versioned URL. " +
+          "All `/api/v1/*` responses include an `X-API-Version: v1` header.",
+        responses: {
+          200: {
+            description: "Version information",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", example: true },
+                    data: {
+                      type: "object",
+                      properties: {
+                        current: { type: "string", example: "v1" },
+                        supported: { type: "array", items: { type: "string" }, example: ["v1"] },
+                        deprecated: { type: "array", items: { type: "string" }, example: [] },
+                        sunset: { type: "string", nullable: true, example: null },
+                        documentation: { type: "string", example: "/api/docs" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     "/health": {
       get: {
         tags: ["Health"],
