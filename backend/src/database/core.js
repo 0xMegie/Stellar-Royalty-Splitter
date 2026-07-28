@@ -433,6 +433,59 @@ export function initializeDatabase() {
     },
   ];
 
+  // Add migration v13: contract_snapshots table (#613) and
+  // contributor_communications table (#612)
+  migrations.push({
+    version: 13,
+    sql: `
+      CREATE TABLE IF NOT EXISTS contract_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contractId TEXT NOT NULL,
+        label TEXT,
+        collaborators TEXT NOT NULL DEFAULT '[]',
+        shares TEXT NOT NULL DEFAULT '{}',
+        balances TEXT NOT NULL DEFAULT '{}',
+        transactionCount INTEGER NOT NULL DEFAULT 0,
+        lastTransactionId INTEGER,
+        stateHash TEXT,
+        createdBy TEXT,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_contract_snapshots_contractId
+        ON contract_snapshots(contractId);
+      CREATE INDEX IF NOT EXISTS idx_contract_snapshots_createdAt
+        ON contract_snapshots(createdAt);
+
+      CREATE TABLE IF NOT EXISTS contributor_communications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        walletAddress TEXT NOT NULL,
+        contractId TEXT,
+        type TEXT NOT NULL CHECK(type IN (
+          'email', 'support_ticket', 'message', 'internal_note', 'system_notification'
+        )),
+        subject TEXT,
+        body TEXT NOT NULL,
+        direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound', 'internal')),
+        status TEXT NOT NULL DEFAULT 'sent' CHECK(status IN ('sent', 'received', 'draft', 'archived')),
+        isInternal INTEGER NOT NULL DEFAULT 0,
+        metadata TEXT,
+        referenceId TEXT,
+        createdBy TEXT,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_contributor_comms_wallet
+        ON contributor_communications(walletAddress);
+      CREATE INDEX IF NOT EXISTS idx_contributor_comms_contract
+        ON contributor_communications(contractId);
+      CREATE INDEX IF NOT EXISTS idx_contributor_comms_type
+        ON contributor_communications(type);
+      CREATE INDEX IF NOT EXISTS idx_contributor_comms_created
+        ON contributor_communications(createdAt);
+      CREATE INDEX IF NOT EXISTS idx_contributor_comms_wallet_created
+        ON contributor_communications(walletAddress, createdAt);
+    `,
+  });
+
   const applied = db
     .prepare("SELECT version FROM schema_migrations")
     .all()

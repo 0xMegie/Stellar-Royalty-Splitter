@@ -39,6 +39,29 @@ cd stellar-royalty-splitter
 .\scripts\setup-hooks.bat  # Windows
 ```
 
+### Validate Your Environment
+
+Before installing dependencies or running a build, check that your machine
+has the required tooling and configuration:
+
+```bash
+./scripts/validate-env.sh
+# or
+make validate-env
+```
+
+This checks:
+
+- Rust (`rustc`, `cargo`) and the `wasm32-unknown-unknown` target
+- The Stellar/Soroban CLI
+- Node.js (v20+) and npm
+- Required `backend/.env` and `frontend/.env` variables (presence/validity
+  only — it never prints variable values)
+
+It prints a clear `[OK]` / `[FAIL]` / `[WARN]` report per check and exits
+with a non-zero status if any required check fails, so you catch missing
+dependencies before a build or test run fails partway through.
+
 ---
 
 ## Frontend Setup

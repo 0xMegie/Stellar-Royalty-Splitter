@@ -195,21 +195,29 @@ export {
   countAllReferrals,
 } from "./referrals.js";
 
-// Payment schedule templates (#599)
+// Contract state snapshots (#613)
 export {
-  createPaymentSchedule,
-  getPaymentSchedule,
-  listPaymentSchedules,
-  countPaymentSchedules,
-  updatePaymentSchedule,
-  disablePaymentSchedule,
-  deletePaymentSchedule,
-  getSchedulesDue,
-  markScheduleRan,
-  setNextRunAt,
-  getUpcomingSchedules,
-  SCHEDULE_TYPES,
-} from "./payment-schedules.js";
+  ensureSnapshotTable,
+  createSnapshot,
+  listSnapshots,
+  getSnapshot,
+  verifySnapshotIntegrity,
+  countSnapshots,
+  getAllSnapshots,
+  pruneSnapshots,
+} from "./contract-snapshots.js";
+
+// Contributor communication history (#612)
+export {
+  ensureCommunicationsTable,
+  recordCommunication,
+  getCommunicationsByWallet,
+  getCommunicationsByContract,
+  searchCommunications,
+  addInternalNote,
+  getCommunicationTimeline,
+  countCommunications,
+} from "./contributor-communications.js";
 
 // Default export for backwards compatibility
 import { db } from "./core.js";

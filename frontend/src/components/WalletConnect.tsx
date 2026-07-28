@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import "../lib/freighter";
+import { useNetwork } from "../context/NetworkContext";
 
 interface Props {
   walletAddress: string | null;
@@ -6,24 +8,8 @@ interface Props {
   onDisconnect?: () => void;
 }
 
-// Freighter injects window.freighter at runtime — no official type package available,
-// so we use type assertions with explicit comments rather than @ts-ignore.
-declare global {
-  interface Window {
-    freighter?: {
-      requestAccess?: () => Promise<{ address: string }>;
-      getAddress?: () => Promise<{ address: string }>;
-      getPublicKey?: () => Promise<string>;
-      signTransaction?: (
-        xdr: string,
-        options?: { network?: string },
-      ) => Promise<string>;
-      on?: (event: string, handler: (data: { address: string }) => void) => void;
-    };
-  }
-}
-
 export default function WalletConnect({ walletAddress, onConnect, onDisconnect }: Props) {
+  const { refreshWalletNetwork } = useNetwork();
   const [error, setError] = useState("");
   const [freighterAvailable, setFreighterAvailable] = useState(
     () => Boolean(window.freighter),
@@ -45,13 +31,15 @@ export default function WalletConnect({ walletAddress, onConnect, onDisconnect }
     };
   }, []);
 
-  // Listen for Freighter account changes
+  // Listen for Freighter account changes — a new account may be on a
+  // different network, so re-check alongside the address (#663).
   useEffect(() => {
     if (!window.freighter?.on) return;
     window.freighter.on("accountChanged", ({ address: newAddr }) => {
       onConnect(newAddr);
+      refreshWalletNetwork();
     });
-  }, [freighterAvailable, onConnect]);
+  }, [freighterAvailable, onConnect, refreshWalletNetwork]);
 
   async function connect() {
     setError("");
@@ -76,6 +64,7 @@ export default function WalletConnect({ walletAddress, onConnect, onDisconnect }
       }
 
       onConnect(addr);
+      await refreshWalletNetwork();
     } catch {
       setError("Connection rejected. Please approve the request in Freighter.");
     }
