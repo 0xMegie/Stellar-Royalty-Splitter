@@ -18,6 +18,8 @@ import onboardingRouter from "./routes/onboarding.js";
 import { closeDatabase, initializeDatabase } from "./database/index.js";
 import { createGracefulShutdownHandler } from "./shutdown.js";
 import { adminRouter } from "./routes/admin.js";
+import { snapshotRouter } from "./routes/snapshots.js";
+import { communicationsRouter } from "./routes/communications.js";
 import { metricsRouter } from "./routes/metrics.js";
 import { initializeSigningKey } from "./signing-key.js";
 import { sendError, normalizeErrorCode } from "./error-response.js";
@@ -27,7 +29,6 @@ import { disputesRouter } from "./routes/disputes.js";
 import { referralsRouter } from "./routes/referrals.js";
 import { sendWeeklyDigests } from "./jobs/weekly-digest-job.js";
 import { isEmailConfigured } from "./email/email-service.js";
-import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
 import { rankingRouter } from "./routes/ranking.js";
 import { docsRouter } from "./routes/docs.js";
 import { attachRole } from "./middleware/rbac.js";
@@ -37,6 +38,9 @@ import { notificationsRouter } from "./routes/notifications.js";
 import { paymentHoldsRouter } from "./routes/payment-holds.js";
 import { earningsHistoryRouter } from "./routes/earnings-history.js";
 import { initializeWebSocket } from "./websocket.js";
+import { startSnapshotScheduler } from "./jobs/snapshot-job.js";
+import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
+import { startWebhookRetryScheduler } from "./jobs/retry-failed-webhooks.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -200,6 +204,12 @@ app.use("/api/v1/payment-holds", paymentHoldsRouter);
 // Contributor earnings history (#564)
 app.use("/api/v1", earningsHistoryRouter);
 
+// Contract state snapshots (#613)
+app.use("/api/v1/snapshots", snapshotRouter);
+
+// Contributor communication history (#612)
+app.use("/api/v1/communications", communicationsRouter);
+
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
 const adminLimiter = rateLimit({
   windowMs: 60_000,
@@ -257,6 +267,9 @@ const retryScheduler = startRetryScheduler();
 // Start the webhook retry scheduler
 const webhookRetryScheduler = startWebhookRetryScheduler();
 
+// Start the snapshot scheduler (#613)
+const snapshotScheduler = startSnapshotScheduler();
+
 // Start weekly email digest scheduler if email is configured
 let digestInterval = null;
 if (isEmailConfigured()) {
@@ -299,6 +312,9 @@ const handleShutdown = createGracefulShutdownHandler({
     }
     if (webhookRetryScheduler) {
       webhookRetryScheduler.stop();
+    }
+    if (snapshotScheduler) {
+      snapshotScheduler.stop();
     }
   },
 });
