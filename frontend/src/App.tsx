@@ -51,6 +51,15 @@ export default function App() {
   const [selectedTxHash, setSelectedTxHash] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [sessionToast, setSessionToast] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<Array<{ id: number; title: string; message: string | null; type: string }>>([]);
+
+  const { connected: wsConnected } = useWebSocket({
+    walletAddress,
+    onNotification: (data: unknown) => {
+      const n = data as { id: number; title: string; message: string | null; type: string };
+      setNotifications(prev => [...prev, n]);
+    },
+  });
 
   // Parse deep-link URL params (Issue #577 share link support)
   useEffect(() => {
@@ -305,6 +314,30 @@ export default function App() {
             onSelectTxHash={setSelectedTxHash}
           />
         );
+      case "earnings-history":
+        return walletAddress ? (
+          <EarningsHistoryChart walletAddress={walletAddress} />
+        ) : (
+          <div className="page-empty">
+            <p>Please connect your wallet to view earnings history</p>
+          </div>
+        );
+      case "forecast":
+        return contractId ? (
+          <EarningsForecastCalculator contractId={contractId} />
+        ) : (
+          <div className="page-empty">
+            <p>Please select a contract first</p>
+          </div>
+        );
+      case "timeline":
+        return contractId ? (
+          <ContractTimeline contractId={contractId} />
+        ) : (
+          <div className="page-empty">
+            <p>Please select a contract first</p>
+          </div>
+        );
       case "initialize":
         return walletAddress ? (
           <div className="page-section">
@@ -341,30 +374,85 @@ export default function App() {
             <p>Please select a contract first</p>
           </div>
         );
+      case "health":
+        return <SystemHealthDashboard />;
+      case "earnings":
+        return walletAddress ? (
+          <MultiContractEarnings walletAddress={walletAddress} />
+        ) : (
+          <div className="page-empty">
+            <p>Please connect your wallet to view your earnings.</p>
+          </div>
+        );
+      case "suspension":
+        return contractId ? (
+          <ContributorSuspension contractId={contractId} walletAddress={walletAddress} />
+        ) : (
+          <div className="page-empty">
+            <p>Please select a contract first</p>
+          </div>
+        );
       case "settings":
-        return <Settings contractId={contractId} onClearContract={clearSavedContract} />;
+        return <Settings contractId={contractId} walletAddress={walletAddress} onClearContract={clearSavedContract} />;
+      case "bulk-import":
+        return walletAddress && contractId ? (
+          <div className="page-section">
+            <BulkContributorUpload contractId={contractId} />
+          </div>
+        ) : (
+          <div className="page-empty">
+            <p>Please connect your wallet and select a contract first</p>
+          </div>
+        );
+      case "tax-info":
+        return walletAddress ? (
+          <div className="page-section">
+            <ContributorTaxInfo walletAddress={walletAddress} isAdmin={true} />
+            <TaxComplianceReport />
+          </div>
+        ) : (
+          <div className="page-empty">
+            <p>Please connect your wallet first</p>
+          </div>
+        );
+      case "payment-holds":
+        return contractId ? (
+          <div className="page-section">
+            <PaymentHoldManager contractId={contractId} isAdmin={true} />
+          </div>
+        ) : (
+          <div className="page-empty">
+            <p>Please select a contract first</p>
+          </div>
+        );
       case "secondary":
         return walletAddress && contractId ? (
           <div className="page-section">
-            <SecondaryRoyaltyConfig
-              contractId={contractId}
-              walletAddress={walletAddress}
-              onSuccess={() => {}}
-              onRateUpdate={setRoyaltyRate}
-              initialRoyaltyRate={royaltyRate}
-            />
-            <RecordSecondarySale
-              contractId={contractId}
-              walletAddress={walletAddress}
-              royaltyRate={royaltyRate}
-              onSuccess={() => {}}
-            />
-            <DistributeSecondaryRoyalties
-              contractId={contractId}
-              walletAddress={walletAddress}
-              onSuccess={() => {}}
-            />
-            <ResaleHistory contractId={contractId} />
+            <div className="secondary-grid">
+              <div className="secondary-grid-col">
+                <SecondaryRoyaltyConfig
+                  contractId={contractId}
+                  walletAddress={walletAddress}
+                  onSuccess={() => {}}
+                  onRateUpdate={setRoyaltyRate}
+                  initialRoyaltyRate={royaltyRate}
+                />
+                <RecordSecondarySale
+                  contractId={contractId}
+                  walletAddress={walletAddress}
+                  royaltyRate={royaltyRate}
+                  onSuccess={() => {}}
+                />
+                <DistributeSecondaryRoyalties
+                  contractId={contractId}
+                  walletAddress={walletAddress}
+                  onSuccess={() => {}}
+                />
+              </div>
+              <div className="secondary-grid-col">
+                <ResaleHistory contractId={contractId} />
+              </div>
+            </div>
           </div>
         ) : (
           <div className="page-empty">
@@ -379,6 +467,13 @@ export default function App() {
               </p>
             </div>
           </div>
+        );
+      case "onboarding":
+        return (
+          <ContributorOnboardingChecklist
+            walletAddress={walletAddress}
+            onConnectWallet={() => handlePageChange("connect-wallet")}
+          />
         );
       default:
         return null;
@@ -418,10 +513,21 @@ export default function App() {
         onPageChange={handlePageChange}
         walletAddress={walletAddress}
         onDisconnect={handleDisconnect}
+        wsConnected={wsConnected}
       />
 
       <div className="app-content">
         <div className="app-sidebar">
+          <button
+            className="sidebar-toggle-btn"
+            aria-expanded={sidebarOpen}
+            aria-controls="sidebar-cards"
+            onClick={() => setSidebarOpen((v) => !v)}
+          >
+            ⚙️ Wallet & Contract
+            <span className={`sidebar-toggle-chevron ${sidebarOpen ? "open" : ""}`} aria-hidden="true">▼</span>
+          </button>
+          <div id="sidebar-cards" className={`app-sidebar-cards ${sidebarOpen ? "open" : ""}`}>
           <div className="sidebar-card">
             <h3>🔗 Wallet Connection</h3>
             <WalletConnect
@@ -506,6 +612,7 @@ export default function App() {
               </div>
             </div>
           )}
+          </div>
         </div>
 
         <div className="app-main">{renderPage()}</div>

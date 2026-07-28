@@ -5,6 +5,13 @@
 
 import { db, countWrite } from "./core.js";
 
+/**
+ * Exponential backoff delays in milliseconds for each retry attempt.
+ * retry_count 0 -> wait 1m, retry_count 1 -> wait 5m, retry_count 2 -> wait 15m
+ */
+export const RETRY_BACKOFF_MS = [60_000, 300_000, 900_000];
+export const MAX_RETRY_COUNT = 3;
+
 export function recordTransaction(contractId, type, initiatorAddress, data) {
   const { requestedAmount, tokenId } = data;
 
@@ -76,6 +83,8 @@ export function getTransactionHistory(contractId, limit = 50, offset = 0) {
       t.blockTime,
       t.status,
       t.errorMessage,
+      t.retry_count,
+      t.last_retry_time,
       COUNT(dp.id) as payoutCount
     FROM transactions t
     LEFT JOIN distribution_payouts dp ON t.id = dp.transactionId
@@ -101,7 +110,9 @@ export function getTransactionById(transactionId) {
       t.timestamp,
       t.blockTime,
       t.status,
-      t.errorMessage
+      t.errorMessage,
+      t.retry_count,
+      t.last_retry_time
     FROM transactions t
     WHERE t.id = ?
   `);
@@ -124,7 +135,9 @@ export function getTransactionDetails(txHash) {
       t.timestamp,
       t.blockTime,
       t.status,
-      t.errorMessage
+      t.errorMessage,
+      t.retry_count,
+      t.last_retry_time
     FROM transactions t
     WHERE t.txHash = ?
   `);

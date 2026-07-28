@@ -102,6 +102,14 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 async function get<T>(path: string): Promise<T> {
   return request<T>(path);
 }
@@ -360,4 +368,98 @@ export const api = {
     }>(
       `/analytics/${contractId}${dateRange ? `?start=${dateRange.start}&end=${dateRange.end}` : ""}`,
     ),
+
+  // Contributor Onboarding APIs (#567)
+  getOnboardingStatus: (walletAddress: string) =>
+    get<OnboardingStatusResponse>(`/v1/onboarding/${walletAddress}`),
+
+  updateOnboardingStatus: (
+    walletAddress: string,
+    data: OnboardingUpdateRequest,
+  ) =>
+    patch<{
+      message: string;
+      summary: OnboardingStatusResponse;
+    }>(`/v1/onboarding/${walletAddress}`, data),
+
+  sendOnboardingReminder: (walletAddress: string, email: string) =>
+    post<OnboardingReminderResponse>(`/v1/onboarding/${walletAddress}/remind`, {
+      email,
+    }),
+
+  getEarningsHistory: (
+    walletAddress: string,
+    params?: { start?: string; end?: string; contracts?: string[] },
+  ) => {
+    const search = new URLSearchParams();
+    if (params?.start) search.set("start", params.start);
+    if (params?.end) search.set("end", params.end);
+    if (params?.contracts?.length) search.set("contracts", params.contracts.join(","));
+    const query = search.toString();
+    return get<{
+      success: boolean;
+      message?: string;
+      data: {
+        walletAddress: string;
+        snapshots: Array<{ date: string; contractId: string; amount: number }>;
+        events: Array<{
+          type: "contract_added" | "distribution_failure" | "contract_removed";
+          contractId: string;
+          date: string;
+          label: string;
+        }>;
+        contracts: string[];
+      };
+    }>(`/v1/earnings-history/${walletAddress}${query ? `?${query}` : ""}`);
+  },
 };
+
+export interface OnboardingItem {
+  id: string;
+  label: string;
+  description: string;
+  completed: boolean;
+  required: boolean;
+  category: "setup" | "compliance" | "finance" | "milestone";
+}
+
+export interface OnboardingStatusResponse {
+  walletAddress: string;
+  email: string;
+  kycStatus: "unverified" | "pending" | "verified";
+  payoutToken: string;
+  paymentPreferencesSet: boolean;
+  taxInfoSubmitted: boolean;
+  items: OnboardingItem[];
+  completedCount: number;
+  totalCount: number;
+  completionPercentage: number;
+  requiredComplete: boolean;
+  actionsLocked: boolean;
+  nextStep: {
+    id: string;
+    label: string;
+    description: string;
+  } | null;
+}
+
+export interface OnboardingUpdateRequest {
+  email?: string;
+  kycStatus?: "unverified" | "pending" | "verified";
+  paymentPreferencesSet?: boolean;
+  payoutToken?: string;
+  taxInfoSubmitted?: boolean;
+}
+
+export interface OnboardingReminderResponse {
+  success: boolean;
+  message: string;
+  emailDetails: {
+    to: string;
+    subject: string;
+    completionPercentage: number;
+    incompleteCount: number;
+    previewText: string;
+  };
+}
+

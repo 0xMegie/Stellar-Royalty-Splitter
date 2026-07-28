@@ -5,6 +5,10 @@ export const stellarAddress = z
   .string("Validation failed: walletAddress must be a string")
   .regex(/^G[A-Z2-7]{55}$/, "Validation failed: Invalid Stellar address");
 
+export function isValidStellarAddress(addr) {
+  return typeof addr === "string" && /^G[A-Z2-7]{55}$/.test(addr);
+}
+
 export const contractAddress = z
   .string("Validation failed: contractId must be a string")
   .regex(/^C[A-Z2-7]{55}$/, "Validation failed: Invalid contract address");
@@ -64,6 +68,22 @@ export const distributeSecondarySchema = z.object({
   tokenId: contractAddress,
 });
 
+export const emailDigestSubscribeSchema = z.object({
+  walletAddress: stellarAddress,
+  email: z.string().email("Invalid email address"),
+  timezone: z.string().min(1).max(50).optional().default("UTC"),
+  dayOfWeek: z.number().int().min(0).max(6).optional().default(0),
+  hourOfDay: z.number().int().min(0).max(23).optional().default(9),
+});
+
+export const emailDigestPreferencesSchema = z.object({
+  walletAddress: stellarAddress,
+  email: z.string().email("Invalid email address").optional(),
+  timezone: z.string().min(1).max(50).optional(),
+  dayOfWeek: z.number().int().min(0).max(6).optional(),
+  hourOfDay: z.number().int().min(0).max(23).optional(),
+});
+
 export const webhookRegisterSchema = z.object({
   url: z
     .string()
@@ -78,6 +98,96 @@ export const transactionConfirmSchema = z.object({
   blockTime: z.string().optional(),
   errorMessage: z.string().optional(),
   status: z.enum(["pending", "confirmed", "failed"]).optional(),
+});
+
+// ─── Dispute / ticket schemas (#607) ──────────────────────────────────────────
+
+export const DISPUTE_CATEGORIES = ["wrong_amount", "missing_payment", "other"];
+export const DISPUTE_STATUSES = ["open", "under_review", "resolved", "closed"];
+
+/** Submitted by a contributor to open a new dispute ticket. */
+export const disputeSubmitSchema = z.object({
+  walletAddress: stellarAddress,
+  contractId: contractAddress.optional(),
+  category: z.enum(["wrong_amount", "missing_payment", "other"], {
+    errorMap: () => ({
+      message: `category must be one of: ${DISPUTE_CATEGORIES.join(", ")}`,
+    }),
+  }),
+  description: z
+    .string()
+    .min(10, "description must be at least 10 characters")
+    .max(2000, "description must not exceed 2000 characters"),
+});
+
+/** Submitted by a contributor to append a comment to their own ticket. */
+export const disputeContributorCommentSchema = z.object({
+  walletAddress: stellarAddress,
+  message: z
+    .string()
+    .min(1, "message must not be empty")
+    .max(2000, "message must not exceed 2000 characters"),
+});
+
+/** Admin: update the status of a dispute, with an optional note. */
+export const disputeAdminReviewSchema = z.object({
+  status: z.enum(["open", "under_review", "resolved", "closed"], {
+    errorMap: () => ({
+      message: `status must be one of: ${DISPUTE_STATUSES.join(", ")}`,
+    }),
+  }),
+  adminNote: z.string().max(2000, "adminNote must not exceed 2000 characters").optional(),
+});
+
+/** Admin: post a comment on any dispute. */
+export const disputeAdminCommentSchema = z.object({
+  message: z
+    .string()
+    .min(1, "message must not be empty")
+    .max(2000, "message must not exceed 2000 characters"),
+});
+
+// ─── Referral schemas (#603) ───────────────────────────────────────────────────
+
+/**
+ * Referral code format: "REF-" followed by 12 uppercase hex characters.
+ * e.g. "REF-3A9F21B04C7E"
+ */
+export const referralCode = z
+  .string()
+  .regex(/^REF-[0-9A-F]{12}$/, "Invalid referral code format");
+
+/** Generate (or retrieve) a referral link for a wallet. */
+export const referralGenerateLinkSchema = z.object({
+  walletAddress: stellarAddress,
+});
+
+/** Register a new contributor via a referral code. */
+export const referralRegisterSchema = z.object({
+  referralCode,
+  referredAddress: stellarAddress,
+});
+
+/** Activate a referral and award a bonus once the referred contributor qualifies. */
+export const referralActivateSchema = z.object({
+  referredAddress: stellarAddress,
+  bonusAmountStroops: z
+    .number()
+    .int()
+    .positive("bonusAmountStroops must be a positive integer")
+    .optional(),
+  reason: z.string().min(1).max(500).optional(),
+});
+
+/** Admin: manually award an additional bonus to a referrer. */
+export const referralAwardBonusSchema = z.object({
+  referralId: z.number().int().positive(),
+  referrerAddress: stellarAddress,
+  bonusAmountStroops: z.number().int().positive("bonusAmountStroops must be a positive integer"),
+  reason: z
+    .string()
+    .min(1, "reason must not be empty")
+    .max(500, "reason must not exceed 500 characters"),
 });
 
 export function validate(schema) {

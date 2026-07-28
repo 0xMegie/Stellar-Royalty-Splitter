@@ -3,14 +3,21 @@ import { useTheme } from "../context/ThemeContext";
 import { useSettings, SettingsType } from "../context/SettingsContext";
 
 import { CopyButton } from "./CopyButton";
+import { PaymentPreferences } from "./PaymentPreferences";
+import { NotificationPreferences } from "./NotificationPreferences";
 import "./Settings.css";
 
 interface SettingsProps {
   contractId: string;
+  walletAddress?: string | null;
   onClearContract?: () => void;
 }
 
-export const Settings: React.FC<SettingsProps> = ({ contractId, onClearContract }) => {
+export const Settings: React.FC<SettingsProps> = ({
+  contractId,
+  walletAddress,
+  onClearContract,
+}) => {
   const { isDark, toggleTheme } = useTheme();
   const { settings, updateSettings } = useSettings();
   const [localSettings, setLocalSettings] = useState(() => ({ ...settings }));
@@ -201,6 +208,12 @@ export const Settings: React.FC<SettingsProps> = ({ contractId, onClearContract 
               </button>
             </div>
         </section>
+
+        {/* Payment Preferences */}
+        <PaymentPreferences walletAddress={walletAddress ?? ""} />
+
+        {/* Notification Preferences (#605) */}
+        <NotificationPreferences walletAddress={walletAddress ?? ""} />
 
         {/* About Section */}
         <section className="settings-section">

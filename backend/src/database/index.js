@@ -23,13 +23,27 @@ export {
   getTransactionHistory,
   getTransactionDetails,
   getTransactionById,
+  getRetryEligibleTransactions,
+  markTransactionRetrying,
+  markTransactionRetryExhausted,
+  getRetryExhaustedTransactions,
+  getTransactionRetryCount,
+  RETRY_BACKOFF_MS,
+  MAX_RETRY_COUNT,
 } from "./transactions.js";
 
 // Webhooks (#295)
-export { registerWebhook, listWebhooks, deleteWebhook } from "./webhooks.js";
+export {
+  registerWebhook,
+  listWebhooks,
+  deleteWebhook,
+  updateWebhookRetryState,
+  getWebhooksDueForRetry,
+  resetWebhookRetryCount,
+} from "./webhooks.js";
 
 // Audit logging
-export { getAuditLog, addAuditLog } from "./audit.js";
+export { getAuditLog, addAuditLog, countAuditLog } from "./audit.js";
 
 // Secondary royalties
 export {
@@ -43,7 +57,37 @@ export {
 } from "./secondary-royalties.js";
 
 // Analytics
-export { getAnalyticsData } from "./analytics.js";
+export {
+  getAnalyticsData,
+  getContributorEarningsHistory,
+  getContributorEarningsEvents,
+  getContributorContracts,
+} from "./analytics.js";
+
+// Payment preferences (#584)
+export { getPaymentPreference, savePaymentPreference } from "./payment-preferences.js";
+
+// Transaction fee display (#606)
+export {
+  recordTransactionFee,
+  getTransactionFee,
+  getFeesByContract,
+} from "./transaction-fees.js";
+
+// Notification preferences (#605)
+export {
+  getNotificationPreferences,
+  saveNotificationPreferences,
+} from "./notification-preferences.js";
+
+// Contributor verification (#602)
+export {
+  getVerification,
+  upsertVerification,
+  getVerificationsByStep,
+  VERIFICATION_STEPS,
+  VERIFICATION_STATUSES,
+} from "./contributor-verification.js";
 
 // Contract event archival
 export {
@@ -56,6 +100,124 @@ export {
   getArchivedEvents,
   updateArchivePolicy,
 } from "./archive.js";
+
+// CSV bulk import (#597)
+export {
+  createCsvImport,
+  markImportSuccess,
+  markImportFailed,
+  getCsvImport,
+  getCsvImportsByContract,
+  addImportResult,
+  getImportResults,
+  getImportSummary,
+} from "./csv-import.js";
+
+// Contributor tax information (#595)
+export {
+  getContributorTax,
+  upsertContributorTax,
+  getTaxComplianceReport,
+  getContributorsMissingTaxInfo,
+  getAllWalletAddresses,
+} from "./contributor-tax.js";
+
+// Real-time notifications (#594)
+export {
+  createNotification,
+  getNotifications,
+  getUnreadNotificationCount,
+  markNotificationRead,
+  markAllNotificationsRead,
+  deleteNotification,
+  getNotificationPreference,
+  upsertNotificationPreference,
+  createSystemNotification,
+} from "./notifications.js";
+
+// Payment hold/release system (#596)
+export {
+  placeHold,
+  releaseHold,
+  approveHoldRelease,
+  getTransactionWithHold,
+  getHeldTransactions,
+  getAllHeldTransactions,
+  getHoldAuditTrail,
+  getTransactionsPendingHoldRelease,
+} from "./payment-holds.js";
+
+// Email digest (#569)
+export {
+  subscribeEmailDigest,
+  getSubscriberByToken,
+  getSubscriberByWallet,
+  unsubscribeByEmailDigest,
+  unsubscribeByWallet,
+  updateSubscriberPreferences,
+  getAllEnabledSubscribers,
+  getSubscribersDueForDigest,
+  wasDigestSentThisWeek,
+  logDigestSent,
+  logDigestFailed,
+  getDigestHistory,
+  getEarningsForWeek,
+} from "./email-digest.js";
+
+// Disputes / ticket system (#607)
+export {
+  createDispute,
+  getDisputeByTicketId,
+  getDisputesByWallet,
+  countDisputesByWallet,
+  getAllDisputes,
+  countAllDisputes,
+  updateDisputeStatus,
+  addDisputeComment,
+  getDisputeComments,
+} from "./disputes.js";
+
+// Referral tracking (#603)
+export {
+  DEFAULT_REFERRAL_BONUS_STROOPS,
+  generateReferralLink,
+  getReferralLinkByWallet,
+  getReferralLinkByCode,
+  registerReferral,
+  activateReferral,
+  getReferralByReferred,
+  getReferralsByReferrer,
+  countReferralsByReferrer,
+  awardReferralBonus,
+  getBonusesByReferrer,
+  getReferralDashboard,
+  getAllReferrals,
+  countAllReferrals,
+} from "./referrals.js";
+
+// Contract state snapshots (#613)
+export {
+  ensureSnapshotTable,
+  createSnapshot,
+  listSnapshots,
+  getSnapshot,
+  verifySnapshotIntegrity,
+  countSnapshots,
+  getAllSnapshots,
+  pruneSnapshots,
+} from "./contract-snapshots.js";
+
+// Contributor communication history (#612)
+export {
+  ensureCommunicationsTable,
+  recordCommunication,
+  getCommunicationsByWallet,
+  getCommunicationsByContract,
+  searchCommunications,
+  addInternalNote,
+  getCommunicationTimeline,
+  countCommunications,
+} from "./contributor-communications.js";
 
 // Default export for backwards compatibility
 import { db } from "./core.js";

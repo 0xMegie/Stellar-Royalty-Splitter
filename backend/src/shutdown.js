@@ -2,6 +2,7 @@ export function createGracefulShutdownHandler({
   server,
   closeDatabase,
   logger,
+  onShutdown,
   exit = process.exit,
 }) {
   let shutdownStarted = false;
@@ -23,6 +24,7 @@ export function createGracefulShutdownHandler({
       }
 
       try {
+        if (onShutdown) onShutdown();
         closeDatabase();
         logger.info("Database connection closed");
       } catch (dbErr) {

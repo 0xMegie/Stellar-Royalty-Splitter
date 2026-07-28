@@ -117,8 +117,252 @@ export function initializeDatabase() {
       `,
     },
     {
-      version: 4,
+      version: 5,
       sql: `
+        CREATE TABLE IF NOT EXISTS payment_preferences (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          walletAddress TEXT NOT NULL UNIQUE,
+          paymentMethod TEXT NOT NULL CHECK(paymentMethod IN ('direct_transfer', 'usdc', 'xlm')),
+          updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_payment_preferences_walletAddress
+          ON payment_preferences(walletAddress);
+      `,
+    },
+    {
+      version: 6,
+        sql: `
+          CREATE TABLE IF NOT EXISTS email_digest_subscribers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            walletAddress TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL,
+            timezone TEXT NOT NULL DEFAULT 'UTC',
+            dayOfWeek INTEGER NOT NULL DEFAULT 0,
+            hourOfDay INTEGER NOT NULL DEFAULT 9,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            unsubscribeToken TEXT NOT NULL UNIQUE,
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+
+          CREATE TABLE IF NOT EXISTS email_digest_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subscriberId INTEGER NOT NULL,
+            weekStart TEXT NOT NULL,
+            weekEnd TEXT NOT NULL,
+            sentAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            earningsSummary TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'sent' CHECK(status IN ('sent', 'failed')),
+            FOREIGN KEY(subscriberId) REFERENCES email_digest_subscribers(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_email_digest_subscribers_wallet
+            ON email_digest_subscribers(walletAddress);
+          CREATE INDEX IF NOT EXISTS idx_email_digest_subscribers_enabled
+            ON email_digest_subscribers(enabled);
+          CREATE INDEX IF NOT EXISTS idx_email_digest_log_subscriber
+            ON email_digest_log(subscriberId);
+          CREATE INDEX IF NOT EXISTS idx_email_digest_log_week
+            ON email_digest_log(weekStart, weekEnd);
+        `,
+      },
+      {
+        version: 7,
+        sql: `
+        ALTER TABLE transactions ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE transactions ADD COLUMN last_retry_time DATETIME;
+        CREATE INDEX IF NOT EXISTS idx_transactions_retry_eligible
+          ON transactions(status, type, retry_count, last_retry_time);
+      `,
+      },
+      {
+        // #572: Role-Based Access Control — users and API key tables
+        version: 8,
+        sql: `
+          CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            walletAddress TEXT UNIQUE,
+            role TEXT NOT NULL DEFAULT 'collaborator'
+              CHECK(role IN ('viewer', 'collaborator', 'operator', 'admin')),
+            active INTEGER NOT NULL DEFAULT 1,
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+
+          CREATE TABLE IF NOT EXISTS api_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            keyHash TEXT NOT NULL UNIQUE,
+            userId INTEGER NOT NULL,
+            expiresAt DATETIME,
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_api_keys_keyHash ON api_keys(keyHash);
+          CREATE INDEX IF NOT EXISTS idx_users_walletAddress ON users(walletAddress);
+        `,
+      },
+      {
+        // #570: Add database index on transactions(status) column
+        // #597: CSV bulk import tracking, contributor tax, notifications
+        version: 9,
+        sql: `
+          CREATE INDEX IF NOT EXISTS idx_transactions_status
+            ON transactions(status);
+
+          CREATE TABLE IF NOT EXISTS csv_imports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contractId TEXT NOT NULL,
+            fileName TEXT NOT NULL,
+            rowCount INTEGER NOT NULL DEFAULT 0,
+            importedBy TEXT NOT NULL DEFAULT 'unknown',
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'completed', 'failed')),
+            error_message TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME
+          );
+          CREATE INDEX IF NOT EXISTS idx_csv_imports_contractId ON csv_imports(contractId);
+
+          CREATE TABLE IF NOT EXISTS csv_import_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            importId INTEGER NOT NULL,
+            rowIndex INTEGER NOT NULL,
+            address TEXT NOT NULL DEFAULT '',
+            share INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL CHECK(status IN ('success', 'error')),
+            errorMessage TEXT,
+            FOREIGN KEY(importId) REFERENCES csv_imports(id) ON DELETE CASCADE
+          );
+          CREATE INDEX IF NOT EXISTS idx_csv_import_results_importId ON csv_import_results(importId);
+
+          CREATE TABLE IF NOT EXISTS contributor_tax (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            walletAddress TEXT NOT NULL UNIQUE,
+            tax_status TEXT CHECK(tax_status IN ('not_collected', 'pending', 'completed', 'exempt')),
+            tax_id TEXT,
+            w9_file_path TEXT,
+            w9_file_name TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX IF NOT EXISTS idx_contributor_tax_wallet ON contributor_tax(walletAddress);
+          CREATE INDEX IF NOT EXISTS idx_contributor_tax_status ON contributor_tax(tax_status);
+
+          CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            walletAddress TEXT NOT NULL,
+            type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            message TEXT,
+            data TEXT,
+            read INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX IF NOT EXISTS idx_notifications_wallet ON notifications(walletAddress);
+          CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(walletAddress, read);
+
+          CREATE TABLE IF NOT EXISTS notification_preferences (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            walletAddress TEXT NOT NULL UNIQUE,
+            email_enabled INTEGER NOT NULL DEFAULT 1,
+            in_app_enabled INTEGER NOT NULL DEFAULT 1,
+            sms_enabled INTEGER NOT NULL DEFAULT 0,
+            notify_distribution INTEGER NOT NULL DEFAULT 1,
+            notify_payment INTEGER NOT NULL DEFAULT 1,
+            notify_failure INTEGER NOT NULL DEFAULT 1,
+            notify_hold INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX IF NOT EXISTS idx_notification_prefs_wallet ON notification_preferences(walletAddress);
+        `,
+      },
+      {
+        // #596: Payment hold/release system
+        version: 10,
+        sql: `
+          ALTER TABLE transactions ADD COLUMN hold_reason TEXT;
+          ALTER TABLE transactions ADD COLUMN hold_until DATETIME;
+          ALTER TABLE transactions ADD COLUMN hold_placed_at DATETIME;
+          ALTER TABLE transactions ADD COLUMN hold_placed_by TEXT;
+          ALTER TABLE transactions ADD COLUMN hold_released_at DATETIME;
+          ALTER TABLE transactions ADD COLUMN hold_released_by TEXT;
+          ALTER TABLE transactions ADD COLUMN hold_approved_by TEXT;
+          ALTER TABLE transactions ADD COLUMN hold_approved_at DATETIME;
+          ALTER TABLE transactions ADD COLUMN hold_approval_note TEXT;
+          ALTER TABLE transactions ADD COLUMN hold_status TEXT DEFAULT NULL CHECK(hold_status IN (NULL, 'active', 'released'));
+
+          CREATE TABLE IF NOT EXISTS hold_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transactionId INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            reason TEXT,
+            performedBy TEXT,
+            details TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(transactionId) REFERENCES transactions(id) ON DELETE CASCADE
+          );
+          CREATE INDEX IF NOT EXISTS idx_hold_audit_transaction ON hold_audit(transactionId);
+        `,
+      },
+      {
+        // #606: Transaction fee display — stores Soroban minResourceFee per tx
+        version: 10,
+        sql: `
+          CREATE TABLE IF NOT EXISTS transaction_fees (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            transactionId INTEGER NOT NULL UNIQUE,
+            contractId    TEXT NOT NULL,
+            feeStroops    TEXT NOT NULL,
+            recordedAt    DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(transactionId) REFERENCES transactions(id) ON DELETE CASCADE
+          );
+          CREATE INDEX IF NOT EXISTS idx_transaction_fees_contractId
+            ON transaction_fees(contractId);
+          CREATE INDEX IF NOT EXISTS idx_transaction_fees_transactionId
+            ON transaction_fees(transactionId);
+        `,
+      },
+      {
+        // #605: Contributor notification preferences
+        version: 11,
+        sql: `
+          CREATE TABLE IF NOT EXISTS notification_preferences (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            walletAddress TEXT NOT NULL UNIQUE,
+            email         INTEGER NOT NULL DEFAULT 1,
+            sms           INTEGER NOT NULL DEFAULT 0,
+            inApp         INTEGER NOT NULL DEFAULT 1,
+            push          INTEGER NOT NULL DEFAULT 0,
+            updatedAt     DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX IF NOT EXISTS idx_notification_preferences_walletAddress
+            ON notification_preferences(walletAddress);
+        `,
+      },
+      {
+        // #602: Contributor verification workflow
+        version: 12,
+        sql: `
+          CREATE TABLE IF NOT EXISTS contributor_verification (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            walletAddress TEXT NOT NULL UNIQUE,
+            step          TEXT NOT NULL DEFAULT 'email'
+              CHECK(step IN ('email', 'kyc', 'manual_review', 'verified', 'rejected')),
+            status        TEXT NOT NULL DEFAULT 'pending'
+              CHECK(status IN ('pending', 'in_progress', 'completed', 'failed')),
+            adminNote     TEXT,
+            createdAt     DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updatedAt     DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX IF NOT EXISTS idx_contributor_verification_walletAddress
+            ON contributor_verification(walletAddress);
+          CREATE INDEX IF NOT EXISTS idx_contributor_verification_step
+            ON contributor_verification(step);
+        `,
+      },
+      {
+        version: 4,
+        sql: `
         CREATE TABLE IF NOT EXISTS contract_event_archive (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           originalTransactionId INTEGER NOT NULL,
@@ -158,6 +402,59 @@ export function initializeDatabase() {
     },
   ];
 
+  // Add migration v13: contract_snapshots table (#613) and
+  // contributor_communications table (#612)
+  migrations.push({
+    version: 13,
+    sql: `
+      CREATE TABLE IF NOT EXISTS contract_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contractId TEXT NOT NULL,
+        label TEXT,
+        collaborators TEXT NOT NULL DEFAULT '[]',
+        shares TEXT NOT NULL DEFAULT '{}',
+        balances TEXT NOT NULL DEFAULT '{}',
+        transactionCount INTEGER NOT NULL DEFAULT 0,
+        lastTransactionId INTEGER,
+        stateHash TEXT,
+        createdBy TEXT,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_contract_snapshots_contractId
+        ON contract_snapshots(contractId);
+      CREATE INDEX IF NOT EXISTS idx_contract_snapshots_createdAt
+        ON contract_snapshots(createdAt);
+
+      CREATE TABLE IF NOT EXISTS contributor_communications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        walletAddress TEXT NOT NULL,
+        contractId TEXT,
+        type TEXT NOT NULL CHECK(type IN (
+          'email', 'support_ticket', 'message', 'internal_note', 'system_notification'
+        )),
+        subject TEXT,
+        body TEXT NOT NULL,
+        direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound', 'internal')),
+        status TEXT NOT NULL DEFAULT 'sent' CHECK(status IN ('sent', 'received', 'draft', 'archived')),
+        isInternal INTEGER NOT NULL DEFAULT 0,
+        metadata TEXT,
+        referenceId TEXT,
+        createdBy TEXT,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_contributor_comms_wallet
+        ON contributor_communications(walletAddress);
+      CREATE INDEX IF NOT EXISTS idx_contributor_comms_contract
+        ON contributor_communications(contractId);
+      CREATE INDEX IF NOT EXISTS idx_contributor_comms_type
+        ON contributor_communications(type);
+      CREATE INDEX IF NOT EXISTS idx_contributor_comms_created
+        ON contributor_communications(createdAt);
+      CREATE INDEX IF NOT EXISTS idx_contributor_comms_wallet_created
+        ON contributor_communications(walletAddress, createdAt);
+    `,
+  });
+
   const applied = db
     .prepare("SELECT version FROM schema_migrations")
     .all()
@@ -183,7 +480,9 @@ export function initializeDatabase() {
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
       blockTime DATETIME,
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'confirmed', 'failed')),
-      errorMessage TEXT
+      errorMessage TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      last_retry_time DATETIME
     );
 
     CREATE TABLE IF NOT EXISTS distribution_payouts (
@@ -233,12 +532,16 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_transactions_txHash ON transactions(txHash);
     CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
     CREATE INDEX IF NOT EXISTS idx_transactions_event_time ON transactions(COALESCE(blockTime, timestamp));
+    CREATE INDEX IF NOT EXISTS idx_transactions_retry_eligible
+      ON transactions(status, type, retry_count, last_retry_time);
     CREATE INDEX IF NOT EXISTS idx_secondary_sales_contractId ON secondary_sales(contractId);
     CREATE INDEX IF NOT EXISTS idx_secondary_sales_nftId ON secondary_sales(nftId);
     CREATE INDEX IF NOT EXISTS idx_secondary_sales_timestamp ON secondary_sales(timestamp);
     CREATE INDEX IF NOT EXISTS idx_secondary_distributions_contractId ON secondary_royalty_distributions(contractId);
     CREATE INDEX IF NOT EXISTS idx_audit_contractId ON audit_log(contractId);
     CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+    CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_secondary_sales_dedup ON secondary_sales(contractId, nftId, previousOwner, newOwner, salePrice, saleToken);
 
     CREATE TABLE IF NOT EXISTS contract_event_archive (
@@ -272,6 +575,28 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_contract_event_archive_contractId ON contract_event_archive(contractId);
     CREATE INDEX IF NOT EXISTS idx_contract_event_archive_timestamp ON contract_event_archive(COALESCE(blockTime, timestamp));
     CREATE INDEX IF NOT EXISTS idx_contract_event_archive_contract_time ON contract_event_archive(contractId, COALESCE(blockTime, timestamp));
+
+    CREATE TABLE IF NOT EXISTS contributor_status (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      contractId TEXT NOT NULL,
+      address TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active', 'suspended', 'deactivated')),
+      reason TEXT,
+      suspendedAt DATETIME,
+      deactivatedAt DATETIME,
+      updatedBy TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(contractId, address)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_contributor_status_contract
+      ON contributor_status(contractId);
+    CREATE INDEX IF NOT EXISTS idx_contributor_status_address
+      ON contributor_status(contractId, address);
+    CREATE INDEX IF NOT EXISTS idx_contributor_status_status
+      ON contributor_status(contractId, status);
   `);
 
   // Migration guards for existing databases
@@ -283,6 +608,18 @@ export function initializeDatabase() {
 
   try {
     db.exec(`ALTER TABLE distribution_payouts ADD COLUMN contractId TEXT NOT NULL DEFAULT ''`);
+  } catch (_) {
+    /* column already exists */
+  }
+
+  try {
+    db.exec(`ALTER TABLE transactions ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
+  } catch (_) {
+    /* column already exists */
+  }
+
+  try {
+    db.exec(`ALTER TABLE transactions ADD COLUMN last_retry_time DATETIME`);
   } catch (_) {
     /* column already exists */
   }

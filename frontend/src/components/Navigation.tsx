@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useTheme } from "../context/ThemeContext";
 import { useNetwork } from "../context/NetworkContext";
+import { NotificationBadge } from "./NotificationBadge";
 import "./Navigation.css";
 
 interface NavigationProps {
@@ -8,6 +9,7 @@ interface NavigationProps {
   onPageChange: (page: string) => void;
   walletAddress: string | null;
   onDisconnect: () => void;
+  wsConnected?: boolean;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
@@ -15,6 +17,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   onPageChange,
   walletAddress,
   onDisconnect,
+  wsConnected = false,
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -23,11 +26,20 @@ export const Navigation: React.FC<NavigationProps> = ({
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: "📊" },
+    { id: "earnings-history", label: "Earnings", icon: "💹" },
+    { id: "onboarding", label: "Onboarding", icon: "🚀" },
     { id: "transactions", label: "Transactions", icon: "📋" },
+    { id: "timeline", label: "Timeline", icon: "🕐" },
+    { id: "forecast", label: "Forecast", icon: "📈" },
+    { id: "earnings", label: "My Earnings", icon: "💎" },
+    { id: "health", label: "System Health", icon: "🩺" },
     { id: "admin", label: "Admin", icon: "👑" },
     { id: "initialize", label: "Initialize", icon: "⚙️" },
     { id: "distribute", label: "Distribute", icon: "💰" },
     { id: "secondary", label: "Secondary", icon: "🔄" },
+    { id: "bulk-import", label: "Bulk Import", icon: "📥" },
+    { id: "tax-info", label: "Tax Info", icon: "📋" },
+    { id: "payment-holds", label: "Payment Holds", icon: "⏸️" },
     { id: "settings", label: "Settings", icon: "⚡" },
   ];
 
@@ -98,6 +110,10 @@ export const Navigation: React.FC<NavigationProps> = ({
               {network === "testnet" ? "Testnet" : "Mainnet"}
             </span>
           </button>
+
+          {walletAddress && (
+            <NotificationBadge walletAddress={walletAddress} wsConnected={wsConnected} />
+          )}
 
           <button
             className="theme-toggle"
