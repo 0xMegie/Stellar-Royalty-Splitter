@@ -65,16 +65,33 @@ export function addDistributionPayout(
 }
 
 export function getTransactionCount(contractId, filters = {}) {
-  const conditions = ["contractId = ?"];
+  const conditions = ["t.contractId = ?"];
   const params = [contractId];
 
   if (filters.type) {
-    conditions.push("type = ?");
+    conditions.push("t.type = ?");
     params.push(filters.type);
   }
 
+  if (filters.recipient) {
+    conditions.push(
+      "EXISTS (SELECT 1 FROM distribution_payouts dp2 WHERE dp2.transactionId = t.id AND dp2.collaboratorAddress LIKE ?)"
+    );
+    params.push(`%${filters.recipient}%`);
+  }
+
+  if (filters.startDate) {
+    conditions.push("t.timestamp >= ?");
+    params.push(filters.startDate);
+  }
+
+  if (filters.endDate) {
+    conditions.push("t.timestamp <= ?");
+    params.push(filters.endDate);
+  }
+
   const stmt = db.prepare(
-    `SELECT COUNT(*) as total FROM transactions WHERE ${conditions.join(" AND ")}`
+    `SELECT COUNT(*) as total FROM transactions t WHERE ${conditions.join(" AND ")}`
   );
   return stmt.get(...params).total;
 }
@@ -86,6 +103,23 @@ export function getTransactionHistory(contractId, limit = 50, offset = 0, filter
   if (filters.type) {
     conditions.push("t.type = ?");
     params.push(filters.type);
+  }
+
+  if (filters.recipient) {
+    conditions.push(
+      "EXISTS (SELECT 1 FROM distribution_payouts dp2 WHERE dp2.transactionId = t.id AND dp2.collaboratorAddress LIKE ?)"
+    );
+    params.push(`%${filters.recipient}%`);
+  }
+
+  if (filters.startDate) {
+    conditions.push("t.timestamp >= ?");
+    params.push(filters.startDate);
+  }
+
+  if (filters.endDate) {
+    conditions.push("t.timestamp <= ?");
+    params.push(filters.endDate);
   }
 
   const stmt = db.prepare(`

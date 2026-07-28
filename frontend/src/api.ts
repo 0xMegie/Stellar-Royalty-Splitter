@@ -212,12 +212,28 @@ export const api = {
     ),
 
   // Transaction History & Audit Log APIs
-  getTransactionHistory: (contractId: string, limit = 50, offset = 0) =>
-    get<{
+  getTransactionHistory: (
+    contractId: string,
+    limit = 50,
+    offset = 0,
+    filters?: {
+      type?: "distribute" | "initialize";
+      recipient?: string;
+      startDate?: string;
+      endDate?: string;
+    },
+  ) => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (filters?.type) params.set("type", filters.type);
+    if (filters?.recipient) params.set("recipient", filters.recipient);
+    if (filters?.startDate) params.set("startDate", filters.startDate);
+    if (filters?.endDate) params.set("endDate", filters.endDate);
+    return get<{
       success: boolean;
       data: TransactionRecord[];
       pagination: { limit: number; offset: number; total: number };
-    }>(`/history/${contractId}?limit=${limit}&offset=${offset}`),
+    }>(`/history/${contractId}?${params.toString()}`);
+  },
 
   getTransactionDetails: (txHash: string) =>
     get<{ success: boolean; data: TransactionDetails }>(
@@ -348,6 +364,8 @@ export const api = {
         totalDistributed: number;
         totalTransactions: number;
         averagePayout: number;
+        primaryRoyaltiesTotal: number;
+        secondaryRoyaltiesTotal: number;
         topEarners: Array<{
           address: string;
           totalEarned: number;

@@ -5173,3 +5173,327 @@ fn test_set_admins_emits_event() {
     assert!(found, "adms_set event not emitted");
 }
 
+
+// ── Issue #654: Payout and royalty edge cases ─────────────────────────────────
+
+/// #654 — Very small distribution: 1 stroop to 2 recipients (50/50 split).
+/// Both receive 0 because amount < recipient count, so AmountTooSmall fires.
+#[test]
+fn test_distribute_amount_too_small_for_recipient_count() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    // 1 stroop < 2 recipients — must reject with AmountTooSmall
+    mint(&env, &token, &contract_id, 1);
+    let result = client.try_distribute(&token);
+    assert_eq!(result, Err(Ok(ContractError::AmountTooSmall)));
+}
+
+/// #654 — Minimum viable distribution: exactly 2 stroops for 2 recipients.
+/// Each should receive exactly 1 stroop (no dust).
+#[test]
+fn test_distribute_minimum_viable_amount_two_recipients() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    mint(&env, &token, &contract_id, 2);
+    client.distribute(&token);
+
+    assert_eq!(TokenClient::new(&env, &token).balance(&admin), 1);
+    assert_eq!(TokenClient::new(&env, &token).balance(&b), 1);
+}
+
+/// #654 — Uneven royalty allocation: 3 recipients with shares 6000/3000/1000.
+/// Verifies the last recipient absorbs rounding dust and total equals amount.
+#[test]
+fn test_distribute_uneven_three_way_split_preserves_total() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let c = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone(), c.clone()],
+        &vec![&env, 6000_u32, 3000_u32, 1000_u32],
+    );
+
+    // 10_001 stroops — does not divide cleanly at any tier
+    let amount: i128 = 10_001;
+    mint(&env, &token, &contract_id, amount);
+    client.distribute(&token);
+
+    let admin_bal = TokenClient::new(&env, &token).balance(&admin);
+    let b_bal = TokenClient::new(&env, &token).balance(&b);
+    let c_bal = TokenClient::new(&env, &token).balance(&c);
+
+    // Shares must sum to the full amount (last recipient absorbs dust)
+    assert_eq!(admin_bal + b_bal + c_bal, amount);
+
+    // admin gets floor(10001 * 6000 / 10000) = 6000
+    assert_eq!(admin_bal, 6000);
+    // b gets floor(10001 * 3000 / 10000) = 3000
+    assert_eq!(b_bal, 3000);
+    // c gets the remainder = 10001 - 6000 - 3000 = 1001 (dust goes to last)
+    assert_eq!(c_bal, 1001);
+}
+
+/// #654 — Large distribution with highly asymmetric shares (9999/1 bps).
+/// Verifies dust is bounded to at most 1 stroop and always goes to last recipient.
+#[test]
+fn test_distribute_asymmetric_split_dust_bounded() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let last = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), last.clone()],
+        &vec![&env, 9999_u32, 1_u32],
+    );
+
+    let amount: i128 = 1_000_000_000; // 1000 XLM in stroops
+    mint(&env, &token, &contract_id, amount);
+    client.distribute(&token);
+
+    let admin_bal = TokenClient::new(&env, &token).balance(&admin);
+    let last_bal = TokenClient::new(&env, &token).balance(&last);
+
+    assert_eq!(admin_bal + last_bal, amount);
+    // Dust from integer division is at most 1 stroop
+    let expected_admin = amount * 9999 / 10_000;
+    assert_eq!(admin_bal, expected_admin);
+    let dust = last_bal - (amount * 1 / 10_000);
+    assert!(dust <= 1, "dust exceeds 1 stroop: {}", dust);
+}
+
+/// #654 — Secondary royalty: pool accumulates across multiple record calls
+/// and distributes the full accumulated amount in one shot.
+#[test]
+fn test_secondary_royalty_accumulates_across_multiple_records() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    // Record three separate royalty payments
+    mint(&env, &token, &admin, 300);
+    client.record_secondary_royalty(&token, &admin, &100_i128);
+    client.record_secondary_royalty(&token, &admin, &150_i128);
+    client.record_secondary_royalty(&token, &admin, &50_i128);
+
+    assert_eq!(client.get_secondary_pool(), 300);
+
+    client.distribute_secondary_royalties();
+
+    // Pool must be cleared
+    assert_eq!(client.get_secondary_pool(), 0);
+
+    // Total payout must equal 300
+    let admin_bal = TokenClient::new(&env, &token).balance(&admin);
+    let b_bal = TokenClient::new(&env, &token).balance(&b);
+    assert_eq!(admin_bal + b_bal, 300);
+}
+
+/// #654 — Secondary royalty pool reset: distributing clears the pool so a
+/// second call with an empty pool returns NoSecondaryRoyalties.
+#[test]
+fn test_secondary_distribution_clears_pool() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (_, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    mint(&env, &token, &admin, 100);
+    client.record_secondary_royalty(&token, &admin, &100_i128);
+    client.distribute_secondary_royalties();
+
+    // Second call on empty pool must fail
+    let result = client.try_distribute_secondary_royalties();
+    assert_eq!(result, Err(Ok(ContractError::NoSecondaryRoyalties)));
+}
+
+/// #654 — Secondary royalty with uneven split: 3 recipients, odd pool amount.
+/// Total payout must always equal pool size regardless of rounding.
+#[test]
+fn test_secondary_royalty_uneven_split_preserves_total() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let c = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone(), c.clone()],
+        &vec![&env, 5000_u32, 3333_u32, 1667_u32],
+    );
+
+    // 7 stroops — does not divide cleanly across any allocation
+    let pool: i128 = 7;
+    mint(&env, &token, &admin, pool);
+    client.record_secondary_royalty(&token, &admin, &pool);
+    client.distribute_secondary_royalties();
+
+    let admin_bal = TokenClient::new(&env, &token).balance(&admin);
+    let b_bal = TokenClient::new(&env, &token).balance(&b);
+    let c_bal = TokenClient::new(&env, &token).balance(&c);
+
+    assert_eq!(admin_bal + b_bal + c_bal, pool);
+    assert_eq!(client.get_secondary_pool(), 0);
+}
+
+/// #654 — Repeated secondary royalty distributions do not bleed state between
+/// rounds: each round's pool is fully distributed and cleared before the next.
+#[test]
+fn test_repeated_secondary_distributions_independent() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    let mut total_admin: i128 = 0;
+    let mut total_b: i128 = 0;
+
+    for round_amount in [100_i128, 200_i128, 300_i128] {
+        mint(&env, &token, &admin, round_amount);
+        client.record_secondary_royalty(&token, &admin, &round_amount);
+        assert_eq!(client.get_secondary_pool(), round_amount);
+
+        client.distribute_secondary_royalties();
+        assert_eq!(client.get_secondary_pool(), 0);
+
+        total_admin += round_amount / 2;
+        total_b += round_amount / 2;
+    }
+
+    assert_eq!(TokenClient::new(&env, &token).balance(&admin), total_admin);
+    assert_eq!(TokenClient::new(&env, &token).balance(&b), total_b);
+}
+
+/// #654 — record_secondary_sale preview: verifies royalty calculation
+/// at boundary rates (1 bp, 500 bp, 10000 bp).
+#[test]
+fn test_record_secondary_sale_royalty_calculation_boundaries() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (_, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    // 1 bp rate
+    client.set_royalty_rate(&1_u32);
+    let royalty_1bp = client.record_secondary_sale(&1_000_000_i128);
+    assert_eq!(royalty_1bp, 100); // 1_000_000 * 1 / 10_000
+
+    // 500 bp (5%) rate
+    client.set_royalty_rate(&500_u32);
+    let royalty_500bp = client.record_secondary_sale(&1_000_000_i128);
+    assert_eq!(royalty_500bp, 50_000); // 1_000_000 * 500 / 10_000
+
+    // 10_000 bp (100%) rate
+    client.set_royalty_rate(&10_000_u32);
+    let royalty_max = client.record_secondary_sale(&1_000_000_i128);
+    assert_eq!(royalty_max, 1_000_000);
+}
+
+/// #654 — distribute with 10 recipients (MAX_COLLABORATORS): all receive
+/// correct shares and the total equals the distributed amount.
+#[test]
+fn test_distribute_max_collaborators_correct_split() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    // 10 recipients each with 1000 bps (10%)
+    let addrs: SorobanVec<Address> = (0..10)
+        .map(|_| Address::generate(&env))
+        .collect::<std::vec::Vec<_>>()
+        .into_iter()
+        .fold(SorobanVec::new(&env), |mut v, a| { v.push_back(a); v });
+
+    let shares: SorobanVec<u32> = (0..10)
+        .fold(SorobanVec::new(&env), |mut v, _| { v.push_back(1000_u32); v });
+
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(&addrs, &shares);
+
+    let amount: i128 = 10_000;
+    mint(&env, &token, &contract_id, amount);
+    client.distribute(&token);
+
+    let mut total: i128 = 0;
+    for i in 0..addrs.len() {
+        let bal = TokenClient::new(&env, &token).balance(&addrs.get(i).unwrap());
+        total += bal;
+    }
+    assert_eq!(total, amount);
+}

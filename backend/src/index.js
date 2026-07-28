@@ -16,7 +16,7 @@ import { contractRouter } from "./routes/contract.js";
 import { healthRouter } from "./routes/health.js";
 import onboardingRouter from "./routes/onboarding.js";
 import { closeDatabase, initializeDatabase } from "./database/index.js";
-import { createGracefulShutdownHandler } from "./shutdown.js";
+import { createGracefulShutdownHandler, shutdownMiddleware } from "./shutdown.js";
 import { adminRouter } from "./routes/admin.js";
 import { snapshotRouter } from "./routes/snapshots.js";
 import { communicationsRouter } from "./routes/communications.js";
@@ -50,8 +50,23 @@ initializeSigningKey();
 
 const app = express();
 
-// Structured request logging with correlation IDs (#673)
-app.use(requestLogger);
+// Reject new incoming requests during graceful shutdown (#701)
+app.use(shutdownMiddleware);
+
+// Request logging middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    logger.info(`${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`, {
+      method: req.method,
+      path: req.originalUrl,
+      status: res.statusCode,
+      duration,
+    });
+  });
+  next();
+});
 
 // Security headers
 app.use(helmet());
