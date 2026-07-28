@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { Navigation } from "./components/Navigation";
 import HelpModal from "./components/HelpModal";
 import { OfflineIndicator } from "./components/OfflineIndicator";
+import { NetworkMismatchBanner } from "./components/NetworkMismatchBanner";
 import { useTheme } from "./context/ThemeContext";
 import {
   useKeyboardShortcuts,
@@ -24,10 +25,7 @@ import { Skeleton } from "./components/Skeleton";
 import { CopyButton } from "./components/CopyButton";
 import { api, SESSION_EXPIRED_EVENT } from "./api";
 import { OnboardingWalkthrough } from "./components/OnboardingWalkthrough";
-import { ContributorOnboardingChecklist } from "./components/ContributorOnboardingChecklist";
-import { EarningsHistoryChart } from "./components/EarningsHistoryChart";
-import { EarningsForecastCalculator } from "./components/EarningsForecastCalculator";
-import { useWebSocket } from "./hooks/useWebSocket";
+
 
 import "./App.css";
 
@@ -51,9 +49,11 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState(
     () => localStorage.getItem("srs_currentPage") ?? "dashboard"
   );
+  const [selectedTxHash, setSelectedTxHash] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [sessionToast, setSessionToast] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<Array<{ id: number; title: string; message: string | null; type: string }>>([]);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const { connected: wsConnected } = useWebSocket({
     walletAddress,
@@ -62,6 +62,21 @@ export default function App() {
       setNotifications(prev => [...prev, n]);
     },
   });
+
+  // Parse deep-link URL params (Issue #577 share link support)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const txHashParam = params.get("txHash");
+    const pageParam = params.get("page");
+
+    if (txHashParam) {
+      setSelectedTxHash(txHashParam);
+      setCurrentPage("transactions");
+    } else if (pageParam) {
+      setCurrentPage(pageParam);
+    }
+  }, []);
 
   function handleWalletConnect(address: string) {
     setWalletAddress(address);
@@ -294,12 +309,12 @@ export default function App() {
           </div>
         );
       case "transactions":
-        return contractId ? (
-          <TransactionHistory contractId={contractId} />
-        ) : (
-          <div className="page-empty">
-            <p>Please select a contract first</p>
-          </div>
+        return (
+          <TransactionHistory
+            contractId={contractId || "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+            selectedTxHash={selectedTxHash}
+            onSelectTxHash={setSelectedTxHash}
+          />
         );
       case "earnings-history":
         return walletAddress ? (
@@ -481,6 +496,7 @@ export default function App() {
   return (
     <div className="app-wrapper">
       <OfflineIndicator />
+      {walletAddress && <NetworkMismatchBanner />}
       {showHelp && <HelpModal onClose={closeHelp} shortcuts={shortcuts} />}
       {sessionToast && (
         <div className="session-toast" role="alert" aria-live="assertive">

@@ -18,16 +18,17 @@ import onboardingRouter from "./routes/onboarding.js";
 import { closeDatabase, initializeDatabase } from "./database/index.js";
 import { createGracefulShutdownHandler } from "./shutdown.js";
 import { adminRouter } from "./routes/admin.js";
+import { snapshotRouter } from "./routes/snapshots.js";
+import { communicationsRouter } from "./routes/communications.js";
 import { metricsRouter } from "./routes/metrics.js";
 import { initializeSigningKey } from "./signing-key.js";
-import { sendError, normalizeErrorCode } from "./error-response.js";
+import { sendError, notFoundHandler, errorHandler } from "./error-response.js";
 import { preferencesRouter } from "./routes/preferences.js";
 import emailDigestRouter from "./routes/email-digest.js";
 import { disputesRouter } from "./routes/disputes.js";
 import { referralsRouter } from "./routes/referrals.js";
 import { sendWeeklyDigests } from "./jobs/weekly-digest-job.js";
 import { isEmailConfigured } from "./email/email-service.js";
-import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
 import { rankingRouter } from "./routes/ranking.js";
 import { docsRouter } from "./routes/docs.js";
 import { attachRole } from "./middleware/rbac.js";
@@ -36,9 +37,11 @@ import { contributorTaxRouter } from "./routes/contributor-tax.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { paymentHoldsRouter } from "./routes/payment-holds.js";
 import { earningsHistoryRouter } from "./routes/earnings-history.js";
+import { versionRouter } from "./routes/version.js";
 import { initializeWebSocket } from "./websocket.js";
-import { complianceReportsRouter } from "./routes/compliance-reports.js";
-import { startComplianceReportScheduler } from "./jobs/compliance-report-job.js";
+import { startSnapshotScheduler } from "./jobs/snapshot-job.js";
+import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
+import { startWebhookRetryScheduler } from "./jobs/retry-failed-webhooks.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -126,6 +129,12 @@ const writeLimiter = rateLimit({
 app.use(generalLimiter);
 app.use(express.json({ limit: "10kb" }));
 
+// Attach X-API-Version header to all versioned responses
+app.use("/api/v1", (_req, res, next) => {
+  res.set("X-API-Version", "v1");
+  next();
+});
+
 // Attach RBAC role to every request (#572)
 app.use(attachRole);
 
@@ -202,9 +211,14 @@ app.use("/api/v1/payment-holds", paymentHoldsRouter);
 // Contributor earnings history (#564)
 app.use("/api/v1", earningsHistoryRouter);
 
-// Automated compliance reports (#601)
-app.use("/api/v1/compliance-reports", writeLimiter);
-app.use("/api/v1/compliance-reports", complianceReportsRouter);
+// Contract state snapshots (#613)
+app.use("/api/v1/snapshots", snapshotRouter);
+
+// Contributor communication history (#612)
+app.use("/api/v1/communications", communicationsRouter);
+
+// API version discovery (#676)
+app.use("/api/v1/version", versionRouter);
 
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
 const adminLimiter = rateLimit({
@@ -225,31 +239,19 @@ const adminLimiter = rateLimit({
 app.use("/admin", adminLimiter);
 app.use("/admin", adminRouter);
 
-// Legacy /api/* redirect to /api/v1/*
+// Legacy /api/* redirect to /api/v1/* — routes under /api/v1/* are canonical
 app.use("/api", (req, res) => {
+  res.set("Deprecation", "true");
+  res.set("Link", `</api/v1${req.url}>; rel="successor-version"`);
   res.redirect(308, `/api/v1${req.url}`);
 });
 
-// Central error handler
-app.use((err, _req, res, _next) => {
-  if (err.type === "entity.too.large") {
-    return sendError(res, 413, "payload_too_large", "Payload too large");
-  }
-  logger.error(err);
+// Any request that didn't match a route above gets the standard error shape
+// instead of Express's default HTML 404 page (#662).
+app.use(notFoundHandler);
 
-  // Structured errors thrown by stellar.js (Soroban / RPC errors)
-  if (err.status && err.code) {
-    return sendError(res, err.status, err.code, err.message ?? "Error", {
-      detail: err.detail,
-    });
-  }
-
-  if (err.status) {
-    return sendError(res, err.status, undefined, err.message ?? "Error");
-  }
-
-  return sendError(res, 500, "internal_server_error", err.message ?? "Internal server error");
-});
+// Central error handler — must be mounted last.
+app.use(errorHandler);
 
 const PORT = process.env.PORT ?? 3001;
 const server = app.listen(PORT, () => logger.info(`API listening on http://localhost:${PORT}`));
@@ -263,8 +265,8 @@ const retryScheduler = startRetryScheduler();
 // Start the webhook retry scheduler
 const webhookRetryScheduler = startWebhookRetryScheduler();
 
-// Start compliance report scheduler (#601)
-const complianceReportScheduler = startComplianceReportScheduler();
+// Start the snapshot scheduler (#613)
+const snapshotScheduler = startSnapshotScheduler();
 
 // Start weekly email digest scheduler if email is configured
 let digestInterval = null;
@@ -309,8 +311,8 @@ const handleShutdown = createGracefulShutdownHandler({
     if (webhookRetryScheduler) {
       webhookRetryScheduler.stop();
     }
-    if (complianceReportScheduler) {
-      complianceReportScheduler.stop();
+    if (snapshotScheduler) {
+      snapshotScheduler.stop();
     }
   },
 });

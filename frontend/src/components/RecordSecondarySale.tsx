@@ -21,7 +21,7 @@ export default function RecordSecondarySale({
   royaltyRate,
   onSuccess,
 }: Props) {
-  const { network } = useNetwork();
+  const { network, networkMismatch } = useNetwork();
   const [formData, setFormData] = useState({
     nftId: "",
     previousOwner: "",
@@ -70,6 +70,9 @@ export default function RecordSecondarySale({
     parseInt(formData.salePrice) > 0;
 
   async function submit() {
+    if (networkMismatch) {
+      return setStatus("error", "Your wallet is on the wrong network. Switch it before submitting.");
+    }
     if (!contractId) {
       return setStatus("error", "Enter a contract ID first.");
     }
@@ -199,9 +202,14 @@ export default function RecordSecondarySale({
         </div>
       </div>
 
+      {networkMismatch && (
+        <div className="status error" role="alert">
+          Your wallet is on the wrong network. Switch it to {network === "mainnet" ? "Mainnet" : "Testnet"} to record this sale.
+        </div>
+      )}
       {status && <FormStatus type={status.type} message={status.message} />}
 
-      <button onClick={submit} disabled={loading || !isFormValid} className="btn-primary">
+      <button onClick={submit} disabled={loading || !isFormValid || networkMismatch} className="btn-primary">
         {loading ? "Processing..." : "Record Sale"}
       </button>
     </div>

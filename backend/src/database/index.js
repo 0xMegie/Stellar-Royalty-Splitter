@@ -195,19 +195,29 @@ export {
   countAllReferrals,
 } from "./referrals.js";
 
-// Automated compliance reports (#601)
+// Contract state snapshots (#613)
 export {
-  createComplianceReport,
-  getComplianceReport,
-  listComplianceReports,
-  countComplianceReports,
-  markReportGenerating,
-  markReportCompleted,
-  markReportFailed,
-  reportExistsForPeriod,
-  REPORT_TYPES,
-  REPORT_STATUSES,
-} from "./compliance-reports.js";
+  ensureSnapshotTable,
+  createSnapshot,
+  listSnapshots,
+  getSnapshot,
+  verifySnapshotIntegrity,
+  countSnapshots,
+  getAllSnapshots,
+  pruneSnapshots,
+} from "./contract-snapshots.js";
+
+// Contributor communication history (#612)
+export {
+  ensureCommunicationsTable,
+  recordCommunication,
+  getCommunicationsByWallet,
+  getCommunicationsByContract,
+  searchCommunications,
+  addInternalNote,
+  getCommunicationTimeline,
+  countCommunications,
+} from "./contributor-communications.js";
 
 // Default export for backwards compatibility
 import { db } from "./core.js";
