@@ -27,6 +27,14 @@ import { OnboardingWalkthrough } from "./components/OnboardingWalkthrough";
 import { ContributorOnboardingChecklist } from "./components/ContributorOnboardingChecklist";
 import { EarningsHistoryChart } from "./components/EarningsHistoryChart";
 import { EarningsForecastCalculator } from "./components/EarningsForecastCalculator";
+import { ContractTimeline } from "./components/ContractTimeline";
+import { SystemHealthDashboard } from "./components/SystemHealthDashboard";
+import { MultiContractEarnings } from "./components/MultiContractEarnings";
+import { ContributorSuspension } from "./components/ContributorSuspension";
+import { BulkContributorUpload } from "./components/BulkContributorUpload";
+import { ContributorTaxInfo } from "./components/ContributorTaxInfo";
+import { TaxComplianceReport } from "./components/TaxComplianceReport";
+import { PaymentHoldManager } from "./components/PaymentHoldManager";
 import { useWebSocket } from "./hooks/useWebSocket";
 
 import "./App.css";
@@ -54,6 +62,7 @@ export default function App() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [sessionToast, setSessionToast] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<Array<{ id: number; title: string; message: string | null; type: string }>>([]);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const { connected: wsConnected } = useWebSocket({
     walletAddress,
