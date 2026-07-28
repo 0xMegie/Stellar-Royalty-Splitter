@@ -16,7 +16,7 @@ import { contractRouter } from "./routes/contract.js";
 import { healthRouter } from "./routes/health.js";
 import onboardingRouter from "./routes/onboarding.js";
 import { closeDatabase, initializeDatabase } from "./database/index.js";
-import { createGracefulShutdownHandler } from "./shutdown.js";
+import { createGracefulShutdownHandler, shutdownMiddleware } from "./shutdown.js";
 import { adminRouter } from "./routes/admin.js";
 import { snapshotRouter } from "./routes/snapshots.js";
 import { communicationsRouter } from "./routes/communications.js";
@@ -48,6 +48,9 @@ initializeDatabase();
 initializeSigningKey();
 
 const app = express();
+
+// Reject new incoming requests during graceful shutdown (#701)
+app.use(shutdownMiddleware);
 
 // Request logging middleware
 app.use((req, res, next) => {

@@ -4,11 +4,13 @@ import request from "supertest";
 const mockGetContributorEarningsHistory = jest.fn();
 const mockGetContributorEarningsEvents = jest.fn();
 const mockGetContributorContracts = jest.fn();
+const mockGetContributorPayoutRecords = jest.fn();
 
 await jest.unstable_mockModule("../src/database/analytics.js", () => ({
   getContributorEarningsHistory: mockGetContributorEarningsHistory,
   getContributorEarningsEvents: mockGetContributorEarningsEvents,
   getContributorContracts: mockGetContributorContracts,
+  getContributorPayoutRecords: mockGetContributorPayoutRecords,
 }));
 
 import express from "express";
@@ -50,4 +52,52 @@ describe("Earnings history API", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  test("GET /earnings-history/:walletAddress/export returns CSV file with accurate payout data", async () => {
+    mockGetContributorPayoutRecords.mockReturnValue([
+      {
+        payoutDate: "2026-07-20T10:00:00Z",
+        transactionId: "tx_abc123",
+        royaltyType: "distribute",
+        amount: "150.00",
+        contractId: "C123",
+      },
+    ]);
+
+    const res = await request(app).get(
+      `/api/v1/earnings-history/${WALLET}/export?start=2026-07-01&end=2026-07-31`
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/csv");
+    expect(res.headers["content-disposition"]).toContain("attachment; filename=");
+    expect(res.text).toContain('"Payout Date","Transaction ID","Royalty Type","Amount"');
+    expect(res.text).toContain('"2026-07-20T10:00:00Z","tx_abc123","distribute","150.00"');
+  });
+
+  test("GET /earnings-history/:walletAddress/export filters by royaltyType", async () => {
+    mockGetContributorPayoutRecords.mockReturnValue([
+      {
+        payoutDate: "2026-07-20T10:00:00Z",
+        transactionId: "tx_abc123",
+        royaltyType: "distribute",
+        amount: "150.00",
+      },
+      {
+        payoutDate: "2026-07-21T10:00:00Z",
+        transactionId: "tx_def456",
+        royaltyType: "secondary_royalty",
+        amount: "50.00",
+      },
+    ]);
+
+    const res = await request(app).get(
+      `/api/v1/earnings-history/${WALLET}/export?start=2026-07-01&end=2026-07-31&royaltyType=distribute`
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('"distribute"');
+    expect(res.text).not.toContain('"secondary_royalty"');
+  });
 });
+
