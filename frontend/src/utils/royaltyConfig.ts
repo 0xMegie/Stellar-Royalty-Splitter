@@ -21,6 +21,10 @@ export interface RoyaltyConfigFile {
 
 export const ROYALTY_CONFIG_VERSION = 1;
 
+/** All schema versions this client can read. Extend when adding new versions. */
+export const SUPPORTED_CONFIG_VERSIONS = [1] as const;
+export type SupportedConfigVersion = (typeof SUPPORTED_CONFIG_VERSIONS)[number];
+
 // Mirrors InitializeForm.tsx's STELLAR_ADDRESS_RE / MAX_COLLABORATORS.
 const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
 const MAX_COLLABORATORS = 50;
@@ -59,10 +63,27 @@ export function parseRoyaltyConfigImport(raw: string): RoyaltyConfigCollaborator
     ]);
   }
 
-  const { collaborators } = parsed as Record<string, unknown>;
+  const { version, collaborators } = parsed as Record<string, unknown>;
+
+  if (version === undefined || version === null) {
+    throw new RoyaltyConfigImportError([
+      `"version" field is required. Supported versions: ${SUPPORTED_CONFIG_VERSIONS.join(", ")}.`,
+    ]);
+  }
+
+  if (typeof version !== "number" || !Number.isInteger(version)) {
+    throw new RoyaltyConfigImportError(['"version" must be an integer.']);
+  }
+
+  if (!(SUPPORTED_CONFIG_VERSIONS as readonly number[]).includes(version)) {
+    throw new RoyaltyConfigImportError([
+      `Unsupported configuration version ${version}. Supported versions: ${SUPPORTED_CONFIG_VERSIONS.join(", ")}.`,
+    ]);
+  }
+
   if (!Array.isArray(collaborators) || collaborators.length === 0) {
     throw new RoyaltyConfigImportError([
-      "\"collaborators\" must be a non-empty array.",
+      '"collaborators" must be a non-empty array.',
     ]);
   }
 
