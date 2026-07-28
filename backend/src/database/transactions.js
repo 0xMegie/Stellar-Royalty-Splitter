@@ -64,14 +64,32 @@ export function addDistributionPayout(
   countWrite();
 }
 
-export function getTransactionCount(contractId) {
-  const stmt = db.prepare(`SELECT COUNT(*) as total FROM transactions WHERE contractId = ?`);
-  return stmt.get(contractId).total;
+export function getTransactionCount(contractId, filters = {}) {
+  const conditions = ["contractId = ?"];
+  const params = [contractId];
+
+  if (filters.type) {
+    conditions.push("type = ?");
+    params.push(filters.type);
+  }
+
+  const stmt = db.prepare(
+    `SELECT COUNT(*) as total FROM transactions WHERE ${conditions.join(" AND ")}`
+  );
+  return stmt.get(...params).total;
 }
 
-export function getTransactionHistory(contractId, limit = 50, offset = 0) {
+export function getTransactionHistory(contractId, limit = 50, offset = 0, filters = {}) {
+  const conditions = ["t.contractId = ?"];
+  const params = [contractId];
+
+  if (filters.type) {
+    conditions.push("t.type = ?");
+    params.push(filters.type);
+  }
+
   const stmt = db.prepare(`
-    SELECT 
+    SELECT
       t.id,
       t.txHash,
       t.contractId,
@@ -88,13 +106,13 @@ export function getTransactionHistory(contractId, limit = 50, offset = 0) {
       COUNT(dp.id) as payoutCount
     FROM transactions t
     LEFT JOIN distribution_payouts dp ON t.id = dp.transactionId
-    WHERE t.contractId = ?
+    WHERE ${conditions.join(" AND ")}
     GROUP BY t.id
-    ORDER BY t.timestamp DESC
+    ORDER BY t.timestamp DESC, t.id DESC
     LIMIT ? OFFSET ?
   `);
 
-  return stmt.all(contractId, limit, offset);
+  return stmt.all(...params, limit, offset);
 }
 
 export function getTransactionById(transactionId) {
