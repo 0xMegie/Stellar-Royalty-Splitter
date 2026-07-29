@@ -678,3 +678,120 @@ fn test_batch_distribute_works_after_upgrade() {
     assert_eq!(TokenClient::new(&env, &token2).balance(&b), 1000);
     assert_eq!(client.get_distribute_count(), 2);
 }
+
+// ── 6. Storage layout and public interface compatibility checks (#699) ─────────
+
+/// Verifies that storage keys and layout remain 100% compatible across contract upgrades.
+/// Ensures no data key corruption or deserialization panics occur.
+#[test]
+fn test_storage_layout_compatibility_across_upgrades() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let collaborator = Address::generate(&env);
+
+    client.initialize(
+        &vec![&env, admin.clone(), collaborator.clone()],
+        &vec![&env, 7500_u32, 2500_u32],
+    );
+    client.set_royalty_rate(&250_u32);
+
+    let defaults = vec![
+        &env,
+        Recipient {
+            address: admin.clone(),
+            share: 7500_u32,
+        },
+        Recipient {
+            address: collaborator.clone(),
+            share: 2500_u32,
+        },
+    ];
+    client.set_default_recipients(&defaults);
+
+    // Verify pre-upgrade direct storage reads
+    assert_eq!(raw_admin(&env, &contract_id), admin);
+    assert_eq!(raw_royalty_rate(&env, &contract_id), 250);
+    assert_eq!(raw_collaborators(&env, &contract_id).len(), 2);
+    assert_eq!(raw_share_map(&env, &contract_id).get(admin.clone()).unwrap(), 7500);
+    assert_eq!(raw_default_recipients(&env, &contract_id).len(), 2);
+
+    // Perform WASM upgrade
+    let wasm_hash = upload_wasm(&env);
+    client.update_wasm(&wasm_hash);
+
+    // Verify post-upgrade direct storage reads match exactly
+    assert_eq!(raw_admin(&env, &contract_id), admin);
+    assert_eq!(raw_royalty_rate(&env, &contract_id), 250);
+    assert_eq!(raw_collaborators(&env, &contract_id).len(), 2);
+    assert_eq!(raw_share_map(&env, &contract_id).get(admin.clone()).unwrap(), 7500);
+    assert_eq!(raw_default_recipients(&env, &contract_id).len(), 2);
+}
+
+/// Verifies that all public getter and execution functions maintain backwards compatibility post-upgrade.
+#[test]
+fn test_public_interface_compatibility_post_upgrade() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let collaborator = Address::generate(&env);
+
+    client.initialize(
+        &vec![&env, admin.clone(), collaborator.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    let wasm_hash = upload_wasm(&env);
+    client.update_wasm(&wasm_hash);
+
+    // Public view interface compatibility checks
+    assert_eq!(client.get_version(), String::from_str(&env, VERSION));
+    assert_eq!(client.get_admin(), admin);
+    assert!(!client.is_paused());
+    assert_eq!(client.get_share(&admin), 5000);
+    assert_eq!(client.get_share(&collaborator), 5000);
+    assert_eq!(client.get_distribute_count(), 0);
+}
+
+/// Verifies that royalty distribution calculations produce identical split balances pre- and post-upgrade.
+#[test]
+fn test_royalty_distribution_consistency_across_upgrades() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let collaborator = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), collaborator.clone()],
+        &vec![&env, 8000_u32, 2000_u32],
+    );
+
+    // Distribution 1: pre-upgrade
+    mint(&env, &token, &contract_id, 10_000);
+    client.distribute(&token);
+
+    let token_client = TokenClient::new(&env, &token);
+    assert_eq!(token_client.balance(&admin), 8000);
+    assert_eq!(token_client.balance(&collaborator), 2000);
+
+    // Perform upgrade
+    let wasm_hash = upload_wasm(&env);
+    client.update_wasm(&wasm_hash);
+
+    // Distribution 2: post-upgrade
+    mint(&env, &token, &contract_id, 10_000);
+    client.distribute(&token);
+
+    assert_eq!(token_client.balance(&admin), 16000);
+    assert_eq!(token_client.balance(&collaborator), 4000);
+    assert_eq!(client.get_distribute_count(), 2);
+}
+

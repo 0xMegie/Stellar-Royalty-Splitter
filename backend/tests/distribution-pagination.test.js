@@ -36,6 +36,7 @@ await jest.unstable_mockModule("../src/webhook-delivery.js", () => ({
 }));
 
 const historyRouter = (await import("../src/routes/history.js")).default;
+const { clearCache } = await import("../src/cache.js");
 
 const app = express();
 app.use(express.json());
@@ -61,7 +62,10 @@ function makeRows(n, type = "distribute") {
 }
 
 describe("GET /api/v1/history/:contractId — pagination", () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    clearCache();
+    jest.clearAllMocks();
+  });
 
   test("first page: hasNextPage=true, hasPrevPage=false when more records exist", async () => {
     getTransactionHistory.mockReturnValue(makeRows(10));
@@ -139,7 +143,10 @@ describe("GET /api/v1/history/:contractId — pagination", () => {
 });
 
 describe("GET /api/v1/history/:contractId — type filter", () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    clearCache();
+    jest.clearAllMocks();
+  });
 
   test("filters by type=distribute and passes filter to DB", async () => {
     getTransactionHistory.mockReturnValue(makeRows(2, "distribute"));

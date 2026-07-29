@@ -401,34 +401,33 @@ export function initializeDatabase() {
       `,
     },
     {
-      // #599: Payment schedule templates
-      version: 14,
+      // #601: Automated compliance reports
+      version: 16,
       sql: `
-        CREATE TABLE IF NOT EXISTS payment_schedules (
-          id            INTEGER PRIMARY KEY AUTOINCREMENT,
-          name          TEXT NOT NULL,
-          type          TEXT NOT NULL
-            CHECK(type IN ('monthly', 'biweekly', 'weekly', 'custom')),
-          contractId    TEXT NOT NULL,
-          tokenId       TEXT NOT NULL,
-          walletAddress TEXT NOT NULL,
-          dayOfMonth    INTEGER,
-          dayOfWeek     INTEGER,
-          intervalDays  INTEGER,
-          anchorDate    TEXT,
-          hourOfDay     INTEGER NOT NULL DEFAULT 0,
-          timezone      TEXT NOT NULL DEFAULT 'UTC',
-          enabled       INTEGER NOT NULL DEFAULT 1,
-          lastRunAt     DATETIME,
-          nextRunAt     DATETIME,
-          metadata      TEXT,
-          createdAt     DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updatedAt     DATETIME DEFAULT CURRENT_TIMESTAMP
+        CREATE TABLE IF NOT EXISTS compliance_reports (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          type         TEXT NOT NULL CHECK(type IN ('monthly', 'quarterly', 'annual')),
+          periodStart  TEXT NOT NULL,
+          periodEnd    TEXT NOT NULL,
+          contractId   TEXT NOT NULL DEFAULT 'ALL',
+          generatedBy  TEXT NOT NULL DEFAULT 'scheduler',
+          status       TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending', 'generating', 'completed', 'failed')),
+          filePath     TEXT,
+          emailedTo    TEXT,
+          metadata     TEXT,
+          errorMessage TEXT,
+          createdAt    DATETIME DEFAULT CURRENT_TIMESTAMP,
+          completedAt  DATETIME
         );
-        CREATE INDEX IF NOT EXISTS idx_payment_schedules_contractId
-          ON payment_schedules(contractId);
-        CREATE INDEX IF NOT EXISTS idx_payment_schedules_nextRunAt
-          ON payment_schedules(enabled, nextRunAt);
+        CREATE INDEX IF NOT EXISTS idx_compliance_reports_type
+          ON compliance_reports(type);
+        CREATE INDEX IF NOT EXISTS idx_compliance_reports_period
+          ON compliance_reports(periodStart, periodEnd);
+        CREATE INDEX IF NOT EXISTS idx_compliance_reports_contract
+          ON compliance_reports(contractId);
+        CREATE INDEX IF NOT EXISTS idx_compliance_reports_status
+          ON compliance_reports(status);
       `,
     },
   ];
@@ -483,6 +482,25 @@ export function initializeDatabase() {
         ON contributor_communications(createdAt);
       CREATE INDEX IF NOT EXISTS idx_contributor_comms_wallet_created
         ON contributor_communications(walletAddress, createdAt);
+    `,
+  });
+
+  // Add migration v14: royalty_split_templates table (#652) — reusable,
+  // application-level collaborator allocation presets. These never touch
+  // an on-chain contract; they only pre-fill the initialization form.
+  migrations.push({
+    version: 14,
+    sql: `
+      CREATE TABLE IF NOT EXISTS royalty_split_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        walletAddress TEXT NOT NULL,
+        name TEXT NOT NULL,
+        allocations TEXT NOT NULL,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_royalty_split_templates_wallet
+        ON royalty_split_templates(walletAddress);
     `,
   });
 

@@ -177,6 +177,21 @@ export {
   getDisputeComments,
 } from "./disputes.js";
 
+// API key rate-limit usage tracking (#608)
+export {
+  DEFAULT_AUTH_LIMIT_PER_MINUTE,
+  DEFAULT_IP_LIMIT_PER_MINUTE,
+  ALERT_THRESHOLD_FRACTION,
+  HISTORY_RETENTION_MINUTES,
+  recordApiKeyRequest,
+  getApiKeyCurrentUsage,
+  getApiKeyHistory,
+  getAllApiKeysUsage,
+  setApiKeyLimit,
+  registerApiKey,
+  getApproachingLimitAlerts,
+} from "./rate-limit.js";
+
 // Referral tracking (#603)
 export {
   DEFAULT_REFERRAL_BONUS_STROOPS,
@@ -218,6 +233,14 @@ export {
   getCommunicationTimeline,
   countCommunications,
 } from "./contributor-communications.js";
+
+// Reusable royalty split templates (#652)
+export {
+  createTemplate,
+  listTemplates,
+  getTemplateById,
+  deleteTemplate,
+} from "./templates.js";
 
 // Default export for backwards compatibility
 import { db } from "./core.js";
