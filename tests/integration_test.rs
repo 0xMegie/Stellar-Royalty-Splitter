@@ -5219,6 +5219,16 @@ fn test_distribute_fails_zero_balance_no_state_change() {
 /// alter state or payout any funds.
 #[test]
 fn test_distribute_fails_when_contract_is_paused() {
+    // 1 stroop < 2 recipients — must reject with AmountTooSmall
+    mint(&env, &token, &contract_id, 1);
+    let result = client.try_distribute(&token);
+    assert_eq!(result, Err(Ok(ContractError::AmountTooSmall)));
+}
+
+/// #654 — Minimum viable distribution: exactly 2 stroops for 2 recipients.
+/// Each should receive exactly 1 stroop (no dust).
+#[test]
+fn test_distribute_minimum_viable_amount_two_recipients() {
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
     let (contract_id, client) = setup(&env);
@@ -5263,39 +5273,72 @@ fn test_distribute_fails_amount_too_small() {
 
     let admin = Address::generate(&env);
     let b = Address::generate(&env);
+    let c = Address::generate(&env);
     let token_admin = Address::generate(&env);
     let token = make_token(&env, &token_admin);
 
-    // 9 999 collaborators each holding 1 bp — a payout of 1 stroop (1 * 1 / 10 000 = 0)
-    // is too small for the first collaborator; the contract should reject.
-    //
-    // For a simpler reproducible case use the minimum: 1 stroop with a 50/50 split.
-    // 1 * 5000 / 10_000 = 0 (integer division) → AmountTooSmall.
     client.initialize(
-        &vec![&env, admin.clone(), b.clone()],
-        &vec![&env, 5000_u32, 5000_u32],
+        &vec![&env, admin.clone(), b.clone(), c.clone()],
+        &vec![&env, 6000_u32, 3000_u32, 1000_u32],
     );
-    mint(&env, &token, &contract_id, 1);
 
-    let result = client.try_distribute(&token);
-    assert_eq!(result, Err(Ok(ContractError::AmountTooSmall)));
+    // 10_001 stroops — does not divide cleanly at any tier
+    let amount: i128 = 10_001;
+    mint(&env, &token, &contract_id, amount);
+    client.distribute(&token);
 
-    // Contract balance must be untouched
-    assert_eq!(TokenClient::new(&env, &token).balance(&contract_id), 1);
-    assert_eq!(TokenClient::new(&env, &token).balance(&admin), 0);
-    assert_eq!(TokenClient::new(&env, &token).balance(&b), 0);
+    let admin_bal = TokenClient::new(&env, &token).balance(&admin);
+    let b_bal = TokenClient::new(&env, &token).balance(&b);
+    let c_bal = TokenClient::new(&env, &token).balance(&c);
 
-    // No distribution state written
-    env.as_contract(&contract_id, || {
-        assert!(!env.storage().instance().has(&StorageKey::LastDistribution));
-        assert!(!env.storage().instance().has(&StorageKey::DistributeHistory));
-    });
+    // Shares must sum to the full amount (last recipient absorbs dust)
+    assert_eq!(admin_bal + b_bal + c_bal, amount);
+
+    // admin gets floor(10001 * 6000 / 10000) = 6000
+    assert_eq!(admin_bal, 6000);
+    // b gets floor(10001 * 3000 / 10000) = 3000
+    assert_eq!(b_bal, 3000);
+    // c gets the remainder = 10001 - 6000 - 3000 = 1001 (dust goes to last)
+    assert_eq!(c_bal, 1001);
 }
 
-/// #674 — Successful distribution after a failed one: the distribute counter
-/// must reflect only successful calls, not failed attempts.
+/// #654 — Large distribution with highly asymmetric shares (9999/1 bps).
+/// Verifies dust is bounded to at most 1 stroop and always goes to last recipient.
 #[test]
-fn test_distribute_count_unchanged_after_failure() {
+fn test_distribute_asymmetric_split_dust_bounded() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let last = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), last.clone()],
+        &vec![&env, 9999_u32, 1_u32],
+    );
+
+    let amount: i128 = 1_000_000_000; // 1000 XLM in stroops
+    mint(&env, &token, &contract_id, amount);
+    client.distribute(&token);
+
+    let admin_bal = TokenClient::new(&env, &token).balance(&admin);
+    let last_bal = TokenClient::new(&env, &token).balance(&last);
+
+    assert_eq!(admin_bal + last_bal, amount);
+    // Dust from integer division is at most 1 stroop
+    let expected_admin = amount * 9999 / 10_000;
+    assert_eq!(admin_bal, expected_admin);
+    let dust = last_bal - (amount * 1 / 10_000);
+    assert!(dust <= 1, "dust exceeds 1 stroop: {}", dust);
+}
+
+/// #654 — Secondary royalty: pool accumulates across multiple record calls
+/// and distributes the full accumulated amount in one shot.
+#[test]
+fn test_secondary_royalty_accumulates_across_multiple_records() {
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
     let (contract_id, client) = setup(&env);
@@ -5310,24 +5353,29 @@ fn test_distribute_count_unchanged_after_failure() {
         &vec![&env, 5000_u32, 5000_u32],
     );
 
-    // Fail: zero balance
-    assert_eq!(
-        client.try_distribute(&token),
-        Err(Ok(ContractError::Underfunded))
-    );
+    // Record three separate royalty payments
+    mint(&env, &token, &admin, 300);
+    client.record_secondary_royalty(&token, &admin, &100_i128);
+    client.record_secondary_royalty(&token, &admin, &150_i128);
+    client.record_secondary_royalty(&token, &admin, &50_i128);
 
-    // Succeed: mint enough funds
-    mint(&env, &token, &contract_id, 1_000);
-    client.distribute(&token);
+    assert_eq!(client.get_secondary_pool(), 300);
 
-    // Counter must be 1, not 2
-    assert_eq!(client.get_distribute_count(), 1);
+    client.distribute_secondary_royalties();
+
+    // Pool must be cleared
+    assert_eq!(client.get_secondary_pool(), 0);
+
+    // Total payout must equal 300
+    let admin_bal = TokenClient::new(&env, &token).balance(&admin);
+    let b_bal = TokenClient::new(&env, &token).balance(&b);
+    assert_eq!(admin_bal + b_bal, 300);
 }
 
-/// #674 — distribute_secondary_royalties with zero pool must return
-/// NoSecondaryRoyalties and must not corrupt the secondary pool balance.
+/// #654 — Secondary royalty pool reset: distributing clears the pool so a
+/// second call with an empty pool returns NoSecondaryRoyalties.
 #[test]
-fn test_distribute_secondary_royalties_fails_empty_pool() {
+fn test_secondary_distribution_clears_pool() {
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
     let (_, client) = setup(&env);

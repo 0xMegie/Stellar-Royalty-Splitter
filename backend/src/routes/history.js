@@ -44,7 +44,8 @@ router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
     if (!pagination) return;
     const { limit, offset } = pagination;
 
-    const { type } = req.query;
+    const { type, recipient, startDate, endDate } = req.query;
+
     if (type !== undefined && !VALID_HISTORY_TYPES.includes(type)) {
       return sendError(
         res,
@@ -54,16 +55,20 @@ router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
       );
     }
 
-    // Cache check — keyed by contractId + pagination + optional type filter
-    const suffix = `${limit}:${offset}:${type ?? ""}`;
-    const key = cacheKey("history", contractId, suffix);
-    const cached = cacheGet(key);
-    if (cached !== undefined) {
-      logger.debug(`[cache] HIT history ${contractId} (${suffix})`);
-      return res.json(cached);
+    if (startDate !== undefined && isNaN(new Date(startDate).getTime())) {
+      return sendError(res, 400, "invalid_query_parameter", "Invalid startDate. Use ISO 8601 or YYYY-MM-DD format.");
     }
 
-    const filters = type ? { type } : {};
+    if (endDate !== undefined && isNaN(new Date(endDate).getTime())) {
+      return sendError(res, 400, "invalid_query_parameter", "Invalid endDate. Use ISO 8601 or YYYY-MM-DD format.");
+    }
+
+    const filters = {};
+    if (type) filters.type = type;
+    if (recipient) filters.recipient = recipient;
+    if (startDate) filters.startDate = startDate;
+    if (endDate) filters.endDate = endDate;
+
     const history = getTransactionHistory(contractId, limit, offset, filters);
     const total = getTransactionCount(contractId, filters);
 
