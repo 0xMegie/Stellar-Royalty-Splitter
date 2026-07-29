@@ -1852,6 +1852,150 @@ fn test_distribute_with_override_invalid_share_sum_panics_without_distribution()
     assert_eq!(TokenClient::new(&env, &token).balance(&c), 0);
 }
 
+/// Test distribute_with_override rejects a duplicate address in override_recipients (#713).
+/// Prior to this fix, distribute_with_override only checked emptiness and share-sum,
+/// so a duplicated address (shares still summing to 10,000) was accepted.
+#[test]
+fn test_distribute_with_override_duplicate_address_panics_without_distribution() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    let amount: i128 = 1000;
+    mint(&env, &token, &contract_id, amount);
+
+    let duplicate_override = vec![
+        &env,
+        Recipient {
+            address: admin.clone(),
+            share: 5000_u32,
+        },
+        Recipient {
+            address: admin.clone(),
+            share: 5000_u32,
+        },
+    ];
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.distribute_with_override(&token, &duplicate_override);
+    }));
+
+    assert!(
+        result.is_err(),
+        "Distribution should panic on a duplicate recipient address"
+    );
+    assert_eq!(TokenClient::new(&env, &token).balance(&contract_id), amount);
+    assert_eq!(TokenClient::new(&env, &token).balance(&admin), 0);
+}
+
+/// Test distribute_with_override rejects a zero-share entry in override_recipients (#713).
+#[test]
+fn test_distribute_with_override_zero_share_panics_without_distribution() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let c = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    let amount: i128 = 1000;
+    mint(&env, &token, &contract_id, amount);
+
+    let zero_share_override = vec![
+        &env,
+        Recipient {
+            address: admin.clone(),
+            share: 0_u32,
+        },
+        Recipient {
+            address: c.clone(),
+            share: 10000_u32,
+        },
+    ];
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.distribute_with_override(&token, &zero_share_override);
+    }));
+
+    assert!(
+        result.is_err(),
+        "Distribution should panic on a zero-share recipient"
+    );
+    assert_eq!(TokenClient::new(&env, &token).balance(&contract_id), amount);
+    assert_eq!(TokenClient::new(&env, &token).balance(&admin), 0);
+    assert_eq!(TokenClient::new(&env, &token).balance(&c), 0);
+}
+
+/// Test distribute_with_override rejects an override_recipients list longer than
+/// MAX_RECIPIENTS (#713). Prior to this fix, override_recipients had no length cap,
+/// unlike set_recipients/set_default_recipients.
+#[test]
+fn test_distribute_with_override_too_many_recipients_panics_without_distribution() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    let amount: i128 = 1000;
+    mint(&env, &token, &contract_id, amount);
+
+    // MAX_RECIPIENTS is 10; build 11 distinct recipients with equal shares
+    // that still sum to 10,000 (10000 / 11 rounds down, remainder on the last).
+    let too_many = 11_u32;
+    let mut oversized_override: SorobanVec<Recipient> = vec![&env];
+    let mut running_total = 0_u32;
+    for i in 0..too_many {
+        let share = if i == too_many - 1 {
+            10_000_u32 - running_total
+        } else {
+            10_000_u32 / too_many
+        };
+        running_total += share;
+        oversized_override.push_back(Recipient {
+            address: Address::generate(&env),
+            share,
+        });
+    }
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.distribute_with_override(&token, &oversized_override);
+    }));
+
+    assert!(
+        result.is_err(),
+        "Distribution should panic when override_recipients exceeds MAX_RECIPIENTS"
+    );
+    assert_eq!(TokenClient::new(&env, &token).balance(&contract_id), amount);
+    assert_eq!(TokenClient::new(&env, &token).balance(&admin), 0);
+}
+
 /// Test distribute_with_override falls back to defaults when override is empty
 #[test]
 fn test_distribute_with_override_falls_back_to_defaults() {
