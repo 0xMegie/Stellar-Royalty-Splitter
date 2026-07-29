@@ -87,6 +87,34 @@ describe("CollaboratorTable", () => {
     expect(screen.getByText(/Loading/i)).toBeTruthy();
   });
 
+  it("renders a skeleton placeholder (not blank) while loading", () => {
+    mockGetCollaborators.mockReturnValue(
+      new Promise(() => {
+        /* never resolves */
+      }),
+    );
+    const { container } = render(
+      <CollaboratorTable contractId={MOCK_CONTRACT} refreshKey={0} />,
+    );
+
+    // Layout-preserving placeholder rows, not just a status line.
+    expect(container.querySelectorAll(".table-skeleton-row").length).toBe(5);
+    expect(screen.getByRole("status")).toBeTruthy();
+  });
+
+  it("replaces the skeleton with real rows once data loads", async () => {
+    setup();
+    // Skeleton is present synchronously on first render.
+    expect(screen.getByRole("status")).toBeTruthy();
+
+    await waitFor(() => {
+      expect(screen.getByText("Collaborators")).toBeTruthy();
+    });
+
+    // Skeleton is gone once the table has data.
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   it("shows error state when API fails", async () => {
     mockGetCollaborators.mockRejectedValue(new Error("Network error"));
     render(

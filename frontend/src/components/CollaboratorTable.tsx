@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { api } from "../api";
+import { TableSkeleton } from "./Skeleton";
 import "./CollaboratorTable.css";
 
 interface Collaborator {
@@ -240,7 +241,13 @@ export default function CollaboratorTable({
   /* ── Render guards ──────────────────────────────────────────────────── */
   if (!contractId) return null;
   if (loading)
-    return <div className="card status info">Loading collaborators…</div>;
+    return (
+      <div className="card">
+        <span className="badge">Collaborators</span>
+        <span className="sr-only">Loading collaborators…</span>
+        <TableSkeleton rows={5} columns={3} label="Loading collaborators…" />
+      </div>
+    );
   if (error) return <div className="card status error">{error}</div>;
   if (!collaborators.length)
     return (
@@ -415,37 +422,22 @@ export default function CollaboratorTable({
           </button>
         </div>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Address</th>
-            <th style={{ textAlign: "right" }}>Share</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map((c) => (
-            <tr key={c.address}>
-              <td>
-                <span title={c.address}>
-                  {c.address.slice(0, 8)}...{c.address.slice(-6)}
-                </span>
-                <button
-                  className={`copy-btn-sm${copied === c.address ? " copied" : ""}`}
-                  onClick={() => copyAddress(c.address)}
-                  title={copied === c.address ? "Address copied" : "Copy address"}
-                  aria-label={copied === c.address ? "Address copied" : "Copy collaborator address"}
-                >
-                  {copied === c.address ? "✓" : "⧉"}
-                </button>
-              </td>
-              <td style={{ textAlign: "right" }}>
-                <span>{(c.basisPoints / 100).toFixed(2)}%</span>
-                <div
-                  className="share-bar"
-                  style={{ width: `${c.basisPoints / 100}%` }}
-                />
-              </td>
-            </tr>
+
+      {/* ── Active filter chips ───────────────────────────────────────── */}
+      {filterChips.length > 0 && (
+        <div className="collab-active-filters">
+          {filterChips.map((chip) => (
+            <span className="collab-filter-chip" key={chip.label}>
+              {chip.label}
+              <button
+                type="button"
+                className="collab-filter-chip-remove"
+                onClick={chip.onRemove}
+                aria-label={`Remove filter: ${chip.label}`}
+              >
+                ✕
+              </button>
+            </span>
           ))}
           <button
             type="button"
