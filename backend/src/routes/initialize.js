@@ -3,6 +3,7 @@ import { addressToScVal, u32ToScVal, vecToScVal, isContractInitialized } from ".
 import { validate, initializeSchema, validateInitializePayloadSize } from "../validation.js";
 import { buildAndRecordTransaction } from "./_shared.js";
 import { sendError } from "../error-response.js";
+import { invalidateContract } from "../cache.js";
 
 export const initializeRouter = Router();
 
@@ -71,6 +72,10 @@ initializeRouter.post(
           tokenId: null,
         },
       });
+
+      // Invalidate cached read-only data for this contract so stale state
+      // is not served after the new collaborator set is written on-chain.
+      invalidateContract(contractId);
 
       res.json({ xdr, transactionId });
     } catch (err) {

@@ -1,9 +1,13 @@
-import React, { useRef, useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import { api, RoyaltyTemplate, RoyaltyTemplateAllocation } from "../api";
+import React, { useCallback, useRef, useState } from "react";
 import { api } from "../api";
 import { signAndSubmitTransaction } from "../stellar";
 import { useNetwork } from "../context/NetworkContext";
 import FormStatus from "./FormStatus";
+import ValidationSummary, { type ValidationSummaryIssue } from "./ValidationSummary";
 import { useFormStatus } from "../hooks/useFormStatus";
+import { useRoyaltyDraft } from "../hooks/useRoyaltyDraft";
 import {
   parseRoyaltyConfigImport,
   RoyaltyConfigImportError,
@@ -62,6 +66,24 @@ function isAllowedPercentageInput(value: string) {
   return PERCENTAGE_INPUT_RE.test(value);
 }
 
+/**
+ * Mirrors the backend's template allocation validation (#652) so a
+ * template can be checked both before it's saved and again before it's
+ * applied to the form (templates are app-level data and could in theory
+ * have been created under different rules).
+ */
+function validateTemplateAllocations(allocations: RoyaltyTemplateAllocation[]) {
+  const addresses = allocations.map((a) => a.address);
+  if (new Set(addresses).size !== addresses.length) {
+    return "Duplicate collaborator addresses are not allowed.";
+  }
+  const totalPct = allocations.reduce((sum, a) => sum + a.percentage, 0);
+  if (Math.round(totalPct * 100) !== 10_000) {
+    return `Percentages must sum to 100% (got ${totalPct.toFixed(2)}%).`;
+  }
+  return null;
+}
+
 function updatePercentageError(
   setErrors: React.Dispatch<
     React.SetStateAction<Record<number, { address?: string; basisPoints?: string }>>
@@ -106,12 +128,11 @@ export default function InitializeForm({
   const [collaborators, setCollaborators] = useState<Collaborator[]>([
     { address: "", basisPoints: "" },
   ]);
-  const [errors, setErrors] = useState<
-    Record<number, { address?: string; basisPoints?: string }>
-  >({});
   const { status, setStatus } = useFormStatus();
   const [loading, setLoading] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const addressRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const percentageRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   function triggerImport() {
     importInputRef.current?.click();
@@ -153,63 +174,165 @@ export default function InitializeForm({
     }
   }
 
+  // Reusable royalty split templates (#652)
+  const [templates, setTemplates] = useState<RoyaltyTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+  const [templateName, setTemplateName] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateStatus, setTemplateStatus] = useState<
+    { type: "ok" | "error"; message: string } | null
+  >(null);
+
+  const fetchTemplates = useCallback(() => {
+    if (!walletAddress) return;
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+    api
+      .listTemplates(walletAddress)
+      .then((res) => setTemplates(res.data))
+      .catch((e: unknown) =>
+        setTemplatesError(e instanceof Error ? e.message : "Failed to load templates"),
+      )
+      .finally(() => setTemplatesLoading(false));
+  }, [walletAddress]);
+
+  useEffect(() => {
+    fetchTemplates();
+  }, [fetchTemplates]);
+
   function update(i: number, field: keyof Collaborator, value: string) {
     setCollaborators((prev: Collaborator[]) =>
       prev.map((c: Collaborator, idx: number) => (idx === i ? { ...c, [field]: value } : c)),
     );
   }
 
-  function validateRow(
-    i: number,
-    field: "address" | "basisPoints",
-    value: string,
-  ) {
-    const rowErrors = { ...errors };
-    if (field === "address") {
-      if (value && !STELLAR_ADDRESS_RE.test(value)) {
-        rowErrors[i] = {
-          ...rowErrors[i],
-          address: "Must be a valid Stellar address (G..., 56 chars)",
-        };
-      } else {
-        const { address: _, ...rest } = rowErrors[i] ?? {};
-        rowErrors[i] = rest;
-      }
-    }
-    if (field === "basisPoints") {
-      const percentageError = getPercentageError(value);
-      if (percentageError) {
-        rowErrors[i] = {
-          ...rowErrors[i],
-          basisPoints: percentageError,
-        };
-      } else {
-        const { basisPoints: _, ...rest } = rowErrors[i] ?? {};
-        rowErrors[i] = rest;
-      }
-    }
-    setErrors(rowErrors);
+  function cancelEdit() {
+    setEditingIndex(-1);
+    setEditBuffer({ address: "", basisPoints: "" });
+    setEditErrors({});
   }
 
-  function handleBlur(i: number, field: "address" | "basisPoints", value: string) {
-    validateRow(i, field, value);
+  function validateEditBuffer(buf: Collaborator) {
+    const errs: { address?: string; basisPoints?: string } = {};
+    if (!buf.address || !STELLAR_ADDRESS_RE.test(buf.address)) {
+      errs.address = "Must be a valid Stellar address (G..., 56 chars)";
+    }
+    const pctErr = getPercentageError(buf.basisPoints);
+    if (pctErr) errs.basisPoints = pctErr;
+    return errs;
+  }
+
+  function saveEdit(i: number) {
+    const errs = validateEditBuffer(editBuffer);
+    if (Object.keys(errs).length > 0) {
+      setEditErrors(errs);
+      return;
+    }
+    setCollaborators((prev) =>
+      prev.map((c, idx) => (idx === i ? { ...editBuffer } : c))
+    );
+    setEditingIndex(-1);
+    setEditBuffer({ address: "", basisPoints: "" });
+    setEditErrors({});
   }
 
   function addRow() {
-    setCollaborators((prev: Collaborator[]) => [...prev, { address: "", basisPoints: "" }]);
+    if (collaborators.length >= MAX_COLLABORATORS) return;
+    const newIndex = collaborators.length;
+    setCollaborators((prev) => [...prev, { address: "", basisPoints: "" }]);
+    setEditingIndex(newIndex);
+    setEditBuffer({ address: "", basisPoints: "" });
+    setEditErrors({});
   }
 
   function removeRow(i: number) {
-    setCollaborators((prev: Collaborator[]) => prev.filter((_: Collaborator, idx: number) => idx !== i));
-    setErrors((prev: Record<number, { address?: string; basisPoints?: string }>) => {
-      const next: Record<number, { address?: string; basisPoints?: string }> = {};
-      Object.entries(prev).forEach(([key, val]) => {
-        const k = parseInt(key);
-        if (k < i) next[k] = val;
-        else if (k > i) next[k - 1] = val;
+    setCollaborators((prev) =>
+      prev.filter((_: Collaborator, idx: number) => idx !== i)
+    );
+    if (editingIndex === i) {
+      setEditingIndex(-1);
+      setEditBuffer({ address: "", basisPoints: "" });
+      setEditErrors({});
+    } else if (editingIndex > i) {
+      setEditingIndex(editingIndex - 1);
+    }
+  }
+
+  async function saveAsTemplate() {
+    setTemplateStatus(null);
+
+    const name = templateName.trim();
+    if (!name) {
+      setTemplateStatus({ type: "error", message: "Enter a name for the template." });
+      return;
+    }
+    if (hasErrors || hasEmptyFields || hasInvalidPercentages) {
+      setTemplateStatus({
+        type: "error",
+        message: "Fix the collaborator allocation errors before saving as a template.",
       });
-      return next;
-    });
+      return;
+    }
+
+    const allocations: RoyaltyTemplateAllocation[] = collaborators.map((c) => ({
+      address: c.address,
+      percentage: parseFloat(c.basisPoints),
+    }));
+    const allocationError = validateTemplateAllocations(allocations);
+    if (allocationError) {
+      setTemplateStatus({ type: "error", message: allocationError });
+      return;
+    }
+
+    setSavingTemplate(true);
+    try {
+      await api.createTemplate({ walletAddress, name, allocations });
+      setTemplateName("");
+      setTemplateStatus({ type: "ok", message: `Saved template "${name}".` });
+      fetchTemplates();
+    } catch (e: unknown) {
+      setTemplateStatus({
+        type: "error",
+        message: e instanceof Error ? e.message : "Failed to save template.",
+      });
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  function applyTemplate(template: RoyaltyTemplate) {
+    const allocationError = validateTemplateAllocations(template.allocations);
+    if (allocationError) {
+      setTemplateStatus({
+        type: "error",
+        message: `Cannot apply "${template.name}": ${allocationError}`,
+      });
+      return;
+    }
+
+    setCollaborators(
+      template.allocations.map((a) => ({
+        address: a.address,
+        basisPoints: String(a.percentage),
+      })),
+    );
+    setErrors({});
+    setTemplateStatus({ type: "ok", message: `Applied template "${template.name}".` });
+  }
+
+  async function handleDeleteTemplate(id: number, name: string) {
+    setTemplateStatus(null);
+    try {
+      await api.deleteTemplate(id, walletAddress);
+      setTemplates((prev) => prev.filter((t) => t.id !== id));
+      setTemplateStatus({ type: "ok", message: `Deleted template "${name}".` });
+    } catch (e: unknown) {
+      setTemplateStatus({
+        type: "error",
+        message: e instanceof Error ? e.message : "Failed to delete template.",
+      });
+    }
   }
 
   const total = collaborators.reduce(
@@ -217,35 +340,93 @@ export default function InitializeForm({
     0,
   );
 
-  const hasErrors = Object.values(errors).some((e) => (e as { address?: string; basisPoints?: string })?.address || (e as { address?: string; basisPoints?: string })?.basisPoints);
-  const hasEmptyFields = collaborators.some((c: Collaborator) => !c.address || !c.basisPoints);
-  const hasInvalidPercentages = collaborators.some((c: Collaborator) => getPercentageError(c.basisPoints));
+  const hasUnsavedEdit = editingIndex >= 0;
+  const allRowsCommitted = collaborators.every(
+    (c) => c.address && c.basisPoints
+  );
+
+  // Issue #694 — one summary of every active validation issue, derived from
+  // the same per-row (getPercentageError, STELLAR_ADDRESS_RE) and aggregate
+  // (share total, duplicate address) checks submit() already runs, so there
+  // is only one validation implementation.
+  const validationIssues: ValidationSummaryIssue[] = [];
+  collaborators.forEach((c: Collaborator, i: number) => {
+    if (!c.address) {
+      validationIssues.push({
+        index: i,
+        field: "address",
+        message: `Collaborator ${i + 1}: wallet address is required.`,
+      });
+    } else if (!STELLAR_ADDRESS_RE.test(c.address)) {
+      validationIssues.push({
+        index: i,
+        field: "address",
+        message: `Collaborator ${i + 1}: must be a valid Stellar address (G..., 56 chars).`,
+      });
+    }
+
+    const percentageError = getPercentageError(c.basisPoints);
+    if (percentageError) {
+      validationIssues.push({
+        index: i,
+        field: "basisPoints",
+        message: `Collaborator ${i + 1}: ${percentageError}`,
+      });
+    }
+  });
+  {
+    const seen = new Set<string>();
+    collaborators.forEach((c: Collaborator, i: number) => {
+      if (!c.address) return;
+      if (seen.has(c.address)) {
+        validationIssues.push({
+          index: i,
+          field: "address",
+          message: `Collaborator ${i + 1}: duplicate address.`,
+        });
+      }
+      seen.add(c.address);
+    });
+  }
+  if (Math.round(total * 100) !== 10_000) {
+    validationIssues.push({
+      index: -1,
+      field: "basisPoints",
+      message: `Percentages must sum to 100% (currently ${total.toFixed(2)}%).`,
+    });
+  }
+
+  function focusField(index: number, field: "address" | "basisPoints") {
+    if (field === "address") {
+      addressRefs.current[index]?.focus();
+    } else {
+      percentageRefs.current[index]?.focus();
+    }
+  }
 
   async function submit() {
     if (networkMismatch)
       return setStatus("error", "Your wallet is on the wrong network. Switch it before submitting.");
     if (!contractId)
       return setStatus("error", "Enter a contract ID first.");
+
+    if (hasUnsavedEdit) {
+      return setStatus("error", "Please save or cancel the current edit before submitting.");
+    }
+
     const nextErrors = collaborators.reduce<
       Record<number, { address?: string; basisPoints?: string }>
     >((acc, c, i) => {
       if (!c.address || !STELLAR_ADDRESS_RE.test(c.address)) {
-        acc[i] = {
-          ...acc[i],
-          address: "Must be a valid Stellar address (G..., 56 chars)",
-        };
+        acc[i] = { ...acc[i], address: "Must be a valid Stellar address (G..., 56 chars)" };
       }
-
       const percentageError = getPercentageError(c.basisPoints);
       if (percentageError) {
-        acc[i] = {
-          ...acc[i],
-          basisPoints: percentageError,
-        };
+        acc[i] = { ...acc[i], basisPoints: percentageError };
       }
-
       return acc;
     }, {});
+
     if (Object.keys(nextErrors).length > 0) {
       setErrors((prev) => ({ ...prev, ...nextErrors }));
       const firstErrorIdx = Object.keys(nextErrors).map(Number).sort((a, b) => a - b)[0];
@@ -259,6 +440,7 @@ export default function InitializeForm({
       }
       return setStatus("error", "Please fix all field errors before submitting.");
     }
+
     if (Math.round(total * 100) !== 10_000)
       return setStatus("error", `Percentages must sum to 100% (currently ${total.toFixed(2)}%).`);
 
@@ -292,7 +474,6 @@ export default function InitializeForm({
       onSuccess();
 
     } catch (e: unknown) {
-      // Handle 409 Conflict error specifically
       const errorMessage = e instanceof Error ? e.message : "Unknown error";
       if (errorMessage.includes('409') || errorMessage.includes('already initialized')) {
         setStatus("error", "⚠️ This contract is already initialized. You cannot re-initialize an existing contract.");
@@ -307,6 +488,27 @@ export default function InitializeForm({
   return (
     <div className="card">
       <span className="badge">Initialize</span>
+
+      {pendingDraft && (
+        <div className="status info" role="alert" aria-live="polite" data-testid="draft-restore-banner">
+          A saved draft from {new Date(pendingDraft.savedAt).toLocaleString()} was found.{" "}
+          <button
+            type="button"
+            onClick={acceptDraft}
+            style={{ marginRight: "0.5rem" }}
+            data-testid="draft-restore-accept"
+          >
+            Restore draft
+          </button>
+          <button
+            type="button"
+            onClick={discardDraft}
+            data-testid="draft-restore-discard"
+          >
+            Discard
+          </button>
+        </div>
+      )}
 
       {collaborators.map((c: Collaborator, i: number) => (
         <div key={i}>
@@ -375,8 +577,17 @@ export default function InitializeForm({
               >
                 ✕
               </button>
-            )}
-          </div>
+              {collaborators.length > 1 && (
+                <button
+                  className="btn-danger"
+                  onClick={() => removeRow(i)}
+                  aria-label={`Remove collaborator ${i + 1}`}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          )}
         </div>
       ))}
 
@@ -394,6 +605,13 @@ export default function InitializeForm({
           </span>
         )}
       </div>
+
+      <RoyaltyPayoutPreview
+        collaborators={collaborators}
+        isValid={previewValid}
+        invalidReason={previewInvalidReason}
+      />
+      <ValidationSummary issues={validationIssues} onFocusField={focusField} />
 
       {collaborators.length >= MAX_COLLABORATORS - 5 && collaborators.length < MAX_COLLABORATORS && (
         <div className="status info">
@@ -431,6 +649,7 @@ export default function InitializeForm({
         <button
           className="btn-primary"
           onClick={submit}
+          disabled={loading || hasUnsavedEdit || !allRowsCommitted}
           disabled={loading || hasErrors || hasEmptyFields || hasInvalidPercentages || networkMismatch}
         >
           {loading ? "Submitting…" : "Initialize contract"}

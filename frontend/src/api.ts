@@ -114,11 +114,15 @@ async function get<T>(path: string): Promise<T> {
   return request<T>(path);
 }
 
+async function del<T>(path: string): Promise<T> {
+  return request<T>(path, { method: "DELETE" });
+}
+
 export interface TransactionRecord {
   id: number;
   txHash: string | null;
   contractId: string;
-  type: "initialize" | "distribute";
+  type: "initialize" | "distribute" | "secondary_royalty" | "secondary_distribute";
   initiatorAddress: string;
   requestedAmount: string | null;
   tokenId: string | null;
@@ -149,6 +153,20 @@ export interface TransactionDetails extends TransactionRecord {
   totalPayout?: string;
   auditHistory?: AuditLogEntry[];
   contractEvents?: ContractEventItem[];
+}
+
+export interface RoyaltyTemplateAllocation {
+  address: string;
+  percentage: number;
+}
+
+export interface RoyaltyTemplate {
+  id: number;
+  walletAddress: string;
+  name: string;
+  allocations: RoyaltyTemplateAllocation[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AuditLogEntry {
@@ -211,13 +229,46 @@ export const api = {
       `/collaborators/${contractId}`,
     ),
 
+  // Reusable royalty split templates (#652)
+  listTemplates: (walletAddress: string) =>
+    get<{ success: boolean; data: RoyaltyTemplate[] }>(
+      `/templates?walletAddress=${encodeURIComponent(walletAddress)}`,
+    ),
+
+  createTemplate: (body: {
+    walletAddress: string;
+    name: string;
+    allocations: RoyaltyTemplateAllocation[];
+  }) => post<{ success: boolean; data: RoyaltyTemplate }>("/templates", body),
+
+  deleteTemplate: (id: number, walletAddress: string) =>
+    del<{ success: boolean }>(
+      `/templates/${id}?walletAddress=${encodeURIComponent(walletAddress)}`,
+    ),
+
   // Transaction History & Audit Log APIs
-  getTransactionHistory: (contractId: string, limit = 50, offset = 0) =>
-    get<{
+  getTransactionHistory: (
+    contractId: string,
+    limit = 50,
+    offset = 0,
+    filters?: {
+      type?: "distribute" | "initialize";
+      recipient?: string;
+      startDate?: string;
+      endDate?: string;
+    },
+  ) => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (filters?.type) params.set("type", filters.type);
+    if (filters?.recipient) params.set("recipient", filters.recipient);
+    if (filters?.startDate) params.set("startDate", filters.startDate);
+    if (filters?.endDate) params.set("endDate", filters.endDate);
+    return get<{
       success: boolean;
       data: TransactionRecord[];
       pagination: { limit: number; offset: number; total: number };
-    }>(`/history/${contractId}?limit=${limit}&offset=${offset}`),
+    }>(`/history/${contractId}?${params.toString()}`);
+  },
 
   getTransactionDetails: (txHash: string) =>
     get<{ success: boolean; data: TransactionDetails }>(
@@ -348,6 +399,8 @@ export const api = {
         totalDistributed: number;
         totalTransactions: number;
         averagePayout: number;
+        primaryRoyaltiesTotal: number;
+        secondaryRoyaltiesTotal: number;
         topEarners: Array<{
           address: string;
           totalEarned: number;
