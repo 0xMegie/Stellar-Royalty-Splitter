@@ -4,6 +4,8 @@ import "./TransactionHistory.css";
 import { formatNumber } from "../utils/format";
 import { CopyButton } from "./CopyButton";
 import { TransactionDetailView } from "./TransactionDetailView";
+import { getStellarExpertTxUrl, formatTxHash } from "../lib/explorer";
+import { useNetwork } from "../context/NetworkContext";
 import { ListSkeleton } from "./Skeleton";
 
 interface TransactionHistoryProps {
@@ -31,6 +33,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   selectedTxHash: propSelectedTxHash,
   onSelectTxHash,
 }) => {
+  const { network } = useNetwork();
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -181,9 +184,6 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
 
   const truncateAddress = (address: string) =>
     `${address.slice(0, 6)}...${address.slice(-4)}`;
-
-  const truncateHash = (hash: string | null) =>
-    hash ? `${hash.slice(0, 8)}...${hash.slice(-8)}` : "Pending";
 
   if (activeTxHash) {
     return (
@@ -376,13 +376,31 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                       className="tx-hash-cell"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <span className="tx-hash-text">{truncateHash(tx.txHash)}</span>
-                      {tx.txHash && (
-                        <CopyButton
-                          value={tx.txHash}
-                          label="transaction hash"
-                          size="sm"
-                        />
+                      {tx.txHash ? (
+                        <>
+                          <a
+                            href={getStellarExpertTxUrl(network, tx.txHash)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="tx-hash-link"
+                            aria-label={`View transaction ${tx.txHash} on Stellar Expert`}
+                            title={`View on Stellar Expert (${network})`}
+                          >
+                            {formatTxHash(tx.txHash)}
+                          </a>
+                          <CopyButton
+                            value={tx.txHash}
+                            label="transaction hash"
+                            size="sm"
+                          />
+                        </>
+                      ) : (
+                        <span
+                          className="tx-hash-pending"
+                          aria-label="Transaction hash not yet available"
+                        >
+                          Pending
+                        </span>
                       )}
                     </td>
                     <td>

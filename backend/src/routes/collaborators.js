@@ -4,6 +4,7 @@ import { server, networkPassphrase } from "../stellar.js";
 import logger from "../logger.js";
 import { validateContractIdMiddleware } from "../validation.js";
 import { sendError } from "../error-response.js";
+import { cacheGet, cacheSet, cacheKey, TTL } from "../cache.js";
 
 const {
   Address,
@@ -26,6 +27,15 @@ export const collaboratorsRouter = Router();
 collaboratorsRouter.get("/:contractId", validateContractIdMiddleware, async (req, res, next) => {
   try {
     const { contractId } = req.params;
+
+    // Cache check — skip RPC if we have a fresh entry
+    const key = cacheKey("collaborators", contractId);
+    const cached = cacheGet(key);
+    if (cached !== undefined) {
+      logger.debug(`[cache] HIT collaborators ${contractId}`);
+      return res.json(cached);
+    }
+
     const contract = new Contract(contractId);
 
     const dummyAccount = new Account(
@@ -58,6 +68,7 @@ collaboratorsRouter.get("/:contractId", validateContractIdMiddleware, async (req
     }));
 
     logger.info(`get_all_shares returned ${results.length} collaborators for ${contractId}`);
+    cacheSet(key, results, TTL.collaborators);
     res.json(results);
   } catch (err) {
     next(err);

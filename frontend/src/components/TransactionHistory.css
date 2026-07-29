@@ -559,3 +559,33 @@
   border-top: 1px solid #e5e7eb;
   color: #4b5563;
 }
+
+/* ── Explorer links (#686) ──────────────────────────────────────────────── */
+
+/* Clickable explorer link for confirmed transaction hashes */
+.tx-hash-link {
+  font-family: "Monaco", "Courier New", monospace;
+  font-size: 12px;
+  color: #3b82f6;
+  text-decoration: none;
+  transition: color 0.15s, text-decoration 0.15s;
+}
+
+.tx-hash-link:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.tx-hash-link:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Fallback shown when a transaction ID is not yet available */
+.tx-hash-pending {
+  font-family: "Monaco", "Courier New", monospace;
+  font-size: 12px;
+  color: #9ca3af;
+  font-style: italic;
+}
