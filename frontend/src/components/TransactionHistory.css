@@ -339,6 +339,38 @@
   letter-spacing: 0.5px;
 }
 
+.status-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.status-refresh-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  background: white;
+  color: #374151;
+  cursor: pointer;
+}
+
+.status-refresh-btn:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.status-refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.status-refresh-message {
+  font-size: 11px;
+  color: #6b7280;
+  max-width: 220px;
+}
+
 .pagination {
   display: flex;
   justify-content: space-between;
