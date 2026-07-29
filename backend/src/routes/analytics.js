@@ -102,12 +102,37 @@ router.get("/analytics/:contractId", validateContractIdMiddleware, (req, res) =>
       )
       .all(contractId, startDate.toISOString(), endDate.toISOString());
 
+    // Primary royalties: payouts from primary distribution transactions
+    const primaryRow = db
+      .prepare(
+        `SELECT COALESCE(SUM(CAST(dp.amountReceived AS REAL)), 0) AS primaryTotal
+         FROM distribution_payouts dp
+         JOIN transactions t ON dp.transactionId = t.id
+         WHERE t.contractId = ? AND t.status = 'confirmed'
+           AND t.type = 'distribute'
+           AND t.timestamp BETWEEN ? AND ?`
+      )
+      .get(contractId, startDate.toISOString(), endDate.toISOString());
+
+    // Secondary royalties: total from secondary royalty distribution events
+    const secondaryRow = db
+      .prepare(
+        `SELECT COALESCE(SUM(CAST(srd.totalRoyaltiesDistributed AS REAL)), 0) AS secondaryTotal
+         FROM secondary_royalty_distributions srd
+         JOIN transactions t ON srd.transactionId = t.id
+         WHERE srd.contractId = ? AND t.status = 'confirmed'
+           AND t.timestamp BETWEEN ? AND ?`
+      )
+      .get(contractId, startDate.toISOString(), endDate.toISOString());
+
     const data = {
       success: true,
       data: {
         totalDistributed: Math.round((summary.totalDistributed ?? 0) * 100) / 100,
         totalTransactions: summary.totalTransactions ?? 0,
         averagePayout: Math.round((summary.averagePayout ?? 0) * 100) / 100,
+        primaryRoyaltiesTotal: Math.round((primaryRow?.primaryTotal ?? 0) * 100) / 100,
+        secondaryRoyaltiesTotal: Math.round((secondaryRow?.secondaryTotal ?? 0) * 100) / 100,
         topEarners: topEarners.map((e) => ({
           ...e,
           totalEarned: Math.round(e.totalEarned * 100) / 100,

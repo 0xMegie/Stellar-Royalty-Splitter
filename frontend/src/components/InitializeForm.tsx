@@ -1,9 +1,18 @@
-import React, { useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import { api } from "../api";
 import { signAndSubmitTransaction } from "../stellar";
 import { useNetwork } from "../context/NetworkContext";
 import FormStatus from "./FormStatus";
+import ValidationSummary, { type ValidationSummaryIssue } from "./ValidationSummary";
 import { useFormStatus } from "../hooks/useFormStatus";
+import { useRoyaltyDraft } from "../hooks/useRoyaltyDraft";
+import {
+  parseRoyaltyConfigImport,
+  RoyaltyConfigImportError,
+  buildRoyaltyConfigExport,
+  downloadRoyaltyConfig,
+  RoyaltyConfigExportError,
+} from "../utils/royaltyConfig";
 
 
 interface Collaborator {
@@ -79,12 +88,55 @@ export default function InitializeForm({
   walletAddress,
   onSuccess,
 }: Props) {
-  const { network } = useNetwork();
+  const { network, networkMismatch } = useNetwork();
   const [collaborators, setCollaborators] = useState<Collaborator[]>([
     { address: "", basisPoints: "" },
   ]);
   const { status, setStatus } = useFormStatus();
   const [loading, setLoading] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const addressRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const percentageRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  function triggerImport() {
+    importInputRef.current?.click();
+  }
+
+  async function handleImportFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Allow re-selecting the same file after a failed import.
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const imported = parseRoyaltyConfigImport(text);
+      setCollaborators(imported);
+      setErrors({});
+      setStatus("ok", `Imported ${imported.length} collaborator(s) from ${file.name}.`);
+    } catch (e: unknown) {
+      if (e instanceof RoyaltyConfigImportError) {
+        setStatus("error", e.errors.join(" "));
+      } else {
+        setStatus("error", "Could not read the selected file.");
+      }
+    }
+  }
+
+  function handleExport() {
+    try {
+      const config = buildRoyaltyConfigExport(collaborators, new Date().toISOString());
+      const suffix = contractId ? contractId.slice(0, 8) : "draft";
+      downloadRoyaltyConfig(config, `royalty-split-${suffix}.json`);
+      setStatus("ok", "Exported royalty split configuration.");
+    } catch (e: unknown) {
+      if (e instanceof RoyaltyConfigExportError) {
+        setStatus("error", e.errors.join(" "));
+      } else {
+        setStatus("error", "Could not export the current configuration.");
+      }
+    }
+  }
 
   // Which row is currently open for editing (-1 = none)
   const [editingIndex, setEditingIndex] = useState<number>(0);
@@ -162,7 +214,68 @@ export default function InitializeForm({
     (c) => c.address && c.basisPoints
   );
 
+  // Issue #694 — one summary of every active validation issue, derived from
+  // the same per-row (getPercentageError, STELLAR_ADDRESS_RE) and aggregate
+  // (share total, duplicate address) checks submit() already runs, so there
+  // is only one validation implementation.
+  const validationIssues: ValidationSummaryIssue[] = [];
+  collaborators.forEach((c: Collaborator, i: number) => {
+    if (!c.address) {
+      validationIssues.push({
+        index: i,
+        field: "address",
+        message: `Collaborator ${i + 1}: wallet address is required.`,
+      });
+    } else if (!STELLAR_ADDRESS_RE.test(c.address)) {
+      validationIssues.push({
+        index: i,
+        field: "address",
+        message: `Collaborator ${i + 1}: must be a valid Stellar address (G..., 56 chars).`,
+      });
+    }
+
+    const percentageError = getPercentageError(c.basisPoints);
+    if (percentageError) {
+      validationIssues.push({
+        index: i,
+        field: "basisPoints",
+        message: `Collaborator ${i + 1}: ${percentageError}`,
+      });
+    }
+  });
+  {
+    const seen = new Set<string>();
+    collaborators.forEach((c: Collaborator, i: number) => {
+      if (!c.address) return;
+      if (seen.has(c.address)) {
+        validationIssues.push({
+          index: i,
+          field: "address",
+          message: `Collaborator ${i + 1}: duplicate address.`,
+        });
+      }
+      seen.add(c.address);
+    });
+  }
+  if (Math.round(total * 100) !== 10_000) {
+    validationIssues.push({
+      index: -1,
+      field: "basisPoints",
+      message: `Percentages must sum to 100% (currently ${total.toFixed(2)}%).`,
+    });
+  }
+
+  function focusField(index: number, field: "address" | "basisPoints") {
+    if (field === "address") {
+      addressRefs.current[index]?.focus();
+    } else {
+      percentageRefs.current[index]?.focus();
+    }
+  }
+
   async function submit() {
+    if (networkMismatch)
+      return setStatus("error", "Your wallet is on the wrong network. Switch it before submitting.");
     if (!contractId)
       return setStatus("error", "Enter a contract ID first.");
 
@@ -184,6 +297,16 @@ export default function InitializeForm({
     }, {});
 
     if (Object.keys(nextErrors).length > 0) {
+      setErrors((prev) => ({ ...prev, ...nextErrors }));
+      const firstErrorIdx = Object.keys(nextErrors).map(Number).sort((a, b) => a - b)[0];
+      if (firstErrorIdx !== undefined) {
+        const fieldErrors = nextErrors[firstErrorIdx];
+        if (fieldErrors?.address) {
+          addressRefs.current[firstErrorIdx]?.focus();
+        } else if (fieldErrors?.basisPoints) {
+          percentageRefs.current[firstErrorIdx]?.focus();
+        }
+      }
       return setStatus("error", "Please fix all field errors before submitting.");
     }
 
@@ -235,83 +358,93 @@ export default function InitializeForm({
     <div className="card">
       <span className="badge">Initialize</span>
 
+      {pendingDraft && (
+        <div className="status info" role="alert" aria-live="polite" data-testid="draft-restore-banner">
+          A saved draft from {new Date(pendingDraft.savedAt).toLocaleString()} was found.{" "}
+          <button
+            type="button"
+            onClick={acceptDraft}
+            style={{ marginRight: "0.5rem" }}
+            data-testid="draft-restore-accept"
+          >
+            Restore draft
+          </button>
+          <button
+            type="button"
+            onClick={discardDraft}
+            data-testid="draft-restore-discard"
+          >
+            Discard
+          </button>
+        </div>
+      )}
+
       {collaborators.map((c: Collaborator, i: number) => (
-        <div key={i} className="collaborator-row-wrapper">
-          {editingIndex === i ? (
-            <div className="collaborator-row" data-testid={`collaborator-edit-${i}`}>
-              <div style={{ flex: 3, display: "flex", flexDirection: "column" }}>
-                <input
-                  placeholder="Wallet address (G...)"
-                  value={editBuffer.address}
-                  aria-label={`Wallet address for collaborator ${i + 1}`}
-                  onChange={(e) =>
-                    setEditBuffer((prev) => ({ ...prev, address: e.target.value }))
-                  }
-                  style={{ marginBottom: editErrors.address ? "0.25rem" : undefined }}
-                />
-                {editErrors.address && (
-                  <span className="field-error">{editErrors.address}</span>
-                )}
-              </div>
-              <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-                <input
-                  placeholder="% (0–100)"
-                  type="number"
-                  min={0}
-                  max={100}
-                  step="any"
-                  value={editBuffer.basisPoints}
-                  className={editErrors.basisPoints ? "input-error" : ""}
-                  aria-label={`Royalty percentage for collaborator ${i + 1}`}
-                  aria-invalid={Boolean(editErrors.basisPoints)}
-                  onKeyDown={handlePercentageKeyDown}
-                  onChange={(e) => {
-                    const { value } = e.target;
-                    if (!isAllowedPercentageInput(value)) return;
-                    setEditBuffer((prev) => ({ ...prev, basisPoints: value }));
-                  }}
-                  style={{ marginBottom: editErrors.basisPoints ? "0.25rem" : undefined }}
-                />
-                {editErrors.basisPoints && (
-                  <span className="field-error">{editErrors.basisPoints}</span>
-                )}
-              </div>
-              <button
-                className="btn-primary"
-                onClick={() => saveEdit(i)}
-                aria-label={`Save collaborator ${i + 1}`}
-              >
-                Save
-              </button>
-              <button
-                className="btn-secondary"
-                onClick={cancelEdit}
-                aria-label={`Cancel editing collaborator ${i + 1}`}
-              >
-                Cancel
-              </button>
+        <div key={i}>
+          <div className="collaborator-row">
+            <div style={{ flex: 3, display: "flex", flexDirection: "column" }}>
+              <label htmlFor={`collaborator-${i}-address`}>
+                Collaborator {i + 1} wallet address
+              </label>
+              <input
+                id={`collaborator-${i}-address`}
+                ref={(el) => { addressRefs.current[i] = el; }}
+                placeholder="Wallet address (G...)"
+                value={c.address}
+                aria-invalid={Boolean(errors[i]?.address)}
+                aria-describedby={errors[i]?.address ? `collaborator-${i}-address-error` : undefined}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => update(i, "address", e.target.value)}
+                onBlur={(e: React.FocusEvent<HTMLInputElement>) => handleBlur(i, "address", e.target.value)}
+                style={{ marginBottom: errors[i]?.address ? "0.25rem" : undefined }}
+              />
+              {errors[i]?.address && (
+                <span id={`collaborator-${i}-address-error`} className="field-error" role="alert">
+                  {errors[i].address}
+                </span>
+              )}
             </div>
-          ) : (
-            <div
-              className="collaborator-row collaborator-row--view"
-              data-testid={`collaborator-view-${i}`}
-            >
-              <span
-                className="collaborator-address"
-                style={{ flex: 3, fontFamily: "monospace", fontSize: "0.85rem" }}
-                title={c.address}
-              >
-                {c.address ? `${c.address.slice(0, 8)}…${c.address.slice(-4)}` : "(no address)"}
-              </span>
-              <span className="collaborator-pct" style={{ flex: 1 }}>
-                {c.basisPoints ? `${c.basisPoints}%` : "(no %)"}
-              </span>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              <label htmlFor={`collaborator-${i}-percentage`}>
+                Collaborator {i + 1} percentage
+              </label>
+              <input
+                id={`collaborator-${i}-percentage`}
+                ref={(el) => { percentageRefs.current[i] = el; }}
+                placeholder="% (0–100)"
+                type="number"
+                min={0}
+                max={100}
+                step="any"
+                value={c.basisPoints}
+                className={errors[i]?.basisPoints ? "input-error" : ""}
+                aria-invalid={Boolean(errors[i]?.basisPoints)}
+                aria-describedby={errors[i]?.basisPoints ? `collaborator-${i}-percentage-error` : undefined}
+                onKeyDown={handlePercentageKeyDown}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  const { value } = e.target;
+                  if (!isAllowedPercentageInput(value)) {
+                    updatePercentageError(setErrors, i, getPercentageError(value));
+                    return;
+                  }
+                  update(i, "basisPoints", value);
+                  validateRow(i, "basisPoints", value);
+                }}
+                onBlur={(e: React.FocusEvent<HTMLInputElement>) => handleBlur(i, "basisPoints", e.target.value)}
+                style={{ marginBottom: errors[i]?.basisPoints ? "0.25rem" : undefined }}
+              />
+              {errors[i]?.basisPoints && (
+                <span id={`collaborator-${i}-percentage-error`} className="field-error" role="alert">
+                  {errors[i].basisPoints}
+                </span>
+              )}
+            </div>
+            {collaborators.length > 1 && (
               <button
-                className="btn-secondary"
-                onClick={() => startEdit(i)}
-                aria-label={`Edit collaborator ${i + 1}`}
+                className="btn-danger"
+                aria-label={`Remove collaborator ${i + 1}`}
+                onClick={() => removeRow(i)}
               >
-                Edit
+                ✕
               </button>
               {collaborators.length > 1 && (
                 <button
@@ -342,6 +475,8 @@ export default function InitializeForm({
         )}
       </div>
 
+      <ValidationSummary issues={validationIssues} onFocusField={focusField} />
+
       {collaborators.length >= MAX_COLLABORATORS - 5 && collaborators.length < MAX_COLLABORATORS && (
         <div className="status info">
           Approaching the limit — max {MAX_COLLABORATORS} collaborators allowed ({MAX_COLLABORATORS - collaborators.length} remaining).
@@ -358,18 +493,38 @@ export default function InitializeForm({
           className="btn-add"
           onClick={addRow}
           disabled={collaborators.length >= MAX_COLLABORATORS}
+          aria-label={`Add collaborator (${collaborators.length} of ${MAX_COLLABORATORS})`}
         >
           + Add collaborator
+        </button>
+        <button className="btn-add" type="button" onClick={triggerImport}>
+          Import from JSON
+        </button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          onChange={handleImportFile}
+          style={{ display: "none" }}
+        />
+        <button className="btn-add" type="button" onClick={handleExport}>
+          Export to JSON
         </button>
         <button
           className="btn-primary"
           onClick={submit}
           disabled={loading || hasUnsavedEdit || !allRowsCommitted}
+          disabled={loading || hasErrors || hasEmptyFields || hasInvalidPercentages || networkMismatch}
         >
           {loading ? "Submitting…" : "Initialize contract"}
         </button>
       </div>
 
+      {networkMismatch && (
+        <div className="status error" role="alert">
+          Your wallet is on the wrong network. Switch it to {network === "mainnet" ? "Mainnet" : "Testnet"} to initialize this contract.
+        </div>
+      )}
       {status && <FormStatus type={status.type} message={status.message} />}
     </div>
   );

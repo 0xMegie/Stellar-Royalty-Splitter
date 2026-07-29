@@ -24,13 +24,16 @@ import { sendError } from "../error-response.js";
 import { pollHorizonTransaction } from "../stellar.js";
 import { deliverDistributeWebhooks } from "../webhook-delivery.js";
 import logger from "../logger.js";
+import { cacheGet, cacheSet, cacheKey, TTL } from "../cache.js";
 
 const router = express.Router();
 
+const VALID_HISTORY_TYPES = ["distribute", "initialize"];
+
 /**
  * GET /api/history/:contractId
- * Get transaction history for a contract
- * Query params: limit (default 50), offset (default 0)
+ * Get transaction history for a contract.
+ * Query params: limit (default 50, max 100), offset (default 0), type (distribute|initialize)
  */
 router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
   try {
@@ -41,14 +44,48 @@ router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
     if (!pagination) return;
     const { limit, offset } = pagination;
 
-    const history = getTransactionHistory(contractId, limit, offset);
-    const total = getTransactionCount(contractId);
+    const { type, recipient, startDate, endDate } = req.query;
 
-    res.json({
+    if (type !== undefined && !VALID_HISTORY_TYPES.includes(type)) {
+      return sendError(
+        res,
+        400,
+        "invalid_query_parameter",
+        `type must be one of: ${VALID_HISTORY_TYPES.join(", ")}`
+      );
+    }
+
+    if (startDate !== undefined && isNaN(new Date(startDate).getTime())) {
+      return sendError(res, 400, "invalid_query_parameter", "Invalid startDate. Use ISO 8601 or YYYY-MM-DD format.");
+    }
+
+    if (endDate !== undefined && isNaN(new Date(endDate).getTime())) {
+      return sendError(res, 400, "invalid_query_parameter", "Invalid endDate. Use ISO 8601 or YYYY-MM-DD format.");
+    }
+
+    const filters = {};
+    if (type) filters.type = type;
+    if (recipient) filters.recipient = recipient;
+    if (startDate) filters.startDate = startDate;
+    if (endDate) filters.endDate = endDate;
+
+    const history = getTransactionHistory(contractId, limit, offset, filters);
+    const total = getTransactionCount(contractId, filters);
+
+    const body = {
       success: true,
       data: history,
-      pagination: { limit, offset, total },
-    });
+      pagination: {
+        limit,
+        offset,
+        total,
+        hasNextPage: offset + limit < total,
+        hasPrevPage: offset > 0,
+      },
+    };
+
+    cacheSet(key, body, TTL.history);
+    res.json(body);
   } catch (error) {
     logger.error("Error fetching transaction history:", error);
     sendError(res, 500, "internal_server_error", error.message ?? "Failed to fetch transaction history");

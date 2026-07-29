@@ -1,221 +1,128 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import "@testing-library/jest-dom";
+import userEvent from "@testing-library/user-event";
 import InitializeForm from "../InitializeForm";
+import { api } from "../../api";
 
 jest.mock("../../api");
-jest.mock("../../stellar");
-
-import { api } from "../../api";
-import { signAndSubmitTransaction } from "../../stellar";
-
-const mockApi = api as jest.Mocked<typeof api>;
-const mockSign = signAndSubmitTransaction as jest.MockedFunction<typeof signAndSubmitTransaction>;
-
-const VALID_ADDRESS = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-const CONTRACT_ID = "CAFQE4X7R7X7R7X7R7X7R7X7R7X7R7X7R7X7R7X7R7X7R7X7R7X7R7";
-const WALLET = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
-
-const mockNetworkContextValue = { network: "testnet" as const, setNetwork: jest.fn() };
-
+jest.mock("../../stellar", () => ({
+  signAndSubmitTransaction: jest.fn(),
+}));
 jest.mock("../../context/NetworkContext", () => ({
-  useNetwork: () => mockNetworkContextValue,
+  useNetwork: () => ({ network: "testnet" }),
 }));
 
-function setup(props = {}) {
-  return render(
-    <InitializeForm
-      contractId={CONTRACT_ID}
-      walletAddress={WALLET}
-      onSuccess={jest.fn()}
-      {...props}
-    />
-  );
-}
+const mockApi = api as jest.Mocked<typeof api>;
+const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const WALLET = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
-beforeEach(() => {
-  jest.clearAllMocks();
-});
+const defaultProps = {
+  contractId: CONTRACT,
+  walletAddress: WALLET,
+  onSuccess: jest.fn(),
+};
 
-describe("InitializeForm — editing", () => {
-  test("first row starts in edit mode", () => {
-    setup();
-    expect(screen.getByTestId("collaborator-edit-0")).toBeDefined();
+describe("InitializeForm — accessibility", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
   });
 
-  test("Save button commits the row to view mode", async () => {
-    setup();
-    fireEvent.change(screen.getByLabelText(/wallet address for collaborator 1/i), {
-      target: { value: VALID_ADDRESS },
-    });
-    fireEvent.change(screen.getByLabelText(/royalty percentage for collaborator 1/i), {
-      target: { value: "100" },
-    });
-    fireEvent.click(screen.getByLabelText(/save collaborator 1/i));
+  test("every address input has an associated visible label", () => {
+    render(<InitializeForm {...defaultProps} />);
+    const label = screen.getByLabelText(/Collaborator 1 wallet address/i);
+    expect(label).toBeDefined();
+  });
+
+  test("every percentage input has an associated visible label", () => {
+    render(<InitializeForm {...defaultProps} />);
+    const label = screen.getByLabelText(/Collaborator 1 percentage/i);
+    expect(label).toBeDefined();
+  });
+
+  test("address error span is linked via aria-describedby", async () => {
+    render(<InitializeForm {...defaultProps} />);
+    const addressInput = screen.getByLabelText(/Collaborator 1 wallet address/i);
+
+    fireEvent.blur(addressInput);
+    fireEvent.change(addressInput, { target: { value: "not-a-stellar-address" } });
+    fireEvent.blur(addressInput);
 
     await waitFor(() => {
-      expect(screen.getByTestId("collaborator-view-0")).toBeDefined();
+      const errorSpan = document.getElementById("collaborator-0-address-error");
+      expect(errorSpan).toBeTruthy();
+      expect(addressInput.getAttribute("aria-describedby")).toBe("collaborator-0-address-error");
     });
   });
 
-  test("Cancel button discards unsaved changes", async () => {
-    setup();
-    const addressInput = screen.getByLabelText(/wallet address for collaborator 1/i);
-    fireEvent.change(addressInput, { target: { value: "GINVALID" } });
-    fireEvent.click(screen.getByLabelText(/cancel editing collaborator 1/i));
+  test("address input carries aria-invalid=true when field is invalid", async () => {
+    render(<InitializeForm {...defaultProps} />);
+    const addressInput = screen.getByLabelText(/Collaborator 1 wallet address/i);
+
+    fireEvent.change(addressInput, { target: { value: "BAD" } });
+    fireEvent.blur(addressInput);
 
     await waitFor(() => {
-      // Row returns to view mode showing the original empty value
-      expect(screen.getByTestId("collaborator-view-0")).toBeDefined();
+      expect(addressInput.getAttribute("aria-invalid")).toBe("true");
     });
-    // The invalid address is not committed
-    expect(screen.queryByText("GINVALID")).toBeNull();
   });
 
-  test("Edit button on view row re-opens edit mode", async () => {
-    setup();
-    // Save a valid row first
-    fireEvent.change(screen.getByLabelText(/wallet address for collaborator 1/i), {
-      target: { value: VALID_ADDRESS },
-    });
-    fireEvent.change(screen.getByLabelText(/royalty percentage for collaborator 1/i), {
-      target: { value: "100" },
-    });
-    fireEvent.click(screen.getByLabelText(/save collaborator 1/i));
+  test("percentage error span has id matching aria-describedby on percentage input", async () => {
+    render(<InitializeForm {...defaultProps} />);
+    const pctInput = screen.getByLabelText(/Collaborator 1 percentage/i);
 
-    await waitFor(() => expect(screen.getByTestId("collaborator-view-0")).toBeDefined());
-
-    fireEvent.click(screen.getByLabelText(/edit collaborator 1/i));
-    expect(screen.getByTestId("collaborator-edit-0")).toBeDefined();
-  });
-
-  test("Cancel on edit restores the previously committed address", async () => {
-    setup();
-    // Commit a valid address
-    fireEvent.change(screen.getByLabelText(/wallet address for collaborator 1/i), {
-      target: { value: VALID_ADDRESS },
-    });
-    fireEvent.change(screen.getByLabelText(/royalty percentage for collaborator 1/i), {
-      target: { value: "100" },
-    });
-    fireEvent.click(screen.getByLabelText(/save collaborator 1/i));
-    await waitFor(() => expect(screen.getByTestId("collaborator-view-0")).toBeDefined());
-
-    // Re-open edit and type something different
-    fireEvent.click(screen.getByLabelText(/edit collaborator 1/i));
-    const addrInput = screen.getByLabelText(/wallet address for collaborator 1/i);
-    fireEvent.change(addrInput, { target: { value: "GDIFFERENT" } });
-
-    // Cancel — should revert to original
-    fireEvent.click(screen.getByLabelText(/cancel editing collaborator 1/i));
-    await waitFor(() => expect(screen.getByTestId("collaborator-view-0")).toBeDefined());
-    expect(screen.queryByText(/GDIFFERENT/)).toBeNull();
-  });
-
-  test("shows validation error for invalid address on Save", async () => {
-    setup();
-    fireEvent.change(screen.getByLabelText(/wallet address for collaborator 1/i), {
-      target: { value: "bad-address" },
-    });
-    fireEvent.change(screen.getByLabelText(/royalty percentage for collaborator 1/i), {
-      target: { value: "50" },
-    });
-    fireEvent.click(screen.getByLabelText(/save collaborator 1/i));
+    fireEvent.change(pctInput, { target: { value: "" } });
+    fireEvent.blur(pctInput);
 
     await waitFor(() => {
-      expect(screen.getByText(/Must be a valid Stellar address/i)).toBeDefined();
+      const errorSpan = document.getElementById("collaborator-0-percentage-error");
+      expect(errorSpan).toBeTruthy();
+      expect(pctInput.getAttribute("aria-describedby")).toBe("collaborator-0-percentage-error");
     });
-    // Row stays in edit mode
-    expect(screen.getByTestId("collaborator-edit-0")).toBeDefined();
   });
 
-  test("shows validation error for invalid percentage on Save", async () => {
-    setup();
-    fireEvent.change(screen.getByLabelText(/wallet address for collaborator 1/i), {
-      target: { value: VALID_ADDRESS },
-    });
-    // Leave percentage empty
-    fireEvent.click(screen.getByLabelText(/save collaborator 1/i));
+  test("error messages use role=alert for immediate SR announcement", async () => {
+    render(<InitializeForm {...defaultProps} />);
+    const addressInput = screen.getByLabelText(/Collaborator 1 wallet address/i);
+
+    fireEvent.change(addressInput, { target: { value: "BAD" } });
+    fireEvent.blur(addressInput);
 
     await waitFor(() => {
-      expect(screen.getByText(/Percentage is required/i)).toBeDefined();
+      const alerts = document.querySelectorAll('[role="alert"]');
+      expect(alerts.length).toBeGreaterThan(0);
     });
   });
 
-  test("Add collaborator creates a new row in edit mode", async () => {
-    setup();
-    // Save the first row
-    fireEvent.change(screen.getByLabelText(/wallet address for collaborator 1/i), {
-      target: { value: VALID_ADDRESS },
-    });
-    fireEvent.change(screen.getByLabelText(/royalty percentage for collaborator 1/i), {
-      target: { value: "50" },
-    });
-    fireEvent.click(screen.getByLabelText(/save collaborator 1/i));
-    await waitFor(() => expect(screen.getByTestId("collaborator-view-0")).toBeDefined());
-
-    fireEvent.click(screen.getByText(/\+ Add collaborator/i));
-    expect(screen.getByTestId("collaborator-edit-1")).toBeDefined();
+  test("status region uses aria-live=assertive for SR announcements", () => {
+    render(<InitializeForm {...defaultProps} />);
+    const liveRegion = document.querySelector('[aria-live="assertive"]');
+    expect(liveRegion).toBeTruthy();
   });
 
-  test("share total updates in real time while editing", async () => {
-    setup();
-    fireEvent.change(screen.getByLabelText(/royalty percentage for collaborator 1/i), {
-      target: { value: "75" },
-    });
+  test("remove button has an accessible aria-label naming the collaborator", async () => {
+    render(<InitializeForm {...defaultProps} />);
+    fireEvent.click(screen.getByLabelText(/Add collaborator/i));
 
-    const total = screen.getByTestId("share-total");
-    expect(total.textContent).toContain("75.00%");
+    await waitFor(() => {
+      const removeBtn = screen.getByLabelText(/Remove collaborator 1/i);
+      expect(removeBtn).toBeDefined();
+    });
   });
 
-  test("submit is blocked when a row is in edit mode", async () => {
-    setup();
-    // Row 0 is already in edit mode with unsaved data
-    fireEvent.change(screen.getByLabelText(/wallet address for collaborator 1/i), {
-      target: { value: VALID_ADDRESS },
-    });
-    fireEvent.change(screen.getByLabelText(/royalty percentage for collaborator 1/i), {
-      target: { value: "100" },
-    });
-    // Do NOT save — submit button should be disabled
-    const submitBtn = screen.getByText(/Initialize contract/i);
-    expect(submitBtn).toBeDisabled();
-  });
+  test("submit button exposes aria-busy during loading", async () => {
+    mockApi.initialize = jest.fn(() => new Promise(() => {}));
 
-  test("submit is enabled after all rows are saved and total is 100%", async () => {
-    setup();
-    fireEvent.change(screen.getByLabelText(/wallet address for collaborator 1/i), {
-      target: { value: VALID_ADDRESS },
-    });
-    fireEvent.change(screen.getByLabelText(/royalty percentage for collaborator 1/i), {
-      target: { value: "100" },
-    });
-    fireEvent.click(screen.getByLabelText(/save collaborator 1/i));
-    await waitFor(() => expect(screen.getByTestId("collaborator-view-0")).toBeDefined());
+    render(<InitializeForm {...defaultProps} />);
+    const addrInput = screen.getByLabelText(/Collaborator 1 wallet address/i);
+    const pctInput = screen.getByLabelText(/Collaborator 1 percentage/i);
+
+    fireEvent.change(addrInput, { target: { value: WALLET } });
+    fireEvent.change(pctInput, { target: { value: "100" } });
 
     const submitBtn = screen.getByText(/Initialize contract/i);
-    expect(submitBtn).not.toBeDisabled();
-  });
+    fireEvent.click(submitBtn);
 
-  test("remove row while another is in edit mode adjusts editingIndex", async () => {
-    setup();
-    // Save row 0
-    fireEvent.change(screen.getByLabelText(/wallet address for collaborator 1/i), {
-      target: { value: VALID_ADDRESS },
-    });
-    fireEvent.change(screen.getByLabelText(/royalty percentage for collaborator 1/i), {
-      target: { value: "50" },
-    });
-    fireEvent.click(screen.getByLabelText(/save collaborator 1/i));
-    await waitFor(() => expect(screen.getByTestId("collaborator-view-0")).toBeDefined());
-
-    // Add row 1 (now in edit mode)
-    fireEvent.click(screen.getByText(/\+ Add collaborator/i));
-    expect(screen.getByTestId("collaborator-edit-1")).toBeDefined();
-
-    // Remove row 0 — row 1 becomes row 0, editingIndex adjusts
-    fireEvent.click(screen.getByLabelText(/remove collaborator 1/i));
     await waitFor(() => {
-      expect(screen.getByTestId("collaborator-edit-0")).toBeDefined();
+      expect(submitBtn.getAttribute("aria-busy")).toBe("true");
     });
   });
 });

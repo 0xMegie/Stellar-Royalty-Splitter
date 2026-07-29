@@ -12,6 +12,102 @@
   flex-wrap: wrap;
 }
 
+.filter-toggle-btn {
+  padding: 8px 14px;
+  background: #6366f1;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.filter-toggle-btn:hover {
+  background: #4f46e5;
+}
+
+.filter-panel {
+  background: #f5f3ff;
+  border: 1px solid #c4b5fd;
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.filter-controls {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.filter-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.filter-input,
+.filter-select,
+.filter-date-input {
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 13px;
+  background: white;
+  min-width: 160px;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
+
+.filter-apply-btn {
+  padding: 7px 16px;
+  background: #6366f1;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.filter-apply-btn:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+.filter-apply-btn:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
+.filter-reset-btn {
+  padding: 7px 14px;
+  background: transparent;
+  color: #6b7280;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.2s, color 0.2s;
+}
+
+.filter-reset-btn:hover {
+  background: #f3f4f6;
+  color: #1f2937;
+}
+
 .export-toggle-btn {
   padding: 8px 14px;
   background: #10b981;
@@ -462,4 +558,34 @@
   padding: 8px 12px;
   border-top: 1px solid #e5e7eb;
   color: #4b5563;
+}
+
+/* ── Explorer links (#686) ──────────────────────────────────────────────── */
+
+/* Clickable explorer link for confirmed transaction hashes */
+.tx-hash-link {
+  font-family: "Monaco", "Courier New", monospace;
+  font-size: 12px;
+  color: #3b82f6;
+  text-decoration: none;
+  transition: color 0.15s, text-decoration 0.15s;
+}
+
+.tx-hash-link:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.tx-hash-link:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Fallback shown when a transaction ID is not yet available */
+.tx-hash-pending {
+  font-family: "Monaco", "Courier New", monospace;
+  font-size: 12px;
+  color: #9ca3af;
+  font-style: italic;
 }

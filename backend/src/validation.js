@@ -39,6 +39,10 @@ export const initializeSchema = z
 export const INITIALIZE_PAYLOAD_LIMIT_BYTES = 10 * 1024;
 export const INITIALIZE_COLLABORATORS_PAYLOAD_LIMIT_BYTES = 8 * 1024;
 
+// Named size limits — kept in sync with on-chain MAX_COLLABORATORS / MAX_RECIPIENTS constants.
+export const MAX_COLLABORATORS_BACKEND = 20;
+export const MAX_NFT_ID_LENGTH = 256;
+
 export const distributeSchema = z.object({
   contractId: contractAddress,
   walletAddress: stellarAddress,
@@ -54,7 +58,10 @@ export const setRoyaltyRateSchema = z.object({
 export const recordSecondarySaleSchema = z.object({
   contractId: contractAddress,
   walletAddress: stellarAddress,
-  nftId: z.string().min(1),
+  nftId: z
+    .string()
+    .min(1, "nftId must not be empty")
+    .max(MAX_NFT_ID_LENGTH, `nftId must not exceed ${MAX_NFT_ID_LENGTH} characters`),
   previousOwner: stellarAddress,
   newOwner: stellarAddress,
   salePrice: z.number().int().positive(),
@@ -215,14 +222,14 @@ export function validateInitializePayloadSize(req, res, next) {
   const totalBodyBytes = getJsonByteLength(req.body);
 
   if (totalBodyBytes > INITIALIZE_PAYLOAD_LIMIT_BYTES) {
-    return res.status(413).json({ error: "Payload too large" });
+    return sendError(res, 413, "payload_too_large", "Payload too large");
   }
 
   if (Array.isArray(req.body?.collaborators)) {
     const collaboratorsBytes = getJsonByteLength(req.body.collaborators);
 
     if (collaboratorsBytes > INITIALIZE_COLLABORATORS_PAYLOAD_LIMIT_BYTES) {
-      return res.status(413).json({ error: "Collaborators payload too large" });
+      return sendError(res, 413, "payload_too_large", "Collaborators payload too large");
     }
   }
 
