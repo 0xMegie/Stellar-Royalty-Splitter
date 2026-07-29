@@ -24,6 +24,16 @@ export const Navigation: React.FC<NavigationProps> = ({
   const { isDark, toggleTheme } = useTheme();
   const { network, setNetwork } = useNetwork();
 
+  // Close mobile menu on Escape and prevent body scroll while open
+  useEffect(() => {
+    if (!isMobileMenuOpen) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setIsMobileMenuOpen(false);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isMobileMenuOpen]);
+
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: "📊" },
     { id: "earnings-history", label: "Earnings", icon: "💹" },
@@ -78,11 +88,17 @@ export const Navigation: React.FC<NavigationProps> = ({
           className="mobile-menu-btn"
           onClick={toggleMobileMenu}
           aria-label="Toggle menu"
+          aria-expanded={isMobileMenuOpen}
+          aria-controls="mobile-nav-links"
         >
           {isMobileMenuOpen ? "✕" : "☰"}
         </button>
 
-        <ul className={`nav-links ${isMobileMenuOpen ? "active" : ""}`}>
+        <ul
+          id="mobile-nav-links"
+          className={`nav-links ${isMobileMenuOpen ? "active" : ""}`}
+          role="list"
+        >
           {navItems.map((item) => (
             <li key={item.id}>
               <button
