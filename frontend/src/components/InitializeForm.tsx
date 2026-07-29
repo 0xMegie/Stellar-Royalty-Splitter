@@ -64,22 +64,6 @@ function isAllowedPercentageInput(value: string) {
   return PERCENTAGE_INPUT_RE.test(value);
 }
 
-function updatePercentageError(
-  setErrors: React.Dispatch<
-    React.SetStateAction<Record<number, { address?: string; basisPoints?: string }>>
-  >,
-  i: number,
-  error: string,
-) {
-  setErrors((prev) => ({
-    ...prev,
-    [i]: {
-      ...prev[i],
-      basisPoints: error,
-    },
-  }));
-}
-
 function handlePercentageKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
   if (
     event.ctrlKey ||
@@ -108,9 +92,6 @@ export default function InitializeForm({
   const [collaborators, setCollaborators] = useState<Collaborator[]>([
     { address: "", basisPoints: "" },
   ]);
-  const [errors, setErrors] = useState<
-    Record<number, { address?: string; basisPoints?: string }>
-  >({});
   const { status, setStatus } = useFormStatus();
   const [loading, setLoading] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -157,73 +138,81 @@ export default function InitializeForm({
     }
   }
 
-  function update(i: number, field: keyof Collaborator, value: string) {
-    setCollaborators((prev: Collaborator[]) =>
-      prev.map((c: Collaborator, idx: number) => (idx === i ? { ...c, [field]: value } : c)),
+  // Which row is currently open for editing (-1 = none)
+  const [editingIndex, setEditingIndex] = useState<number>(0);
+  // Temporary values while the row is in edit mode
+  const [editBuffer, setEditBuffer] = useState<Collaborator>({ address: "", basisPoints: "" });
+  // Validation errors for the active edit buffer
+  const [editErrors, setEditErrors] = useState<{ address?: string; basisPoints?: string }>({});
+
+  function startEdit(i: number) {
+    setEditingIndex(i);
+    setEditBuffer({ ...collaborators[i] });
+    setEditErrors({});
+  }
+
+  function cancelEdit() {
+    setEditingIndex(-1);
+    setEditBuffer({ address: "", basisPoints: "" });
+    setEditErrors({});
+  }
+
+  function validateEditBuffer(buf: Collaborator) {
+    const errs: { address?: string; basisPoints?: string } = {};
+    if (!buf.address || !STELLAR_ADDRESS_RE.test(buf.address)) {
+      errs.address = "Must be a valid Stellar address (G..., 56 chars)";
+    }
+    const pctErr = getPercentageError(buf.basisPoints);
+    if (pctErr) errs.basisPoints = pctErr;
+    return errs;
+  }
+
+  function saveEdit(i: number) {
+    const errs = validateEditBuffer(editBuffer);
+    if (Object.keys(errs).length > 0) {
+      setEditErrors(errs);
+      return;
+    }
+    setCollaborators((prev) =>
+      prev.map((c, idx) => (idx === i ? { ...editBuffer } : c))
     );
-  }
-
-  function validateRow(
-    i: number,
-    field: "address" | "basisPoints",
-    value: string,
-  ) {
-    const rowErrors = { ...errors };
-    if (field === "address") {
-      if (value && !STELLAR_ADDRESS_RE.test(value)) {
-        rowErrors[i] = {
-          ...rowErrors[i],
-          address: "Must be a valid Stellar address (G..., 56 chars)",
-        };
-      } else {
-        const { address: _, ...rest } = rowErrors[i] ?? {};
-        rowErrors[i] = rest;
-      }
-    }
-    if (field === "basisPoints") {
-      const percentageError = getPercentageError(value);
-      if (percentageError) {
-        rowErrors[i] = {
-          ...rowErrors[i],
-          basisPoints: percentageError,
-        };
-      } else {
-        const { basisPoints: _, ...rest } = rowErrors[i] ?? {};
-        rowErrors[i] = rest;
-      }
-    }
-    setErrors(rowErrors);
-  }
-
-  function handleBlur(i: number, field: "address" | "basisPoints", value: string) {
-    validateRow(i, field, value);
+    setEditingIndex(-1);
+    setEditBuffer({ address: "", basisPoints: "" });
+    setEditErrors({});
   }
 
   function addRow() {
-    setCollaborators((prev: Collaborator[]) => [...prev, { address: "", basisPoints: "" }]);
+    if (collaborators.length >= MAX_COLLABORATORS) return;
+    const newIndex = collaborators.length;
+    setCollaborators((prev) => [...prev, { address: "", basisPoints: "" }]);
+    setEditingIndex(newIndex);
+    setEditBuffer({ address: "", basisPoints: "" });
+    setEditErrors({});
   }
 
   function removeRow(i: number) {
-    setCollaborators((prev: Collaborator[]) => prev.filter((_: Collaborator, idx: number) => idx !== i));
-    setErrors((prev: Record<number, { address?: string; basisPoints?: string }>) => {
-      const next: Record<number, { address?: string; basisPoints?: string }> = {};
-      Object.entries(prev).forEach(([key, val]) => {
-        const k = parseInt(key);
-        if (k < i) next[k] = val;
-        else if (k > i) next[k - 1] = val;
-      });
-      return next;
-    });
+    setCollaborators((prev) =>
+      prev.filter((_: Collaborator, idx: number) => idx !== i)
+    );
+    if (editingIndex === i) {
+      setEditingIndex(-1);
+      setEditBuffer({ address: "", basisPoints: "" });
+      setEditErrors({});
+    } else if (editingIndex > i) {
+      setEditingIndex(editingIndex - 1);
+    }
   }
 
-  const total = collaborators.reduce(
-    (sum: number, c: Collaborator) => sum + (parseFloat(c.basisPoints) || 0),
-    0,
-  );
+  // Total reflects the edit buffer in real time while a row is being edited
+  const total = collaborators.reduce((sum: number, c: Collaborator, i: number) => {
+    const val = i === editingIndex ? editBuffer.basisPoints : c.basisPoints;
+    return sum + (parseFloat(val) || 0);
+  }, 0);
 
-  const hasErrors = Object.values(errors).some((e) => (e as { address?: string; basisPoints?: string })?.address || (e as { address?: string; basisPoints?: string })?.basisPoints);
-  const hasEmptyFields = collaborators.some((c: Collaborator) => !c.address || !c.basisPoints);
-  const hasInvalidPercentages = collaborators.some((c: Collaborator) => getPercentageError(c.basisPoints));
+  const hasUnsavedEdit = editingIndex >= 0;
+  const allRowsCommitted = collaborators.every(
+    (c) => c.address && c.basisPoints
+  );
 
   // Issue #694 — one summary of every active validation issue, derived from
   // the same per-row (getPercentageError, STELLAR_ADDRESS_RE) and aggregate
@@ -289,26 +278,24 @@ export default function InitializeForm({
       return setStatus("error", "Your wallet is on the wrong network. Switch it before submitting.");
     if (!contractId)
       return setStatus("error", "Enter a contract ID first.");
+
+    if (hasUnsavedEdit) {
+      return setStatus("error", "Please save or cancel the current edit before submitting.");
+    }
+
     const nextErrors = collaborators.reduce<
       Record<number, { address?: string; basisPoints?: string }>
     >((acc, c, i) => {
       if (!c.address || !STELLAR_ADDRESS_RE.test(c.address)) {
-        acc[i] = {
-          ...acc[i],
-          address: "Must be a valid Stellar address (G..., 56 chars)",
-        };
+        acc[i] = { ...acc[i], address: "Must be a valid Stellar address (G..., 56 chars)" };
       }
-
       const percentageError = getPercentageError(c.basisPoints);
       if (percentageError) {
-        acc[i] = {
-          ...acc[i],
-          basisPoints: percentageError,
-        };
+        acc[i] = { ...acc[i], basisPoints: percentageError };
       }
-
       return acc;
     }, {});
+
     if (Object.keys(nextErrors).length > 0) {
       setErrors((prev) => ({ ...prev, ...nextErrors }));
       const firstErrorIdx = Object.keys(nextErrors).map(Number).sort((a, b) => a - b)[0];
@@ -322,6 +309,7 @@ export default function InitializeForm({
       }
       return setStatus("error", "Please fix all field errors before submitting.");
     }
+
     if (Math.round(total * 100) !== 10_000)
       return setStatus("error", `Percentages must sum to 100% (currently ${total.toFixed(2)}%).`);
 
@@ -355,7 +343,6 @@ export default function InitializeForm({
       onSuccess();
 
     } catch (e: unknown) {
-      // Handle 409 Conflict error specifically
       const errorMessage = e instanceof Error ? e.message : "Unknown error";
       if (errorMessage.includes('409') || errorMessage.includes('already initialized')) {
         setStatus("error", "⚠️ This contract is already initialized. You cannot re-initialize an existing contract.");
@@ -459,8 +446,17 @@ export default function InitializeForm({
               >
                 ✕
               </button>
-            )}
-          </div>
+              {collaborators.length > 1 && (
+                <button
+                  className="btn-danger"
+                  onClick={() => removeRow(i)}
+                  aria-label={`Remove collaborator ${i + 1}`}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          )}
         </div>
       ))}
 
@@ -517,6 +513,7 @@ export default function InitializeForm({
         <button
           className="btn-primary"
           onClick={submit}
+          disabled={loading || hasUnsavedEdit || !allRowsCommitted}
           disabled={loading || hasErrors || hasEmptyFields || hasInvalidPercentages || networkMismatch}
         >
           {loading ? "Submitting…" : "Initialize contract"}

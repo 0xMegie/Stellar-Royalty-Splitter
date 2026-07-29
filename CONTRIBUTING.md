@@ -85,6 +85,36 @@ npm run format    # Auto-fix formatting
 npm run lint      # Check remaining issues
 ```
 
+### 3a. Run Dependency Security Audits
+
+Run these checks locally before opening a PR to catch vulnerable dependencies early.
+
+**JavaScript (backend):**
+
+```bash
+cd backend
+npm audit --audit-level=high
+```
+
+**JavaScript (frontend):**
+
+```bash
+cd frontend
+npm audit --audit-level=high
+```
+
+**Rust:**
+
+```bash
+# Install cargo-audit once
+cargo install cargo-audit --locked
+
+# Run audit (from repo root)
+cargo audit
+```
+
+The CI pipeline runs all three audits automatically on every PR and on a weekly schedule. PRs that introduce high or critical vulnerabilities will fail CI. If a finding is a false positive or cannot be remediated immediately, open a separate issue — do not disable the check in-line.
+
 ### 4. Commit Your Changes
 
 ```bash
@@ -202,6 +232,10 @@ All PRs run:
   - WASM compilation
   - Cargo tests
   - Formatting check
+- **Dependency Security Audit**:
+  - `npm audit --audit-level=high` for backend and frontend JS packages
+  - `cargo audit` for Rust crates
+  - Also runs weekly to catch newly disclosed CVEs
 
 ### CI Must Pass Before Merge
 
