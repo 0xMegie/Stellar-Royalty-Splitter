@@ -37,9 +37,11 @@ The backend uses **Jest** as the test runner with **supertest** for HTTP asserti
 | Metrics                | `metrics.test.js`                | 3     | ✅ PASS |
 | Health                 | `health.test.js`                 | 2     | ✅ PASS |
 | CORS Config            | `cors-config.test.js`            | 6     | ✅ PASS |
-| Shutdown               | `shutdown.test.js`               | 3     | ✅ PASS |
+| CORS Config            | `cors-config.test.js`            | 6     | ✅ PASS |
+| Shutdown               | `shutdown.test.js`               | 5     | ✅ PASS |
 | Logger                 | `logger.test.js`                 | 2     | ✅ PASS |
 | Webhooks               | `webhooks.test.js`               | 4     | ✅ PASS |
+| Earnings Export        | `earnings-history.test.js`       | 5     | ✅ PASS |
 | Signing Key            | `signing-key.test.js`            | 8     | ✅ PASS |
 | Distribute Idempotency | `distribute-idempotency.test.js` | 14    | ✅ PASS |
 | Admin                  | `admin.test.js`                  | 8     | ✅ PASS |

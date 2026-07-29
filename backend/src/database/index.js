@@ -33,7 +33,14 @@ export {
 } from "./transactions.js";
 
 // Webhooks (#295)
-export { registerWebhook, listWebhooks, deleteWebhook } from "./webhooks.js";
+export {
+  registerWebhook,
+  listWebhooks,
+  deleteWebhook,
+  updateWebhookRetryState,
+  getWebhooksDueForRetry,
+  resetWebhookRetryCount,
+} from "./webhooks.js";
 
 // Audit logging
 export { getAuditLog, addAuditLog, countAuditLog } from "./audit.js";
@@ -50,10 +57,37 @@ export {
 } from "./secondary-royalties.js";
 
 // Analytics
-export { getAnalyticsData } from "./analytics.js";
+export {
+  getAnalyticsData,
+  getContributorEarningsHistory,
+  getContributorEarningsEvents,
+  getContributorContracts,
+} from "./analytics.js";
 
 // Payment preferences (#584)
 export { getPaymentPreference, savePaymentPreference } from "./payment-preferences.js";
+
+// Transaction fee display (#606)
+export {
+  recordTransactionFee,
+  getTransactionFee,
+  getFeesByContract,
+} from "./transaction-fees.js";
+
+// Notification preferences (#605)
+export {
+  getNotificationPreferences,
+  saveNotificationPreferences,
+} from "./notification-preferences.js";
+
+// Contributor verification (#602)
+export {
+  getVerification,
+  upsertVerification,
+  getVerificationsByStep,
+  VERIFICATION_STEPS,
+  VERIFICATION_STATUSES,
+} from "./contributor-verification.js";
 
 // Contract event archival
 export {
@@ -66,6 +100,52 @@ export {
   getArchivedEvents,
   updateArchivePolicy,
 } from "./archive.js";
+
+// CSV bulk import (#597)
+export {
+  createCsvImport,
+  markImportSuccess,
+  markImportFailed,
+  getCsvImport,
+  getCsvImportsByContract,
+  addImportResult,
+  getImportResults,
+  getImportSummary,
+} from "./csv-import.js";
+
+// Contributor tax information (#595)
+export {
+  getContributorTax,
+  upsertContributorTax,
+  getTaxComplianceReport,
+  getContributorsMissingTaxInfo,
+  getAllWalletAddresses,
+} from "./contributor-tax.js";
+
+// Real-time notifications (#594)
+export {
+  createNotification,
+  getNotifications,
+  getUnreadNotificationCount,
+  markNotificationRead,
+  markAllNotificationsRead,
+  deleteNotification,
+  getNotificationPreference,
+  upsertNotificationPreference,
+  createSystemNotification,
+} from "./notifications.js";
+
+// Payment hold/release system (#596)
+export {
+  placeHold,
+  releaseHold,
+  approveHoldRelease,
+  getTransactionWithHold,
+  getHeldTransactions,
+  getAllHeldTransactions,
+  getHoldAuditTrail,
+  getTransactionsPendingHoldRelease,
+} from "./payment-holds.js";
 
 // Email digest (#569)
 export {
@@ -129,6 +209,38 @@ export {
   getAllReferrals,
   countAllReferrals,
 } from "./referrals.js";
+
+// Contract state snapshots (#613)
+export {
+  ensureSnapshotTable,
+  createSnapshot,
+  listSnapshots,
+  getSnapshot,
+  verifySnapshotIntegrity,
+  countSnapshots,
+  getAllSnapshots,
+  pruneSnapshots,
+} from "./contract-snapshots.js";
+
+// Contributor communication history (#612)
+export {
+  ensureCommunicationsTable,
+  recordCommunication,
+  getCommunicationsByWallet,
+  getCommunicationsByContract,
+  searchCommunications,
+  addInternalNote,
+  getCommunicationTimeline,
+  countCommunications,
+} from "./contributor-communications.js";
+
+// Reusable royalty split templates (#652)
+export {
+  createTemplate,
+  listTemplates,
+  getTemplateById,
+  deleteTemplate,
+} from "./templates.js";
 
 // Default export for backwards compatibility
 import { db } from "./core.js";

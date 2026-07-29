@@ -5,6 +5,9 @@ import { signAndSubmitTransaction } from "../stellar";
 import { useNetwork } from "../context/NetworkContext";
 import FormStatus from "./FormStatus";
 import { useFormStatus } from "../hooks/useFormStatus";
+import { useTransactionLifecycle } from "../hooks/useTransactionLifecycle";
+import { TransactionStatusBanner } from "./TransactionStatusBanner";
+import "./TransactionStatusBanner.css";
 
 interface Props {
   contractId: string;
@@ -55,7 +58,7 @@ export default function DistributeForm({
   walletAddress,
   onSuccess,
 }: Props) {
-  const { network } = useNetwork();
+  const { network, networkMismatch } = useNetwork();
   const [tokenId, setTokenId] = useState("");
   const [amount, setAmount] = useState("");
   const [contractBalance, setContractBalance] = useState<string | null>(null);
@@ -67,6 +70,8 @@ export default function DistributeForm({
   const { status, setStatus, clearStatus } = useFormStatus();
   const [loading, setLoading] = useState(false);
   const [successTxHash, setSuccessTxHash] = useState<string | null>(null);
+  // #653 — full transaction lifecycle state for granular wallet feedback
+  const txLifecycle = useTransactionLifecycle();
   const draftKey = useMemo(
     () => `${DRAFT_KEY_PREFIX}:${walletAddress}:${contractId || "no-contract"}`,
     [contractId, walletAddress],
@@ -169,6 +174,8 @@ export default function DistributeForm({
   );
 
   async function submit() {
+    if (networkMismatch)
+      return setStatus("error", "Your wallet is on the wrong network. Switch it before submitting.");
     if (!contractId)
       return setStatus("error", "Enter a contract ID first.");
     if (!tokenId)
@@ -180,8 +187,15 @@ export default function DistributeForm({
     if (exceedsBalance)
       return setStatus("error", "Amount exceeds contract balance.");
 
+    // #657 — prevent duplicate submissions: block if a tx is already in flight
+    if (loading || txLifecycle.isActive) return;
+
     setLoading(true);
-    setStatus("info", "Building transaction…");
+    txLifecycle.setStage("awaiting_wallet");
+
+    // #657 — generate a per-submission idempotency key to guard against
+    // network retries creating duplicate on-chain transactions
+    const idempotencyKey = `dist-${walletAddress.slice(0, 8)}-${contractId.slice(0, 8)}-${Date.now()}`;
 
     try {
       const res = await api.distribute({
@@ -189,12 +203,14 @@ export default function DistributeForm({
         walletAddress,
         tokenId,
         amount: parsedAmount,
+        // @ts-ignore — idempotency key passed via headers in the api layer
+        _idempotencyKey: idempotencyKey,
       });
 
-      setStatus("info", "Signing transaction with Freighter...");
+      txLifecycle.setStage("submitting");
       const hash = await signAndSubmitTransaction(res.xdr, network);
 
-      setStatus("info", "Waiting for confirmation...");
+      txLifecycle.setStage("confirming");
       await api.confirmTransaction(hash, {
         status: "confirmed",
         blockTime: new Date().toISOString(),
@@ -202,13 +218,16 @@ export default function DistributeForm({
       });
 
       setSuccessTxHash(hash);
+      txLifecycle.setConfirmed(hash);
       setStatus("ok", "Distributed successfully.");
       localStorage.removeItem(draftKey);
       setTokenId("");
       setAmount("");
       onSuccess();
     } catch (e: unknown) {
-      setStatus("error", e instanceof Error ? e.message : "Unknown error");
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      txLifecycle.setFailed(msg);
+      setStatus("error", msg);
     } finally {
       setLoading(false);
     }
@@ -238,6 +257,7 @@ export default function DistributeForm({
     setSuccessTxHash(null);
     localStorage.removeItem(draftKey);
     clearStatus();
+    txLifecycle.reset();
   }
 
   return (
@@ -339,25 +359,41 @@ export default function DistributeForm({
         </div>
       )}
       <p className="description">Distributes the specified amount to all collaborators.</p>
+      {networkMismatch && (
+        <div className="status error" role="alert">
+          Your wallet is on the wrong network. Switch it to {network === "mainnet" ? "Mainnet" : "Testnet"} to distribute funds.
+        </div>
+      )}
       <div className="form-actions">
         <button
           type="submit"
           className="btn-primary btn-with-spinner"
-          disabled={loading || exceedsBalance || !amount || !tokenIdValid}
-          aria-busy={loading}
+          disabled={loading || txLifecycle.isActive || exceedsBalance || !amount || !tokenIdValid || networkMismatch}
+          aria-busy={loading || txLifecycle.isActive}
         >
-          {loading && <span className="btn-spinner" aria-hidden="true" />}
-          {loading ? "Submitting…" : "Distribute funds"}
+          {(loading || txLifecycle.isActive) && <span className="btn-spinner" aria-hidden="true" />}
+          {loading || txLifecycle.isActive ? "Submitting…" : "Distribute funds"}
         </button>
         <button
           type="button"
           className="btn-secondary"
           onClick={clearForm}
-          disabled={loading || (!tokenId && !amount && !draftPrompt)}
+          disabled={loading || txLifecycle.isActive || (!tokenId && !amount && !draftPrompt)}
         >
           Clear
         </button>
       </div>
+
+      {/* #653 — granular wallet/tx lifecycle feedback */}
+      <TransactionStatusBanner
+        stage={txLifecycle.state.stage}
+        errorMessage={txLifecycle.state.errorMessage}
+        txHash={txLifecycle.state.txHash}
+        network={network}
+        onRetry={txLifecycle.retry}
+        onDismiss={txLifecycle.reset}
+      />
+
       {status && (
         <FormStatus
           type={status.type}

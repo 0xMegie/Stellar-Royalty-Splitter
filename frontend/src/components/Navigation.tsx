@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useTheme } from "../context/ThemeContext";
 import { useNetwork } from "../context/NetworkContext";
+import { NotificationBadge } from "./NotificationBadge";
 import "./Navigation.css";
 
 interface NavigationProps {
@@ -8,6 +9,7 @@ interface NavigationProps {
   onPageChange: (page: string) => void;
   walletAddress: string | null;
   onDisconnect: () => void;
+  wsConnected?: boolean;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
@@ -15,20 +17,39 @@ export const Navigation: React.FC<NavigationProps> = ({
   onPageChange,
   walletAddress,
   onDisconnect,
+  wsConnected = false,
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const { isDark, toggleTheme } = useTheme();
   const { network, setNetwork } = useNetwork();
 
+  // Close mobile menu on Escape and prevent body scroll while open
+  useEffect(() => {
+    if (!isMobileMenuOpen) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setIsMobileMenuOpen(false);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isMobileMenuOpen]);
+
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: "📊" },
+    { id: "earnings-history", label: "Earnings", icon: "💹" },
+    { id: "onboarding", label: "Onboarding", icon: "🚀" },
     { id: "transactions", label: "Transactions", icon: "📋" },
+    { id: "timeline", label: "Timeline", icon: "🕐" },
     { id: "forecast", label: "Forecast", icon: "📈" },
+    { id: "earnings", label: "My Earnings", icon: "💎" },
+    { id: "health", label: "System Health", icon: "🩺" },
     { id: "admin", label: "Admin", icon: "👑" },
     { id: "initialize", label: "Initialize", icon: "⚙️" },
     { id: "distribute", label: "Distribute", icon: "💰" },
     { id: "secondary", label: "Secondary", icon: "🔄" },
+    { id: "bulk-import", label: "Bulk Import", icon: "📥" },
+    { id: "tax-info", label: "Tax Info", icon: "📋" },
+    { id: "payment-holds", label: "Payment Holds", icon: "⏸️" },
     { id: "settings", label: "Settings", icon: "⚡" },
   ];
 
@@ -67,11 +88,17 @@ export const Navigation: React.FC<NavigationProps> = ({
           className="mobile-menu-btn"
           onClick={toggleMobileMenu}
           aria-label="Toggle menu"
+          aria-expanded={isMobileMenuOpen}
+          aria-controls="mobile-nav-links"
         >
           {isMobileMenuOpen ? "✕" : "☰"}
         </button>
 
-        <ul className={`nav-links ${isMobileMenuOpen ? "active" : ""}`}>
+        <ul
+          id="mobile-nav-links"
+          className={`nav-links ${isMobileMenuOpen ? "active" : ""}`}
+          role="list"
+        >
           {navItems.map((item) => (
             <li key={item.id}>
               <button
@@ -99,6 +126,10 @@ export const Navigation: React.FC<NavigationProps> = ({
               {network === "testnet" ? "Testnet" : "Mainnet"}
             </span>
           </button>
+
+          {walletAddress && (
+            <NotificationBadge walletAddress={walletAddress} wsConnected={wsConnected} />
+          )}
 
           <button
             className="theme-toggle"

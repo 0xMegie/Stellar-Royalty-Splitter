@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { api } from "../api";
+import { TableSkeleton } from "./Skeleton";
 import "./CollaboratorTable.css";
 
 interface Collaborator {
@@ -55,10 +56,7 @@ function loadNames(contractId: string): Map<string, string> {
   }
 }
 
-function saveNames(
-  contractId: string,
-  names: Map<string, string>,
-) {
+function saveNames(contractId: string, names: Map<string, string>) {
   try {
     const blob = localStorage.getItem(NAME_STORAGE_KEY);
     const all: Record<string, Record<string, string>> = blob
@@ -77,10 +75,7 @@ function saveNames(
 
 /* ── Share range predicate ─────────────────────────────────────────────────── */
 
-function matchesShareRange(
-  basisPoints: number,
-  range: ShareRange,
-): boolean {
+function matchesShareRange(basisPoints: number, range: ShareRange): boolean {
   const pct = basisPoints / 100;
   switch (range) {
     case "all":
@@ -96,10 +91,7 @@ function matchesShareRange(
   }
 }
 
-export default function CollaboratorTable({
-  contractId,
-  refreshKey,
-}: Props) {
+export default function CollaboratorTable({ contractId, refreshKey }: Props) {
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -123,8 +115,12 @@ export default function CollaboratorTable({
   const [editValue, setEditValue] = useState("");
 
   // ── payment data (from analytics) ─────────────────────────────────────
-  const [paymentData, setPaymentData] =
-    useState<Map<string, number> | null>(null);
+  const [paymentData, setPaymentData] = useState<Map<string, number> | null>(
+    null,
+  );
+
+  // ── tier data ──────────────────────────────────────────────────────────
+  const [tierData, setTierData] = useState<Map<string, string> | null>(null);
 
   /* ── Fetch collaborators & analytics ─────────────────────────────────── */
   useEffect(() => {
@@ -148,11 +144,24 @@ export default function CollaboratorTable({
       })
       .catch(() => null);
 
-    Promise.all([basePromise, analyticsPromise])
-      .then(([collabData, payData]) => {
+    // Best-effort tiers fetch
+    const tiersPromise = api
+      .getContractTiers(contractId)
+      .then((res) => {
+        const map = new Map<string, string>();
+        for (const t of res.data ?? []) {
+          map.set(t.walletAddress, t.tier);
+        }
+        return map;
+      })
+      .catch(() => null);
+
+    Promise.all([basePromise, analyticsPromise, tiersPromise])
+      .then(([collabData, payData, tierData]) => {
         setCollaborators(collabData);
         setNames(loadNames(contractId));
         setPaymentData(payData);
+        setTierData(tierData);
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -224,7 +233,13 @@ export default function CollaboratorTable({
   /* ── Render guards ──────────────────────────────────────────────────── */
   if (!contractId) return null;
   if (loading)
-    return <div className="card status info">Loading collaborators…</div>;
+    return (
+      <div className="card">
+        <span className="badge">Collaborators</span>
+        <span className="sr-only">Loading collaborators…</span>
+        <TableSkeleton rows={5} columns={3} label="Loading collaborators…" />
+      </div>
+    );
   if (error) return <div className="card status error">{error}</div>;
   if (!collaborators.length)
     return (
@@ -245,21 +260,13 @@ export default function CollaboratorTable({
       // Payment status filter
       if (paymentData && filters.paymentStatus !== "all") {
         const payoutCount = paymentData.get(c.address) ?? 0;
-        if (
-          filters.paymentStatus === "paid" && payoutCount === 0
-        )
-          return false;
-        if (
-          filters.paymentStatus === "unpaid" && payoutCount > 0
-        )
-          return false;
+        if (filters.paymentStatus === "paid" && payoutCount === 0) return false;
+        if (filters.paymentStatus === "unpaid" && payoutCount > 0) return false;
       }
       // Search filter: address + name
       if (searchLower) {
         const name = names.get(c.address);
-        const matchesAddress = c.address
-          .toLowerCase()
-          .includes(searchLower);
+        const matchesAddress = c.address.toLowerCase().includes(searchLower);
         const matchesName = name
           ? name.toLowerCase().includes(searchLower)
           : false;
@@ -279,16 +286,14 @@ export default function CollaboratorTable({
   if (filters.shareRange !== "all") {
     filterChips.push({
       label: SHARE_RANGE_LABELS[filters.shareRange],
-      onRemove: () =>
-        setFilters((prev) => ({ ...prev, shareRange: "all" })),
+      onRemove: () => setFilters((prev) => ({ ...prev, shareRange: "all" })),
     });
   }
 
   if (filters.paymentStatus !== "all") {
     filterChips.push({
       label: PAYMENT_STATUS_LABELS[filters.paymentStatus],
-      onRemove: () =>
-        setFilters((prev) => ({ ...prev, paymentStatus: "all" })),
+      onRemove: () => setFilters((prev) => ({ ...prev, paymentStatus: "all" })),
     });
   }
 
@@ -361,7 +366,11 @@ export default function CollaboratorTable({
             className="collab-filter-select"
             value={filters.paymentStatus}
             disabled={paymentData === null}
-            title={paymentData === null ? "Payment data unavailable — connect wallet and fetch analytics to enable" : undefined}
+            title={
+              paymentData === null
+                ? "Payment data unavailable — connect wallet and fetch analytics to enable"
+                : undefined
+            }
             onChange={(e) =>
               setFilters((prev) => ({
                 ...prev,
@@ -399,6 +408,43 @@ export default function CollaboratorTable({
           </button>
         </div>
       </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Address</th>
+            <th style={{ textAlign: "right" }}>Share</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filtered.map((c) => (
+            <tr key={c.address}>
+              <td>
+                <span title={c.address}>
+                  {c.address.slice(0, 8)}...{c.address.slice(-6)}
+                </span>
+                <button
+                  className={`copy-btn-sm${copied === c.address ? " copied" : ""}`}
+                  onClick={() => copyAddress(c.address)}
+                  title={
+                    copied === c.address ? "Address copied" : "Copy address"
+                  }
+                  aria-label={
+                    copied === c.address
+                      ? "Address copied"
+                      : "Copy collaborator address"
+                  }
+                >
+                  {copied === c.address ? "✓" : "⧉"}
+                </button>
+              </td>
+              <td style={{ textAlign: "right" }}>
+                <span>{(c.basisPoints / 100).toFixed(2)}%</span>
+                <div
+                  className="share-bar"
+                  style={{ width: `${c.basisPoints / 100}%` }}
+                />
+              </td>
+            </tr>
 
       {/* ── Active filter chips ───────────────────────────────────────── */}
       {filterChips.length > 0 && (
@@ -416,15 +462,17 @@ export default function CollaboratorTable({
               </button>
             </span>
           ))}
-          <button
-            type="button"
-            className="collab-clear-filters"
-            onClick={clearAllFilters}
-          >
-            Clear all
-          </button>
-        </div>
-      )}
+        </tbody>
+      </table>
+      <div className="collab-filter-actions">
+        <button
+          type="button"
+          className="collab-clear-filters"
+          onClick={clearAllFilters}
+        >
+          Clear all
+        </button>
+      </div>
 
       {/* ── Result count ──────────────────────────────────────────────── */}
       <div className="collab-result-count">
@@ -463,83 +511,100 @@ export default function CollaboratorTable({
           <thead>
             <tr>
               <th>Address</th>
+              <th>Tier</th>
               <th style={{ textAlign: "right" }}>Share</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((c) => (
-              <tr key={c.address}>
-                <td>
-                  {/* Editable name */}
-                  {editingName === c.address ? (
-                    <input
-                      className="collab-name-input"
-                      value={editValue}
-                      autoFocus
-                      placeholder="Name or note…"
-                      onChange={(e) => setEditValue(e.target.value)}
-                      onBlur={() => commitName(c.address)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") commitName(c.address);
-                        if (e.key === "Escape") cancelEditing();
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      aria-label="Edit collaborator name"
-                    />
-                  ) : (
-                    <span
-                      className="collab-name-display"
-                      onClick={() => startEditing(c.address)}
-                      title="Click to add a name"
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ")
-                          startEditing(c.address);
-                      }}
-                    >
-                      {names.has(c.address) ? (
-                        <span className="collab-name-text">
-                          {names.get(c.address)}
+            {filtered.map((c) => {
+              const tier = tierData?.get(c.address) ?? "regular";
+              return (
+                <tr key={c.address}>
+                  <td>
+                    {/* Editable name */}
+                    {editingName === c.address ? (
+                      <input
+                        className="collab-name-input"
+                        value={editValue}
+                        autoFocus
+                        placeholder="Name or note…"
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onBlur={() => commitName(c.address)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitName(c.address);
+                          if (e.key === "Escape") cancelEditing();
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label="Edit collaborator name"
+                      />
+                    ) : (
+                      <span
+                        className="collab-name-display"
+                        onClick={() => startEditing(c.address)}
+                        title="Click to add a name"
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ")
+                            startEditing(c.address);
+                        }}
+                      >
+                        {names.has(c.address) ? (
+                          <span className="collab-name-text">
+                            {names.get(c.address)}
+                          </span>
+                        ) : (
+                          <span className="collab-name-text collab-name-text--unnamed">
+                            {c.address.slice(0, 8)}...{c.address.slice(-6)}
+                          </span>
+                        )}
+                        <span
+                          className="collab-name-edit-icon"
+                          aria-hidden="true"
+                        >
+                          ✎
                         </span>
-                      ) : (
-                        <span className="collab-name-text collab-name-text--unnamed">
-                          {c.address.slice(0, 8)}...{c.address.slice(-6)}
-                        </span>
-                      )}
-                      <span className="collab-name-edit-icon" aria-hidden="true">
-                        ✎
                       </span>
-                    </span>
-                  )}
+                    )}
 
-                  {/* Copy address button */}
-                  <button
-                    className={`copy-btn-sm${copied === c.address ? " copied" : ""}`}
-                    onClick={() => copyAddress(c.address)}
-                    title={
-                      copied === c.address
-                        ? "Address copied"
-                        : "Copy address"
-                    }
-                    aria-label={
-                      copied === c.address
-                        ? "Address copied"
-                        : "Copy collaborator address"
-                    }
-                  >
-                    {copied === c.address ? "✓" : "⧉"}
-                  </button>
-                </td>
-                <td style={{ textAlign: "right" }}>
-                  <span>{(c.basisPoints / 100).toFixed(2)}%</span>
-                  <div
-                    className="share-bar"
-                    style={{ width: `${c.basisPoints / 100}%` }}
-                  />
-                </td>
-              </tr>
-            ))}
+                    {/* Copy address button */}
+                    <button
+                      className={`copy-btn-sm${copied === c.address ? " copied" : ""}`}
+                      onClick={() => copyAddress(c.address)}
+                      title={
+                        copied === c.address ? "Address copied" : "Copy address"
+                      }
+                      aria-label={
+                        copied === c.address
+                          ? "Address copied"
+                          : "Copy collaborator address"
+                      }
+                    >
+                      {copied === c.address ? "✓" : "⧉"}
+                    </button>
+                  </td>
+                  <td>
+                    <span
+                      className={`tier-badge tier-badge--${tier}`}
+                      title={tier}
+                    >
+                      {tier === "vip"
+                        ? "⭐ VIP"
+                        : tier === "trial"
+                          ? "🔹 Trial"
+                          : "Regular"}
+                    </span>
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <span>{(c.basisPoints / 100).toFixed(2)}%</span>
+                    <div
+                      className="share-bar"
+                      style={{ width: `${c.basisPoints / 100}%` }}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}

@@ -9,6 +9,7 @@ import {
   recordTransactionSuccess,
 } from "../metrics.js";
 import { sendError } from "../error-response.js";
+import { invalidateContract } from "../cache.js";
 
 export const distributeRouter = Router();
 
@@ -42,6 +43,9 @@ distributeRouter.post(
       });
 
       recordTransactionSuccess();
+      // Invalidate cached history and contract state so the new distribution
+      // appears immediately on subsequent reads.
+      invalidateContract(contractId);
       res.json({ xdr, transactionId });
     } catch (err) {
       recordTransactionFailure();
