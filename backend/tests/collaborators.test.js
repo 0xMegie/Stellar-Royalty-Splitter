@@ -62,9 +62,12 @@ await jest.unstable_mockModule("../src/database/index.js", () => ({
 
 const { default: app } = await import("./app.js");
 const { SorobanRpc } = await import("@stellar/stellar-sdk");
+const { clearCache } = await import("../src/cache.js");
 
 describe("GET /api/v1/collaborators/:contractId", () => {
   beforeEach(() => {
+    // Clear the in-memory cache so each test starts cold (#683)
+    clearCache();
     mockSimulate.mockReset();
     mockIsSimError.mockReset();
     mockIsSimError.mockReturnValue(false);

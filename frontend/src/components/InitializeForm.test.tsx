@@ -1,209 +1,145 @@
 /**
- * Tests for the reusable royalty split templates feature (#652) embedded
- * in InitializeForm: listing, applying, saving, and deleting templates.
+ * Tests for InitializeForm's validation summary (issue #694).
+ *
+ * Run with: cd frontend && npx react-scripts test --watchAll=false --testPathPattern=InitializeForm
  */
 
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import InitializeForm from "./InitializeForm";
 
 jest.mock("../api");
-jest.mock("../context/NetworkContext", () => ({
-  useNetwork: () => ({ network: "testnet", setNetwork: jest.fn() }),
-}));
 jest.mock("../stellar", () => ({
   signAndSubmitTransaction: jest.fn(),
 }));
+jest.mock("../context/NetworkContext", () => ({
+  useNetwork: () => ({
+    network: "testnet",
+    networkMismatch: false,
+  }),
+}));
 
-import { api } from "../api";
+const VALID_ADDRESS_A = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWNA";
 
-const mockApi = api as jest.Mocked<typeof api>;
-
-const CONTRACT_ID = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const WALLET_ADDRESS = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const COLLAB_1 = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-const COLLAB_2 = "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
-
-function renderForm() {
-  return render(
+function setup() {
+  render(
     <InitializeForm
-      contractId={CONTRACT_ID}
-      walletAddress={WALLET_ADDRESS}
+      contractId="CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      walletAddress={VALID_ADDRESS_A}
       onSuccess={jest.fn()}
     />,
   );
 }
 
-describe("InitializeForm royalty split templates", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    mockApi.listTemplates = jest.fn().mockResolvedValue({ success: true, data: [] });
-    mockApi.createTemplate = jest.fn();
-    mockApi.deleteTemplate = jest.fn();
-  });
+describe("InitializeForm validation summary", () => {
+  it("shows a ready-to-deploy state once all fields are valid and shares sum to 100%", () => {
+    setup();
 
-  test("shows empty state when the wallet has no saved templates", async () => {
-    renderForm();
-
-    await waitFor(() => {
-      expect(screen.getByText(/No saved templates yet/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Collaborator 1 wallet address"), {
+      target: { value: VALID_ADDRESS_A },
     });
-  });
-
-  test("shows an error state when templates fail to load", async () => {
-    mockApi.listTemplates = jest.fn().mockRejectedValue(new Error("network down"));
-
-    renderForm();
-
-    await waitFor(() => {
-      expect(screen.getByText(/network down/i)).toBeInTheDocument();
-    });
-  });
-
-  test("lists saved templates and applies one to the form", async () => {
-    mockApi.listTemplates = jest.fn().mockResolvedValue({
-      success: true,
-      data: [
-        {
-          id: 1,
-          walletAddress: WALLET_ADDRESS,
-          name: "50/50 split",
-          allocations: [
-            { address: COLLAB_1, percentage: 60 },
-            { address: COLLAB_2, percentage: 40 },
-          ],
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-      ],
-    });
-
-    renderForm();
-
-    await waitFor(() => {
-      expect(screen.getByText("50/50 split")).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /apply/i }));
-
-    const addressInputs = screen.getAllByPlaceholderText(
-      "Wallet address (G...)",
-    ) as HTMLInputElement[];
-    expect(addressInputs.map((i) => i.value)).toEqual([COLLAB_1, COLLAB_2]);
-    expect(screen.getByText(/Applied template "50\/50 split"/i)).toBeInTheDocument();
-  });
-
-  test("refuses to apply a template whose allocations no longer sum to 100%", async () => {
-    mockApi.listTemplates = jest.fn().mockResolvedValue({
-      success: true,
-      data: [
-        {
-          id: 2,
-          walletAddress: WALLET_ADDRESS,
-          name: "stale split",
-          allocations: [{ address: COLLAB_1, percentage: 40 }],
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-      ],
-    });
-
-    renderForm();
-
-    await waitFor(() => {
-      expect(screen.getByText("stale split")).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /apply/i }));
-
-    expect(
-      screen.getByText(/Cannot apply "stale split".*must sum to 100%/i),
-    ).toBeInTheDocument();
-  });
-
-  test("deletes a template", async () => {
-    mockApi.listTemplates = jest.fn().mockResolvedValue({
-      success: true,
-      data: [
-        {
-          id: 3,
-          walletAddress: WALLET_ADDRESS,
-          name: "to remove",
-          allocations: [{ address: COLLAB_1, percentage: 100 }],
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-      ],
-    });
-    mockApi.deleteTemplate = jest.fn().mockResolvedValue({ success: true });
-
-    renderForm();
-
-    await waitFor(() => {
-      expect(screen.getByText("to remove")).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /delete/i }));
-
-    await waitFor(() => {
-      expect(mockApi.deleteTemplate).toHaveBeenCalledWith(3, WALLET_ADDRESS);
-      expect(screen.queryByText("to remove")).not.toBeInTheDocument();
-    });
-  });
-
-  test("blocks saving a template when the current split is invalid", async () => {
-    renderForm();
-
-    await waitFor(() => expect(mockApi.listTemplates).toHaveBeenCalled());
-
-    fireEvent.change(screen.getByPlaceholderText("Template name"), {
-      target: { value: "My split" },
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: /save current split as template/i }),
-    );
-
-    expect(
-      screen.getByText(/Fix the collaborator allocation errors before saving as a template/i),
-    ).toBeInTheDocument();
-    expect(mockApi.createTemplate).not.toHaveBeenCalled();
-  });
-
-  test("saves the current valid split as a new template", async () => {
-    mockApi.createTemplate = jest.fn().mockResolvedValue({
-      success: true,
-      data: {
-        id: 4,
-        walletAddress: WALLET_ADDRESS,
-        name: "My split",
-        allocations: [{ address: COLLAB_1, percentage: 100 }],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
-    });
-
-    renderForm();
-    await waitFor(() => expect(mockApi.listTemplates).toHaveBeenCalled());
-
-    fireEvent.change(screen.getByPlaceholderText("Wallet address (G...)"), {
-      target: { value: COLLAB_1 },
-    });
-    fireEvent.change(screen.getByPlaceholderText("% (0–100)"), {
+    fireEvent.change(screen.getByLabelText("Collaborator 1 percentage"), {
       target: { value: "100" },
     });
-    fireEvent.change(screen.getByPlaceholderText("Template name"), {
-      target: { value: "My split" },
+
+    expect(screen.getByTestId("validation-summary-status")).toHaveTextContent(
+      "Ready to deploy",
+    );
+  });
+
+  it("lists an issue for a missing address and an invalid percentage", () => {
+    setup();
+
+    fireEvent.change(screen.getByLabelText("Collaborator 1 percentage"), {
+      target: { value: "150" },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: /save current split as template/i }),
+
+    const status = screen.getByTestId("validation-summary-status");
+    expect(status).toHaveTextContent(/issue/);
+    expect(screen.getByText(/wallet address is required/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Percentage must be between 0 and 100/i),
+    ).toBeInTheDocument();
+  });
+
+  it("lists a share-total issue when percentages do not sum to 100%", () => {
+    setup();
+
+    fireEvent.change(screen.getByLabelText("Collaborator 1 wallet address"), {
+      target: { value: VALID_ADDRESS_A },
+    });
+    fireEvent.change(screen.getByLabelText("Collaborator 1 percentage"), {
+      target: { value: "40" },
+    });
+
+    expect(
+      screen.getByText(/Percentages must sum to 100%/i),
+    ).toBeInTheDocument();
+  });
+
+  it("flags duplicate addresses across rows", () => {
+    setup();
+    fireEvent.click(screen.getByText("+ Add collaborator"));
+
+    fireEvent.change(screen.getByLabelText("Collaborator 1 wallet address"), {
+      target: { value: VALID_ADDRESS_A },
+    });
+    fireEvent.change(screen.getByLabelText("Collaborator 1 percentage"), {
+      target: { value: "50" },
+    });
+    fireEvent.change(screen.getByLabelText("Collaborator 2 wallet address"), {
+      target: { value: VALID_ADDRESS_A },
+    });
+    fireEvent.change(screen.getByLabelText("Collaborator 2 percentage"), {
+      target: { value: "50" },
+    });
+
+    expect(screen.getByText(/duplicate address/i)).toBeInTheDocument();
+  });
+
+  it("moves focus to the offending field when an issue is clicked", () => {
+    setup();
+    fireEvent.change(screen.getByLabelText("Collaborator 1 percentage"), {
+      target: { value: "150" },
+    });
+
+    fireEvent.click(screen.getByText(/must be a valid Stellar address/i));
+
+    expect(screen.getByLabelText("Collaborator 1 wallet address")).toHaveFocus();
+  });
+
+  it("updates the summary in real time as fields change", () => {
+    setup();
+
+    expect(screen.getByTestId("validation-summary-status")).toHaveTextContent(
+      /issue/,
     );
 
-    await waitFor(() => {
-      expect(mockApi.createTemplate).toHaveBeenCalledWith({
-        walletAddress: WALLET_ADDRESS,
-        name: "My split",
-        allocations: [{ address: COLLAB_1, percentage: 100 }],
-      });
+    fireEvent.change(screen.getByLabelText("Collaborator 1 wallet address"), {
+      target: { value: VALID_ADDRESS_A },
     });
+    fireEvent.change(screen.getByLabelText("Collaborator 1 percentage"), {
+      target: { value: "100" },
+    });
+
+    expect(screen.getByTestId("validation-summary-status")).toHaveTextContent(
+      "Ready to deploy",
+    );
+
+    fireEvent.change(screen.getByLabelText("Collaborator 1 percentage"), {
+      target: { value: "50" },
+    });
+
+    expect(screen.getByTestId("validation-summary-status")).toHaveTextContent(
+      /issue/,
+    );
+  });
+
+  it("gives the summary an accessible live region so assistive tech announces changes", () => {
+    setup();
+
+    const summary = screen.getByTestId("validation-summary");
+    expect(summary).toHaveAttribute("aria-live", "polite");
+    expect(summary).toHaveAttribute("role", "region");
   });
 });

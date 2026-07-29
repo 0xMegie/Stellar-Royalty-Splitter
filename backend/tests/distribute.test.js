@@ -46,16 +46,13 @@ await jest.unstable_mockModule("../src/database/index.js", () => ({
 
 const { distributeRouter } = await import("../src/routes/distribute.js");
 const { resetMetrics } = await import("../src/metrics.js");
+const { notFoundHandler, errorHandler } = await import("../src/error-response.js");
 
 const app = express();
 app.use(express.json({ limit: "10kb" }));
 app.use("/api/v1/distribute", distributeRouter);
-app.use((err, _req, res, _next) => {
-  if (err.type === "entity.too.large") {
-    return res.status(413).json({ error: "Payload too large" });
-  }
-  res.status(500).json({ error: err.message ?? "Internal server error" });
-});
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const WALLET   = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";

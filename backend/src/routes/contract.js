@@ -11,13 +11,11 @@ import {
 } from "../stellar.js";
 import { validateContractIdMiddleware, validateContractId } from "../validation.js";
 import { sendError } from "../error-response.js";
+import { cacheGet, cacheSet, cacheKey, TTL, clearCache } from "../cache.js";
 
 const { Contract, SorobanRpc, TransactionBuilder, BASE_FEE, Account } = StellarSdk;
 
 export const contractRouter = Router();
-
-const CONTRACT_STATE_CACHE_TTL_MS = 30_000;
-const contractStateCache = new Map();
 
 function getConfiguredTokenId() {
   return (
@@ -90,27 +88,29 @@ async function readContractState(contractId, tokenId) {
   };
 }
 
-function getContractStateCacheKey(contractId, tokenId) {
-  return `${getNetworkLabel()}:${networkPassphrase}:${contractId}:${tokenId}`;
-}
-
 function resolveStateRequest(req, res) {
   const contractId = firstQueryValue(req.query.contractId) ?? getConfiguredContractId();
   const tokenId = firstQueryValue(req.query.tokenId) ?? getConfiguredTokenId();
 
   if (!contractId) {
-    res.status(400).json({
-      error: "contractId query param required when no default contract is configured",
-    });
+    sendError(
+      res,
+      400,
+      "bad_request",
+      "contractId query param required when no default contract is configured",
+    );
     return null;
   }
 
   if (!validateContractId(contractId, res)) return null;
 
   if (!tokenId) {
-    res.status(400).json({
-      error: "tokenId query param required when no default token is configured",
-    });
+    sendError(
+      res,
+      400,
+      "bad_request",
+      "tokenId query param required when no default token is configured",
+    );
     return null;
   }
 
@@ -120,7 +120,7 @@ function resolveStateRequest(req, res) {
 }
 
 export function _resetContractStateCache() {
-  contractStateCache.clear();
+  clearCache();
 }
 
 contractRouter.get("/state", async (req, res, next) => {
@@ -129,20 +129,19 @@ contractRouter.get("/state", async (req, res, next) => {
     if (!stateRequest) return;
 
     const { contractId, tokenId } = stateRequest;
-    const cacheKey = getContractStateCacheKey(contractId, tokenId);
-    const cached = contractStateCache.get(cacheKey);
-    const now = Date.now();
+    const key = cacheKey("contractState", contractId, tokenId);
+    const cached = cacheGet(key);
 
-    if (cached && now - cached.fetchedAt < CONTRACT_STATE_CACHE_TTL_MS) {
-      return res.json(cached.state);
+    if (cached !== undefined) {
+      return res.json(cached);
     }
 
     const state = await readContractState(contractId, tokenId);
-    contractStateCache.set(cacheKey, { state, fetchedAt: now });
+    cacheSet(key, state, TTL.contractState);
     res.json(state);
   } catch (err) {
     if (err.status) {
-      return res.status(err.status).json({ error: err.message });
+      return sendError(res, err.status, undefined, err.message);
     }
     next(err);
   }
