@@ -41,6 +41,12 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   const [total, setTotal] = useState(0);
   const [localSelectedTxHash, setLocalSelectedTxHash] = useState<string | null>(null);
 
+  // Per-row "refresh status" state (#712): tracks which pending transaction's
+  // status is currently being re-checked against Horizon, and surfaces the
+  // outcome (or a friendly message when it's still not resolved) inline.
+  const [refreshingTxHash, setRefreshingTxHash] = useState<string | null>(null);
+  const [refreshMessage, setRefreshMessage] = useState<{ txHash: string; text: string } | null>(null);
+
   // Export panel state
   const [showExportPanel, setShowExportPanel] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -89,6 +95,38 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
       setError(err instanceof Error ? err.message : "Failed to fetch history");
     } finally {
       setLoading(false);
+    }
+  };
+
+  // #712: safely re-check a pending/delayed transaction's status against
+  // Horizon. Never marks a transaction confirmed on the client's say-so —
+  // the `status: "confirmed"` field below is ignored by the backend, which
+  // derives the real outcome from polling Horizon itself (see
+  // POST /transaction/confirm/:txHash); this call only asks it to look again.
+  const handleRefreshStatus = async (tx: TransactionRecord) => {
+    if (!tx.txHash || refreshingTxHash) return;
+    setRefreshingTxHash(tx.txHash);
+    setRefreshMessage(null);
+    try {
+      const result = await api.confirmTransaction(tx.txHash, {
+        status: "confirmed",
+        transactionId: tx.id,
+      });
+      setRefreshMessage({
+        txHash: tx.txHash,
+        text: result.message ?? "Status updated.",
+      });
+      await fetchHistory(filters);
+    } catch (err) {
+      // A failed refresh (including a Horizon polling timeout) means the
+      // transaction's true status still isn't known — not that anything is
+      // newly broken. Surface it as "still pending", not as an error.
+      setRefreshMessage({
+        txHash: tx.txHash,
+        text: "Still pending — Horizon hasn't confirmed this yet. Try again shortly.",
+      });
+    } finally {
+      setRefreshingTxHash(null);
     }
   };
 
@@ -180,13 +218,29 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
 
   const getTypeLabel = (type: string) => TYPE_LABELS[type] ?? type;
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "confirmed": return "#4ade80";
-      case "failed":    return "#f87171";
-      default:          return "#facc15";
+  // A pending transaction older than this is flagged "Delayed" rather than
+  // shown identically to one submitted moments ago — Horizon polling on the
+  // backend already gives up after its own timeout (see pollHorizonTransaction),
+  // so a still-pending row this old likely needs a manual refresh or investigation.
+  const DELAYED_PENDING_THRESHOLD_MS = 5 * 60 * 1000;
+
+  const KNOWN_STATUSES = ["pending", "confirmed", "failed"] as const;
+
+  function getStatusDisplay(tx: TransactionRecord): { label: string; color: string; textColor: string } {
+    if (!KNOWN_STATUSES.includes(tx.status as (typeof KNOWN_STATUSES)[number])) {
+      // Defensive: the API contract promises pending/confirmed/failed, but
+      // don't let an unexpected value silently render as "pending" (yellow).
+      return { label: "Unknown", color: "#94a3b8", textColor: "black" };
     }
-  };
+    if (tx.status === "confirmed") return { label: "confirmed", color: "#4ade80", textColor: "black" };
+    if (tx.status === "failed") return { label: "failed", color: "#f87171", textColor: "white" };
+
+    const ageMs = Date.now() - new Date(tx.timestamp).getTime();
+    if (Number.isFinite(ageMs) && ageMs > DELAYED_PENDING_THRESHOLD_MS) {
+      return { label: "Delayed", color: "#fb923c", textColor: "black" };
+    }
+    return { label: "pending", color: "#facc15", textColor: "black" };
+  }
 
   const formatDate = (dateString: string) => {
     try { return new Date(dateString).toLocaleString(); }
@@ -419,16 +473,41 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                         </span>
                       )}
                     </td>
-                    <td>
-                      <span
-                        className="status-badge"
-                        style={{
-                          backgroundColor: getStatusColor(tx.status),
-                          color: tx.status === "failed" ? "white" : "black",
-                        }}
-                      >
-                        {tx.status}
-                      </span>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      {(() => {
+                        const display = getStatusDisplay(tx);
+                        const canRefresh = tx.status === "pending" && !!tx.txHash;
+                        const isRefreshingThis = refreshingTxHash === tx.txHash;
+                        return (
+                          <div className="status-cell">
+                            <span
+                              className="status-badge"
+                              style={{
+                                backgroundColor: display.color,
+                                color: display.textColor,
+                              }}
+                            >
+                              {display.label}
+                            </span>
+                            {canRefresh && (
+                              <button
+                                type="button"
+                                className="status-refresh-btn"
+                                onClick={() => handleRefreshStatus(tx)}
+                                disabled={isRefreshingThis}
+                                aria-label={`Refresh status for transaction ${tx.txHash}`}
+                              >
+                                {isRefreshingThis ? "Checking…" : "Refresh status"}
+                              </button>
+                            )}
+                            {refreshMessage && refreshMessage.txHash === tx.txHash && (
+                              <span className="status-refresh-message" role="status">
+                                {refreshMessage.text}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td>{formatDate(tx.timestamp)}</td>
                   </tr>
