@@ -44,6 +44,8 @@ import { versionRouter } from "./routes/version.js";
 import { initializeWebSocket } from "./websocket.js";
 import { startSnapshotScheduler } from "./jobs/snapshot-job.js";
 import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
+import { adminApiKeysRouter } from "./routes/admin-api-keys.js";
+import { recordApiKeyRequest } from "./database/rate-limit.js";
 import { startWebhookRetryScheduler } from "./jobs/retry-failed-webhooks.js";
 
 // Initialize database on startup
@@ -106,11 +108,15 @@ const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
+    // Record the blocked request before responding
+    const apiKey = req.headers["x-api-key"];
+    if (apiKey) recordApiKeyRequest(apiKey, true);
+
     logger.warn("Rate limit exceeded", {
       ip: req.ip,
       path: req.originalUrl,
       method: req.method,
-      apiKey: req.headers["x-api-key"] ? "present" : "none",
+      apiKey: apiKey ? "present" : "none",
     });
     res.set("Retry-After", String(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)));
     sendError(res, 429, "too_many_requests", "Too many requests, please try again later.");
@@ -140,6 +146,16 @@ const writeLimiter = rateLimit({
 });
 
 app.use(generalLimiter);
+
+// #608: Track per-API-key request counts for the rate-limit dashboard.
+// Only records authenticated (keyed) requests that were not blocked by the
+// limiter above (blocked requests are recorded in the limiter's handler).
+app.use((req, _res, next) => {
+  const apiKey = req.headers["x-api-key"];
+  if (apiKey) recordApiKeyRequest(apiKey, false);
+  next();
+});
+
 app.use(express.json({ limit: "10kb" }));
 
 // Attach X-API-Version header to all versioned responses
@@ -254,6 +270,8 @@ const adminLimiter = rateLimit({
 });
 app.use("/admin", adminLimiter);
 app.use("/admin", adminRouter);
+app.use("/admin/api-keys", adminLimiter);
+app.use("/admin/api-keys", adminApiKeysRouter);
 
 // Legacy /api/* redirect to /api/v1/* — routes under /api/v1/* are canonical
 app.use("/api", (req, res) => {
