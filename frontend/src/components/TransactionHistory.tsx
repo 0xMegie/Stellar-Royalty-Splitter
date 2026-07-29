@@ -4,6 +4,7 @@ import "./TransactionHistory.css";
 import { formatNumber } from "../utils/format";
 import { CopyButton } from "./CopyButton";
 import { TransactionDetailView } from "./TransactionDetailView";
+import { ListSkeleton } from "./Skeleton";
 
 interface TransactionHistoryProps {
   contractId: string;
@@ -331,6 +332,13 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
 
       {error && <div className="error-message">{error}</div>}
 
+      {transactions.length === 0 && loading && (
+        <>
+          <span className="sr-only">Loading transactions…</span>
+          <ListSkeleton items={5} label="Loading transactions…" />
+        </>
+      )}
+
       {transactions.length === 0 && !loading && (
         <div className="empty-state" data-testid="history-empty-state">
           {hasActiveFilters
@@ -412,7 +420,9 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
         </>
       )}
 
-      {loading && <div className="loading">Loading transactions...</div>}
+      {loading && transactions.length > 0 && (
+        <div className="loading">Loading transactions...</div>
+      )}
     </div>
   );
 };

@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { api } from "../api";
+import { TableSkeleton } from "./Skeleton";
 import "./CollaboratorTable.css";
 
 interface Collaborator {
@@ -232,7 +233,13 @@ export default function CollaboratorTable({ contractId, refreshKey }: Props) {
   /* ── Render guards ──────────────────────────────────────────────────── */
   if (!contractId) return null;
   if (loading)
-    return <div className="card status info">Loading collaborators…</div>;
+    return (
+      <div className="card">
+        <span className="badge">Collaborators</span>
+        <span className="sr-only">Loading collaborators…</span>
+        <TableSkeleton rows={5} columns={3} label="Loading collaborators…" />
+      </div>
+    );
   if (error) return <div className="card status error">{error}</div>;
   if (!collaborators.length)
     return (
@@ -438,6 +445,22 @@ export default function CollaboratorTable({ contractId, refreshKey }: Props) {
                 />
               </td>
             </tr>
+
+      {/* ── Active filter chips ───────────────────────────────────────── */}
+      {filterChips.length > 0 && (
+        <div className="collab-active-filters">
+          {filterChips.map((chip) => (
+            <span className="collab-filter-chip" key={chip.label}>
+              {chip.label}
+              <button
+                type="button"
+                className="collab-filter-chip-remove"
+                onClick={chip.onRemove}
+                aria-label={`Remove filter: ${chip.label}`}
+              >
+                ✕
+              </button>
+            </span>
           ))}
         </tbody>
       </table>
