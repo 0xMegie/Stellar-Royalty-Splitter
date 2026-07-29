@@ -12,6 +12,7 @@ soroban-sdk = { version = "20.0.0", features = ["alloc"] }
 [dev-dependencies]
 soroban-sdk = { version = "20.0.0", features = ["testutils"] }
 criterion = { version = "0.5" }
+proptest = { version = "1" }
 
 [[bench]]
 name = "royalty_distribution"
