@@ -1,3 +1,5 @@
+import React, { useState, useEffect, useCallback } from "react";
+import { api, RoyaltyTemplate, RoyaltyTemplateAllocation } from "../api";
 import React, { useCallback, useRef, useState } from "react";
 import { api } from "../api";
 import { signAndSubmitTransaction } from "../stellar";
@@ -62,6 +64,40 @@ function getPercentageError(value: string) {
 
 function isAllowedPercentageInput(value: string) {
   return PERCENTAGE_INPUT_RE.test(value);
+}
+
+/**
+ * Mirrors the backend's template allocation validation (#652) so a
+ * template can be checked both before it's saved and again before it's
+ * applied to the form (templates are app-level data and could in theory
+ * have been created under different rules).
+ */
+function validateTemplateAllocations(allocations: RoyaltyTemplateAllocation[]) {
+  const addresses = allocations.map((a) => a.address);
+  if (new Set(addresses).size !== addresses.length) {
+    return "Duplicate collaborator addresses are not allowed.";
+  }
+  const totalPct = allocations.reduce((sum, a) => sum + a.percentage, 0);
+  if (Math.round(totalPct * 100) !== 10_000) {
+    return `Percentages must sum to 100% (got ${totalPct.toFixed(2)}%).`;
+  }
+  return null;
+}
+
+function updatePercentageError(
+  setErrors: React.Dispatch<
+    React.SetStateAction<Record<number, { address?: string; basisPoints?: string }>>
+  >,
+  i: number,
+  error: string,
+) {
+  setErrors((prev) => ({
+    ...prev,
+    [i]: {
+      ...prev[i],
+      basisPoints: error,
+    },
+  }));
 }
 
 function handlePercentageKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
@@ -138,17 +174,37 @@ export default function InitializeForm({
     }
   }
 
-  // Which row is currently open for editing (-1 = none)
-  const [editingIndex, setEditingIndex] = useState<number>(0);
-  // Temporary values while the row is in edit mode
-  const [editBuffer, setEditBuffer] = useState<Collaborator>({ address: "", basisPoints: "" });
-  // Validation errors for the active edit buffer
-  const [editErrors, setEditErrors] = useState<{ address?: string; basisPoints?: string }>({});
+  // Reusable royalty split templates (#652)
+  const [templates, setTemplates] = useState<RoyaltyTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+  const [templateName, setTemplateName] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateStatus, setTemplateStatus] = useState<
+    { type: "ok" | "error"; message: string } | null
+  >(null);
 
-  function startEdit(i: number) {
-    setEditingIndex(i);
-    setEditBuffer({ ...collaborators[i] });
-    setEditErrors({});
+  const fetchTemplates = useCallback(() => {
+    if (!walletAddress) return;
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+    api
+      .listTemplates(walletAddress)
+      .then((res) => setTemplates(res.data))
+      .catch((e: unknown) =>
+        setTemplatesError(e instanceof Error ? e.message : "Failed to load templates"),
+      )
+      .finally(() => setTemplatesLoading(false));
+  }, [walletAddress]);
+
+  useEffect(() => {
+    fetchTemplates();
+  }, [fetchTemplates]);
+
+  function update(i: number, field: keyof Collaborator, value: string) {
+    setCollaborators((prev: Collaborator[]) =>
+      prev.map((c: Collaborator, idx: number) => (idx === i ? { ...c, [field]: value } : c)),
+    );
   }
 
   function cancelEdit() {
@@ -203,11 +259,86 @@ export default function InitializeForm({
     }
   }
 
-  // Total reflects the edit buffer in real time while a row is being edited
-  const total = collaborators.reduce((sum: number, c: Collaborator, i: number) => {
-    const val = i === editingIndex ? editBuffer.basisPoints : c.basisPoints;
-    return sum + (parseFloat(val) || 0);
-  }, 0);
+  async function saveAsTemplate() {
+    setTemplateStatus(null);
+
+    const name = templateName.trim();
+    if (!name) {
+      setTemplateStatus({ type: "error", message: "Enter a name for the template." });
+      return;
+    }
+    if (hasErrors || hasEmptyFields || hasInvalidPercentages) {
+      setTemplateStatus({
+        type: "error",
+        message: "Fix the collaborator allocation errors before saving as a template.",
+      });
+      return;
+    }
+
+    const allocations: RoyaltyTemplateAllocation[] = collaborators.map((c) => ({
+      address: c.address,
+      percentage: parseFloat(c.basisPoints),
+    }));
+    const allocationError = validateTemplateAllocations(allocations);
+    if (allocationError) {
+      setTemplateStatus({ type: "error", message: allocationError });
+      return;
+    }
+
+    setSavingTemplate(true);
+    try {
+      await api.createTemplate({ walletAddress, name, allocations });
+      setTemplateName("");
+      setTemplateStatus({ type: "ok", message: `Saved template "${name}".` });
+      fetchTemplates();
+    } catch (e: unknown) {
+      setTemplateStatus({
+        type: "error",
+        message: e instanceof Error ? e.message : "Failed to save template.",
+      });
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  function applyTemplate(template: RoyaltyTemplate) {
+    const allocationError = validateTemplateAllocations(template.allocations);
+    if (allocationError) {
+      setTemplateStatus({
+        type: "error",
+        message: `Cannot apply "${template.name}": ${allocationError}`,
+      });
+      return;
+    }
+
+    setCollaborators(
+      template.allocations.map((a) => ({
+        address: a.address,
+        basisPoints: String(a.percentage),
+      })),
+    );
+    setErrors({});
+    setTemplateStatus({ type: "ok", message: `Applied template "${template.name}".` });
+  }
+
+  async function handleDeleteTemplate(id: number, name: string) {
+    setTemplateStatus(null);
+    try {
+      await api.deleteTemplate(id, walletAddress);
+      setTemplates((prev) => prev.filter((t) => t.id !== id));
+      setTemplateStatus({ type: "ok", message: `Deleted template "${name}".` });
+    } catch (e: unknown) {
+      setTemplateStatus({
+        type: "error",
+        message: e instanceof Error ? e.message : "Failed to delete template.",
+      });
+    }
+  }
+
+  const total = collaborators.reduce(
+    (sum: number, c: Collaborator) => sum + (parseFloat(c.basisPoints) || 0),
+    0,
+  );
 
   const hasUnsavedEdit = editingIndex >= 0;
   const allRowsCommitted = collaborators.every(
@@ -475,6 +606,11 @@ export default function InitializeForm({
         )}
       </div>
 
+      <RoyaltyPayoutPreview
+        collaborators={collaborators}
+        isValid={previewValid}
+        invalidReason={previewInvalidReason}
+      />
       <ValidationSummary issues={validationIssues} onFocusField={focusField} />
 
       {collaborators.length >= MAX_COLLABORATORS - 5 && collaborators.length < MAX_COLLABORATORS && (

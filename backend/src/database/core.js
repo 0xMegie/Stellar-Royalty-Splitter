@@ -455,6 +455,25 @@ export function initializeDatabase() {
     `,
   });
 
+  // Add migration v14: royalty_split_templates table (#652) — reusable,
+  // application-level collaborator allocation presets. These never touch
+  // an on-chain contract; they only pre-fill the initialization form.
+  migrations.push({
+    version: 14,
+    sql: `
+      CREATE TABLE IF NOT EXISTS royalty_split_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        walletAddress TEXT NOT NULL,
+        name TEXT NOT NULL,
+        allocations TEXT NOT NULL,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_royalty_split_templates_wallet
+        ON royalty_split_templates(walletAddress);
+    `,
+  });
+
   const applied = db
     .prepare("SELECT version FROM schema_migrations")
     .all()

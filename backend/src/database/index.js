@@ -219,6 +219,14 @@ export {
   countCommunications,
 } from "./contributor-communications.js";
 
+// Reusable royalty split templates (#652)
+export {
+  createTemplate,
+  listTemplates,
+  getTemplateById,
+  deleteTemplate,
+} from "./templates.js";
+
 // Default export for backwards compatibility
 import { db } from "./core.js";
 export default db;

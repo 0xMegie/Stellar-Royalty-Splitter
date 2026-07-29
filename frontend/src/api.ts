@@ -114,11 +114,15 @@ async function get<T>(path: string): Promise<T> {
   return request<T>(path);
 }
 
+async function del<T>(path: string): Promise<T> {
+  return request<T>(path, { method: "DELETE" });
+}
+
 export interface TransactionRecord {
   id: number;
   txHash: string | null;
   contractId: string;
-  type: "initialize" | "distribute";
+  type: "initialize" | "distribute" | "secondary_royalty" | "secondary_distribute";
   initiatorAddress: string;
   requestedAmount: string | null;
   tokenId: string | null;
@@ -149,6 +153,20 @@ export interface TransactionDetails extends TransactionRecord {
   totalPayout?: string;
   auditHistory?: AuditLogEntry[];
   contractEvents?: ContractEventItem[];
+}
+
+export interface RoyaltyTemplateAllocation {
+  address: string;
+  percentage: number;
+}
+
+export interface RoyaltyTemplate {
+  id: number;
+  walletAddress: string;
+  name: string;
+  allocations: RoyaltyTemplateAllocation[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AuditLogEntry {
@@ -209,6 +227,23 @@ export const api = {
   getCollaborators: (contractId: string) =>
     get<{ address: string; basisPoints: number }[]>(
       `/collaborators/${contractId}`,
+    ),
+
+  // Reusable royalty split templates (#652)
+  listTemplates: (walletAddress: string) =>
+    get<{ success: boolean; data: RoyaltyTemplate[] }>(
+      `/templates?walletAddress=${encodeURIComponent(walletAddress)}`,
+    ),
+
+  createTemplate: (body: {
+    walletAddress: string;
+    name: string;
+    allocations: RoyaltyTemplateAllocation[];
+  }) => post<{ success: boolean; data: RoyaltyTemplate }>("/templates", body),
+
+  deleteTemplate: (id: number, walletAddress: string) =>
+    del<{ success: boolean }>(
+      `/templates/${id}?walletAddress=${encodeURIComponent(walletAddress)}`,
     ),
 
   // Transaction History & Audit Log APIs

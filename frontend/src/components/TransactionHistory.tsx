@@ -169,6 +169,17 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   // Re-fetch when offset or active filters change
   useEffect(() => { fetchHistory(filters); }, [contractId, offset, filters]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const TYPE_LABELS: Record<string, string> = {
+    distribute: "Primary Distribution",
+    secondary_royalty: "Secondary Royalty",
+    secondary_distribute: "Secondary Distribution",
+    initialize: "Initialization",
+  };
+
+  const isSecondary = (type: string) => type.startsWith("secondary_");
+
+  const getTypeLabel = (type: string) => TYPE_LABELS[type] ?? type;
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "confirmed": return "#4ade80";
@@ -369,7 +380,12 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                     onClick={() => tx.txHash && handleSelectTxHash(tx.txHash)}
                     title="Click to view details"
                   >
-                    <td><span className="tx-type">{tx.type}</span></td>
+                    <td>
+                      <span className={`tx-category ${isSecondary(tx.type) ? "tx-category-secondary" : "tx-category-primary"}`}>
+                        {isSecondary(tx.type) ? "Secondary" : "Primary"}
+                      </span>
+                      <span className="tx-type">{getTypeLabel(tx.type)}</span>
+                    </td>
                     <td title={tx.initiatorAddress}>{truncateAddress(tx.initiatorAddress)}</td>
                     <td>{tx.requestedAmount ? formatNumber(tx.requestedAmount) : "—"}</td>
                     <td

@@ -14,6 +14,7 @@ import webhooksRouter from "./routes/webhooks.js";
 import { analyticsRouter } from "./routes/analytics.js";
 import { contractRouter } from "./routes/contract.js";
 import { healthRouter } from "./routes/health.js";
+import { livenessRouter } from "./routes/liveness.js";
 import onboardingRouter from "./routes/onboarding.js";
 import { closeDatabase, initializeDatabase } from "./database/index.js";
 import { createGracefulShutdownHandler, shutdownMiddleware } from "./shutdown.js";
@@ -24,6 +25,7 @@ import { metricsRouter } from "./routes/metrics.js";
 import { initializeSigningKey } from "./signing-key.js";
 import { sendError, notFoundHandler, errorHandler } from "./error-response.js";
 import { preferencesRouter } from "./routes/preferences.js";
+import { templatesRouter } from "./routes/templates.js";
 import emailDigestRouter from "./routes/email-digest.js";
 import { disputesRouter } from "./routes/disputes.js";
 import { referralsRouter } from "./routes/referrals.js";
@@ -113,7 +115,11 @@ const generalLimiter = rateLimit({
     res.set("Retry-After", String(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)));
     sendError(res, 429, "too_many_requests", "Too many requests, please try again later.");
   },
-  skip: (req) => req.path === "/api/v1/health" || req.path === "/api/health",
+  skip: (req) =>
+    req.path === "/api/v1/health" ||
+    req.path === "/api/health" ||
+    req.path === "/health" ||
+    req.path === "/ready",
 });
 
 // Write limiter: 10 req / configurable window per IP
@@ -184,7 +190,9 @@ app.use("/api/v1", webhooksRouter);
 app.use("/api/v1", analyticsRouter);
 app.use("/api/v1/contract", contractRouter);
 app.use("/api/v1/health", healthRouter);
+app.use(livenessRouter);
 app.use("/api/v1/preferences", preferencesRouter);
+app.use("/api/v1/templates", templatesRouter);
 app.use("/api/v1", emailDigestRouter);
 app.use("/api/v1/disputes", writeLimiter);
 app.use("/api/v1/disputes", disputesRouter);
