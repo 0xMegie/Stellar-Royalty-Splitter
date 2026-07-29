@@ -268,6 +268,28 @@ Located in `test_snapshots/` directory. These capture contract state and events 
 - Distribution event snapshots
 - Storage state snapshots
 
+### Property-Based / Fuzz Tests
+
+`tests/fuzz_royalty_allocation.rs` uses [`proptest`](https://docs.rs/proptest) to generate randomized recipient lists and distribution amounts for `distribute_with_override`, rather than the hand-picked share configurations used elsewhere. It checks:
+
+- No malformed input (duplicate addresses, zero shares, share totals that don't sum to 10,000, empty lists, lists over `MAX_RECIPIENTS`) is ever silently accepted or causes an untyped panic — every case resolves to either success (only for a structurally valid list) or the specific `ContractError` variant that input should produce.
+- A rejected allocation never changes the contract's token balance or `distribute` counter.
+- A valid allocation's payouts always sum to exactly the distributed amount, with no recipient receiving a negative payout and no dust left in the contract.
+- Distribution amounts smaller than the recipient count are rejected rather than silently zeroing out some payouts.
+
+No `cargo-fuzz`/nightly toolchain or live network is required — this runs via plain `cargo test`, same as everything else in `tests/`:
+
+```bash
+# Run just the fuzz suite
+cargo test --test fuzz_royalty_allocation
+
+# Increase the number of generated cases for a more thorough run
+# (proptest defaults to 256 cases per property)
+PROPTEST_CASES=2000 cargo test --test fuzz_royalty_allocation
+```
+
+**Reproducing a failure:** if a property fails, proptest prints the exact failing input and shrinks it to a minimal reproducing case, then writes it to `tests/fuzz_royalty_allocation.proptest-regressions` (created on first failure; commit this file once it exists so the same input is retried automatically on every future run — see the [proptest book](https://proptest-rs.github.io/proptest/proptest/regressions.html)).
+
 ---
 
 ## Running All Tests
