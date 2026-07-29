@@ -19,7 +19,7 @@ export default function SecondaryRoyaltyConfig({
   onRateUpdate,
   initialRoyaltyRate,
 }: Props) {
-  const { network } = useNetwork();
+  const { network, networkMismatch } = useNetwork();
   const [royaltyRate, setRoyaltyRate] = useState<string>(
     initialRoyaltyRate?.toString() ?? "500"
   );
@@ -37,6 +37,12 @@ export default function SecondaryRoyaltyConfig({
   }, [initialRoyaltyRate]);
 
   async function submit() {
+    if (networkMismatch) {
+      return setStatus({
+        type: "error",
+        msg: "Your wallet is on the wrong network. Switch it before submitting.",
+      });
+    }
     if (!contractId) {
       return setStatus({ type: "error", msg: "Enter a contract ID first." });
     }
@@ -117,9 +123,14 @@ export default function SecondaryRoyaltyConfig({
         <small>1 bp = 0.01%, max 10000 bp (100%)</small>
       </div>
 
+      {networkMismatch && (
+        <div className="message error">
+          Your wallet is on the wrong network. Switch it to {network === "mainnet" ? "Mainnet" : "Testnet"} to set the royalty rate.
+        </div>
+      )}
       {status && <div className={`message ${status.type}`}>{status.msg}</div>}
 
-      <button onClick={submit} disabled={loading} className="btn-primary">
+      <button onClick={submit} disabled={loading || networkMismatch} className="btn-primary">
         {loading ? "Processing..." : "Set Royalty Rate"}
       </button>
     </div>

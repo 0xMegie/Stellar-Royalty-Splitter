@@ -4,6 +4,7 @@ import { getContributorOnboarding, upsertContributorOnboarding } from "../databa
 import { renderOnboardingReminderEmail } from "../email-template.js";
 import logger from "../logger.js";
 import { isValidStellarAddress } from "../validation.js";
+import { sendError, sendValidationError } from "../error-response.js";
 
 const router = express.Router();
 
@@ -123,7 +124,7 @@ router.get("/:walletAddress", (req, res) => {
   const { walletAddress } = req.params;
 
   if (!isValidStellarAddress(walletAddress)) {
-    return res.status(400).json({ error: "Invalid Stellar wallet address format" });
+    return sendError(res, 400, "validation_failed", "Invalid Stellar wallet address format");
   }
 
   try {
@@ -132,7 +133,12 @@ router.get("/:walletAddress", (req, res) => {
     return res.json(summary);
   } catch (err) {
     logger.error(`Error fetching onboarding for ${walletAddress}:`, err);
-    return res.status(500).json({ error: "Internal server error fetching onboarding checklist" });
+    return sendError(
+      res,
+      500,
+      "internal_server_error",
+      "Internal server error fetching onboarding checklist",
+    );
   }
 });
 
@@ -141,16 +147,12 @@ router.patch("/:walletAddress", (req, res) => {
   const { walletAddress } = req.params;
 
   if (!isValidStellarAddress(walletAddress)) {
-    return res.status(400).json({ error: "Invalid Stellar wallet address format" });
+    return sendError(res, 400, "validation_failed", "Invalid Stellar wallet address format");
   }
 
   const parseResult = updateSchema.safeParse(req.body);
   if (!parseResult.success) {
-    const firstIssue = parseResult.error.issues?.[0];
-    return res.status(400).json({
-      error: firstIssue?.message || "Validation failed",
-      details: parseResult.error.issues,
-    });
+    return sendValidationError(res, parseResult.error.issues);
   }
 
   try {
@@ -162,7 +164,12 @@ router.patch("/:walletAddress", (req, res) => {
     });
   } catch (err) {
     logger.error(`Error updating onboarding for ${walletAddress}:`, err);
-    return res.status(500).json({ error: "Internal server error updating onboarding checklist" });
+    return sendError(
+      res,
+      500,
+      "internal_server_error",
+      "Internal server error updating onboarding checklist",
+    );
   }
 });
 
@@ -171,15 +178,12 @@ router.post("/:walletAddress/remind", (req, res) => {
   const { walletAddress } = req.params;
 
   if (!isValidStellarAddress(walletAddress)) {
-    return res.status(400).json({ error: "Invalid Stellar wallet address format" });
+    return sendError(res, 400, "validation_failed", "Invalid Stellar wallet address format");
   }
 
   const parseResult = remindSchema.safeParse(req.body);
   if (!parseResult.success) {
-    return res.status(400).json({
-      error: "Valid email is required for reminder",
-      details: parseResult.error.issues,
-    });
+    return sendValidationError(res, parseResult.error.issues);
   }
 
   try {
@@ -210,7 +214,12 @@ router.post("/:walletAddress/remind", (req, res) => {
     });
   } catch (err) {
     logger.error(`Error sending onboarding reminder for ${walletAddress}:`, err);
-    return res.status(500).json({ error: "Internal server error sending onboarding reminder" });
+    return sendError(
+      res,
+      500,
+      "internal_server_error",
+      "Internal server error sending onboarding reminder",
+    );
   }
 });
 

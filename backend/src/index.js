@@ -14,36 +14,46 @@ import webhooksRouter from "./routes/webhooks.js";
 import { analyticsRouter } from "./routes/analytics.js";
 import { contractRouter } from "./routes/contract.js";
 import { healthRouter } from "./routes/health.js";
+import { livenessRouter } from "./routes/liveness.js";
 import onboardingRouter from "./routes/onboarding.js";
 import { closeDatabase, initializeDatabase } from "./database/index.js";
-import { createGracefulShutdownHandler } from "./shutdown.js";
+import { createGracefulShutdownHandler, shutdownMiddleware } from "./shutdown.js";
 import { adminRouter } from "./routes/admin.js";
+import { snapshotRouter } from "./routes/snapshots.js";
+import { communicationsRouter } from "./routes/communications.js";
 import { metricsRouter } from "./routes/metrics.js";
 import { initializeSigningKey } from "./signing-key.js";
-import { sendError, normalizeErrorCode } from "./error-response.js";
+import { sendError, notFoundHandler, errorHandler } from "./error-response.js";
 import { preferencesRouter } from "./routes/preferences.js";
+import { templatesRouter } from "./routes/templates.js";
 import emailDigestRouter from "./routes/email-digest.js";
 import { disputesRouter } from "./routes/disputes.js";
 import { referralsRouter } from "./routes/referrals.js";
 import { sendWeeklyDigests } from "./jobs/weekly-digest-job.js";
 import { isEmailConfigured } from "./email/email-service.js";
-import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
 import { rankingRouter } from "./routes/ranking.js";
 import { docsRouter } from "./routes/docs.js";
 import { attachRole } from "./middleware/rbac.js";
+import { requestLogger } from "./middleware/request-logger.js";
 import { csvImportRouter } from "./routes/csv-import.js";
 import { contributorTaxRouter } from "./routes/contributor-tax.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { paymentHoldsRouter } from "./routes/payment-holds.js";
 import { earningsHistoryRouter } from "./routes/earnings-history.js";
+import { versionRouter } from "./routes/version.js";
 import { initializeWebSocket } from "./websocket.js";
-import { contributorMetricsRouter } from "./routes/contributor-metrics.js";
+import { startSnapshotScheduler } from "./jobs/snapshot-job.js";
+import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
+import { startWebhookRetryScheduler } from "./jobs/retry-failed-webhooks.js";
 
 // Initialize database on startup
 initializeDatabase();
 initializeSigningKey();
 
 const app = express();
+
+// Reject new incoming requests during graceful shutdown (#701)
+app.use(shutdownMiddleware);
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -79,10 +89,13 @@ app.use(
   })
 );
 
+const RATE_LIMIT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "60000");
+const RATE_LIMIT_WRITE_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WRITE_WINDOW_MS ?? "60000");
+
 // Public rate limiter: 100 req / 1 min per IP (skips /api/health)
 // Authenticated rate limiter: 1000 req / 1 min per API key
 const generalLimiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "60000"),
+  windowMs: RATE_LIMIT_WINDOW_MS,
   max: (req) => {
     if (req.headers["x-api-key"]) {
       return parseInt(process.env.RATE_LIMIT_AUTH_MAX ?? "1000");
@@ -99,15 +112,19 @@ const generalLimiter = rateLimit({
       method: req.method,
       apiKey: req.headers["x-api-key"] ? "present" : "none",
     });
-    res.set("Retry-After", "60");
+    res.set("Retry-After", String(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)));
     sendError(res, 429, "too_many_requests", "Too many requests, please try again later.");
   },
-  skip: (req) => req.path === "/api/v1/health" || req.path === "/api/health",
+  skip: (req) =>
+    req.path === "/api/v1/health" ||
+    req.path === "/api/health" ||
+    req.path === "/health" ||
+    req.path === "/ready",
 });
 
-// Write limiter: 10 req / 1 min per IP
+// Write limiter: 10 req / configurable window per IP
 const writeLimiter = rateLimit({
-  windowMs: 60_000,
+  windowMs: RATE_LIMIT_WRITE_WINDOW_MS,
   max: parseInt(process.env.RATE_LIMIT_WRITE_MAX ?? "10"),
   standardHeaders: true,
   legacyHeaders: false,
@@ -117,13 +134,19 @@ const writeLimiter = rateLimit({
       path: req.originalUrl,
       method: req.method,
     });
-    res.set("Retry-After", "60");
+    res.set("Retry-After", String(Math.ceil(RATE_LIMIT_WRITE_WINDOW_MS / 1000)));
     sendError(res, 429, "too_many_requests", "Too many write requests, please slow down.");
   },
 });
 
 app.use(generalLimiter);
 app.use(express.json({ limit: "10kb" }));
+
+// Attach X-API-Version header to all versioned responses
+app.use("/api/v1", (_req, res, next) => {
+  res.set("X-API-Version", "v1");
+  next();
+});
 
 // Attach RBAC role to every request (#572)
 app.use(attachRole);
@@ -167,7 +190,9 @@ app.use("/api/v1", webhooksRouter);
 app.use("/api/v1", analyticsRouter);
 app.use("/api/v1/contract", contractRouter);
 app.use("/api/v1/health", healthRouter);
+app.use(livenessRouter);
 app.use("/api/v1/preferences", preferencesRouter);
+app.use("/api/v1/templates", templatesRouter);
 app.use("/api/v1", emailDigestRouter);
 app.use("/api/v1/disputes", writeLimiter);
 app.use("/api/v1/disputes", disputesRouter);
@@ -201,12 +226,19 @@ app.use("/api/v1/payment-holds", paymentHoldsRouter);
 // Contributor earnings history (#564)
 app.use("/api/v1", earningsHistoryRouter);
 
-// Contributor performance metrics (#600)
-app.use("/api/v1/contributor-metrics", contributorMetricsRouter);
+// Contract state snapshots (#613)
+app.use("/api/v1/snapshots", snapshotRouter);
+
+// Contributor communication history (#612)
+app.use("/api/v1/communications", communicationsRouter);
+
+// API version discovery (#676)
+app.use("/api/v1/version", versionRouter);
 
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
+const RATE_LIMIT_ADMIN_WINDOW_MS = 60_000;
 const adminLimiter = rateLimit({
-  windowMs: 60_000,
+  windowMs: RATE_LIMIT_ADMIN_WINDOW_MS,
   max: parseInt(process.env.RATE_LIMIT_ADMIN_MAX ?? "5"),
   standardHeaders: true,
   legacyHeaders: false,
@@ -216,38 +248,26 @@ const adminLimiter = rateLimit({
       path: req.originalUrl,
       method: req.method,
     });
-    res.set("Retry-After", "60");
+    res.set("Retry-After", String(Math.ceil(RATE_LIMIT_ADMIN_WINDOW_MS / 1000)));
     sendError(res, 429, "too_many_requests", "Too many admin requests, please slow down.");
   },
 });
 app.use("/admin", adminLimiter);
 app.use("/admin", adminRouter);
 
-// Legacy /api/* redirect to /api/v1/*
+// Legacy /api/* redirect to /api/v1/* — routes under /api/v1/* are canonical
 app.use("/api", (req, res) => {
+  res.set("Deprecation", "true");
+  res.set("Link", `</api/v1${req.url}>; rel="successor-version"`);
   res.redirect(308, `/api/v1${req.url}`);
 });
 
-// Central error handler
-app.use((err, _req, res, _next) => {
-  if (err.type === "entity.too.large") {
-    return sendError(res, 413, "payload_too_large", "Payload too large");
-  }
-  logger.error(err);
+// Any request that didn't match a route above gets the standard error shape
+// instead of Express's default HTML 404 page (#662).
+app.use(notFoundHandler);
 
-  // Structured errors thrown by stellar.js (Soroban / RPC errors)
-  if (err.status && err.code) {
-    return sendError(res, err.status, err.code, err.message ?? "Error", {
-      detail: err.detail,
-    });
-  }
-
-  if (err.status) {
-    return sendError(res, err.status, undefined, err.message ?? "Error");
-  }
-
-  return sendError(res, 500, "internal_server_error", err.message ?? "Internal server error");
-});
+// Central error handler — must be mounted last.
+app.use(errorHandler);
 
 const PORT = process.env.PORT ?? 3001;
 const server = app.listen(PORT, () => logger.info(`API listening on http://localhost:${PORT}`));
@@ -260,6 +280,9 @@ const retryScheduler = startRetryScheduler();
 
 // Start the webhook retry scheduler
 const webhookRetryScheduler = startWebhookRetryScheduler();
+
+// Start the snapshot scheduler (#613)
+const snapshotScheduler = startSnapshotScheduler();
 
 // Start weekly email digest scheduler if email is configured
 let digestInterval = null;
@@ -303,6 +326,9 @@ const handleShutdown = createGracefulShutdownHandler({
     }
     if (webhookRetryScheduler) {
       webhookRetryScheduler.stop();
+    }
+    if (snapshotScheduler) {
+      snapshotScheduler.stop();
     }
   },
 });

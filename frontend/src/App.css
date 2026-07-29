@@ -364,7 +364,9 @@
     max-height: 0;
     opacity: 0;
     pointer-events: none;
-    transition: max-height 0.3s ease, opacity 0.25s ease;
+    transition:
+      max-height 0.3s ease,
+      opacity 0.25s ease;
   }
 
   .app-sidebar-cards.open {
@@ -577,4 +579,33 @@
 
 .modal-close:hover {
   opacity: 1;
+}
+
+/* Feature Error Boundary Styles */
+.feature-error-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  padding: var(--spacing-lg);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-lg);
+  margin: var(--spacing-lg);
+}
+
+.feature-error-content {
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.feature-error-content h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 0.5rem 0;
+}
+
+.feature-error-content p {
+  margin: 0;
+  font-size: 0.95rem;
 }

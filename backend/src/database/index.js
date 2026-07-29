@@ -195,14 +195,37 @@ export {
   countAllReferrals,
 } from "./referrals.js";
 
-// Contributor performance metrics (#600)
+// Contract state snapshots (#613)
 export {
-  getCachedMetrics,
-  getOrComputeMetrics,
-  recomputeMetrics,
-  recomputeContractMetrics,
-  getContractLeaderboard,
-} from "./contributor-metrics.js";
+  ensureSnapshotTable,
+  createSnapshot,
+  listSnapshots,
+  getSnapshot,
+  verifySnapshotIntegrity,
+  countSnapshots,
+  getAllSnapshots,
+  pruneSnapshots,
+} from "./contract-snapshots.js";
+
+// Contributor communication history (#612)
+export {
+  ensureCommunicationsTable,
+  recordCommunication,
+  getCommunicationsByWallet,
+  getCommunicationsByContract,
+  searchCommunications,
+  addInternalNote,
+  getCommunicationTimeline,
+  countCommunications,
+} from "./contributor-communications.js";
+
+// Reusable royalty split templates (#652)
+export {
+  createTemplate,
+  listTemplates,
+  getTemplateById,
+  deleteTemplate,
+} from "./templates.js";
 
 // Default export for backwards compatibility
 import { db } from "./core.js";

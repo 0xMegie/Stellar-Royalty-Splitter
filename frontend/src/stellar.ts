@@ -6,7 +6,7 @@
  */
 
 import { TransactionBuilder, Networks, SorobanRpc } from "@stellar/stellar-sdk";
-import type { Network } from "./context/NetworkContext";
+import { FREIGHTER_NETWORK_NAMES, type Network } from "./context/NetworkContext";
 
 const RPC_URLS: Record<Network, string> = {
   testnet: "https://soroban-testnet.stellar.org",
@@ -16,11 +16,6 @@ const RPC_URLS: Record<Network, string> = {
 const NETWORK_PASSPHRASES: Record<Network, string> = {
   testnet: Networks.TESTNET,
   mainnet: Networks.PUBLIC,
-};
-
-const FREIGHTER_NETWORK_NAMES: Record<Network, string> = {
-  testnet: "TESTNET",
-  mainnet: "PUBLIC",
 };
 
 /**

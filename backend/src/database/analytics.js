@@ -175,3 +175,36 @@ export function getContributorContracts(walletAddress) {
     .all(walletAddress)
     .map((row) => row.contractId);
 }
+
+/**
+ * Get detailed payout records for export.
+ */
+export function getContributorPayoutRecords(walletAddress, startDate, endDate, contractIds = null) {
+  const params = [walletAddress, startDate, endDate];
+  let contractFilter = "";
+
+  if (Array.isArray(contractIds) && contractIds.length > 0) {
+    const placeholders = contractIds.map(() => "?").join(", ");
+    contractFilter = ` AND t.contractId IN (${placeholders})`;
+    params.push(...contractIds);
+  }
+
+  return db
+    .prepare(
+      `SELECT
+        COALESCE(t.blockTime, t.timestamp) as payoutDate,
+        COALESCE(t.txHash, CAST(t.id AS TEXT)) as transactionId,
+        t.type as royaltyType,
+        dp.amountReceived as amount,
+        t.contractId as contractId
+      FROM distribution_payouts dp
+      JOIN transactions t ON dp.transactionId = t.id
+      WHERE dp.collaboratorAddress = ?
+        AND t.status = 'confirmed'
+        AND COALESCE(t.blockTime, t.timestamp) BETWEEN ? AND ?
+        ${contractFilter}
+      ORDER BY payoutDate DESC`
+    )
+    .all(...params);
+}
+
