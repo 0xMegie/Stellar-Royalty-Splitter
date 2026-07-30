@@ -197,6 +197,21 @@ export const referralAwardBonusSchema = z.object({
     .max(500, "reason must not exceed 500 characters"),
 });
 
+/**
+ * The complete, closed set of audit actions the app itself ever emits via
+ * addAuditLog(). Keep in sync with the auditAction/action values passed at
+ * each call site (routes/initialize.js, routes/distribute.js,
+ * routes/secondary-royalty.js). Used to reject forged/unknown audit entries
+ * on the public read-only-adjacent surface.
+ */
+export const AUDIT_ACTIONS = [
+  "contract_initialized",
+  "distribution_initiated",
+  "secondary_sale_recorded",
+  "royalty_rate_set",
+  "secondary_distribution_initiated",
+];
+
 export function validate(schema) {
   return (req, res, next) => {
     const result = schema.safeParse(req.body);

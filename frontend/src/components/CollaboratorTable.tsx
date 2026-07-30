@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { api } from "../api";
 import { TableSkeleton } from "./Skeleton";
+import CollaboratorAllocationChart from "./CollaboratorAllocationChart";
 import "./CollaboratorTable.css";
 
 interface Collaborator {
@@ -310,6 +311,7 @@ export default function CollaboratorTable({ contractId, refreshKey }: Props) {
   return (
     <div className="card collab-table-card">
       <span className="badge">Collaborators</span>
+      <CollaboratorAllocationChart collaborators={collaborators} />
 
       {/* ── Search bar ───────────────────────────────────────────────── */}
       <div className="collab-search-bar">
@@ -408,44 +410,6 @@ export default function CollaboratorTable({ contractId, refreshKey }: Props) {
           </button>
         </div>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Address</th>
-            <th style={{ textAlign: "right" }}>Share</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map((c) => (
-            <tr key={c.address}>
-              <td>
-                <span title={c.address}>
-                  {c.address.slice(0, 8)}...{c.address.slice(-6)}
-                </span>
-                <button
-                  className={`copy-btn-sm${copied === c.address ? " copied" : ""}`}
-                  onClick={() => copyAddress(c.address)}
-                  title={
-                    copied === c.address ? "Address copied" : "Copy address"
-                  }
-                  aria-label={
-                    copied === c.address
-                      ? "Address copied"
-                      : "Copy collaborator address"
-                  }
-                >
-                  {copied === c.address ? "✓" : "⧉"}
-                </button>
-              </td>
-              <td style={{ textAlign: "right" }}>
-                <span>{(c.basisPoints / 100).toFixed(2)}%</span>
-                <div
-                  className="share-bar"
-                  style={{ width: `${c.basisPoints / 100}%` }}
-                />
-              </td>
-            </tr>
-
       {/* ── Active filter chips ───────────────────────────────────────── */}
       {filterChips.length > 0 && (
         <div className="collab-active-filters">
@@ -462,17 +426,17 @@ export default function CollaboratorTable({ contractId, refreshKey }: Props) {
               </button>
             </span>
           ))}
-        </tbody>
-      </table>
-      <div className="collab-filter-actions">
-        <button
-          type="button"
-          className="collab-clear-filters"
-          onClick={clearAllFilters}
-        >
-          Clear all
-        </button>
-      </div>
+          <div className="collab-filter-actions">
+            <button
+              type="button"
+              className="collab-clear-filters"
+              onClick={clearAllFilters}
+            >
+              Clear all
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Result count ──────────────────────────────────────────────── */}
       <div className="collab-result-count">

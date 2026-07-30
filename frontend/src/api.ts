@@ -289,20 +289,14 @@ export const api = {
       body,
     ),
 
+  // Read-only: there is no client-side write path for audit entries. Audit
+  // records are created exclusively server-side as a side effect of real
+  // configuration/administrative actions (initialize, distribute,
+  // secondary-royalty routes) — see backend/src/routes/history.js.
   getAuditLog: (contractId: string, limit = 100, offset = 0) =>
     get<{ success: boolean; data: AuditLogEntry[] }>(
       `/audit/${contractId}?limit=${limit}&offset=${offset}`,
     ),
-
-  addAuditLog: (
-    contractId: string,
-    body: {
-      action: string;
-      user?: string;
-      details?: Record<string, unknown>;
-    },
-  ) =>
-    post<{ success: boolean; message: string }>(`/audit/${contractId}`, body),
 
   // Secondary Royalty APIs
   recordSecondarySale: (body: {

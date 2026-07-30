@@ -5,7 +5,6 @@ import {
   getTransactionDetails,
   getTransactionById,
   getAuditLog,
-  addAuditLog,
   countAuditLog,
   updateTransactionStatus,
   updateTransactionHash,
@@ -336,29 +335,13 @@ router.get("/audit/:contractId", validateContractIdMiddleware, (req, res) => {
   }
 });
 
-/**
- * POST /api/audit/:contractId
- * Add audit log entry
- */
-router.post("/audit/:contractId", validateContractIdMiddleware, (req, res) => {
-  try {
-    const { contractId } = req.params;
-    const { action, user, details } = req.body;
-
-    if (!action) {
-      return sendError(res, 400, "bad_request", "Action is required");
-    }
-
-    addAuditLog(contractId, action, user || "unknown", details || {});
-
-    res.json({
-      success: true,
-      message: "Audit log entry created",
-    });
-  } catch (error) {
-    logger.error("Error creating audit log entry:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to create audit log entry");
-  }
-});
+// NOTE: There is intentionally no public POST /api/audit/:contractId route.
+// Audit entries must only ever be written server-side as a side effect of a
+// real configuration/administrative action (see buildAndRecordTransaction in
+// ./_shared.js and the addAuditLog(...) calls in initialize.js, distribute.js,
+// and secondary-royalty.js). Accepting an audit entry directly from a client
+// request body — as a prior version of this endpoint did — would let anyone
+// forge arbitrary history against a contract. The GET route below remains the
+// only public audit surface, and it is read-only.
 
 export default router;
