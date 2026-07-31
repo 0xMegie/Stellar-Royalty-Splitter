@@ -9,14 +9,22 @@
     "lint": "eslint src/**/*.js",
     "format": "prettier --write src/**/*.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --testPathPatterns=tests/",
-    "test:backend": "node --experimental-vm-modules node_modules/jest/bin/jest.js --testPathPatterns=tests/"
+    "test:backend": "node --experimental-vm-modules node_modules/jest/bin/jest.js --testPathPatterns=tests/",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --testPathPatterns=tests/ --coverage"
   },
   "jest": {
     "testEnvironment": "node",
     "transform": {},
     "moduleNameMapper": {
       "^better-sqlite3$": "<rootDir>/__mocks__/better-sqlite3.js"
-    }
+    },
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/database/index.js",
+      "!src/database.js"
+    ],
+    "coverageReporters": ["text", "text-summary", "json-summary", "lcov"],
+    "coverageDirectory": "coverage"
   },
   "devDependencies": {
     "eslint": "^8.57.0",

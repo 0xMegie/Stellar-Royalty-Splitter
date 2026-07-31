@@ -156,7 +156,9 @@ app.use((req, _res, next) => {
   next();
 });
 
-app.use(express.json({ limit: "10kb" }));
+// Global max request body size — configurable via env, defaults to prior hardcoded value.
+const MAX_REQUEST_BODY_SIZE = process.env.MAX_REQUEST_BODY_SIZE ?? "10kb";
+app.use(express.json({ limit: MAX_REQUEST_BODY_SIZE }));
 
 // Attach X-API-Version header to all versioned responses
 app.use("/api/v1", (_req, res, next) => {

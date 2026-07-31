@@ -3,20 +3,28 @@
  *
  * Covers: search, filters, sort, name editing, edge cases, large lists.
  *
- * Run with: cd frontend && npx react-scripts test --watchAll=false --testPathPattern=CollaboratorTable
+ * Run with: cd frontend && npx vitest run src/components/CollaboratorTable.test.tsx
  */
 
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { vi, type Mock } from "vitest";
 import "@testing-library/jest-dom";
 import CollaboratorTable from "./CollaboratorTable";
 
 // Mock the API module
-jest.mock("../api");
+vi.mock("../api", () => ({
+  api: {
+    getCollaborators: vi.fn(),
+    getAnalytics: vi.fn(),
+    getContractTiers: vi.fn(),
+  },
+}));
 
 import { api } from "../api";
 
-const mockGetCollaborators = api.getCollaborators as jest.Mock;
-const mockGetAnalytics = api.getAnalytics as jest.Mock;
+const mockGetCollaborators = api.getCollaborators as Mock;
+const mockGetAnalytics = api.getAnalytics as Mock;
+const mockGetContractTiers = api.getContractTiers as Mock;
 
 const MOCK_CONTRACT =
   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -54,12 +62,13 @@ function setup(mockData = mockCollaborators) {
 }
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   localStorage.clear();
   mockGetAnalytics.mockResolvedValue({
     success: true,
     data: { collaboratorStats: [] },
   });
+  mockGetContractTiers.mockResolvedValue({ data: [] });
 });
 
 describe("CollaboratorTable", () => {
@@ -289,8 +298,9 @@ describe("CollaboratorTable", () => {
       const countText =
         screen.getByText(/Showing/i).textContent || "";
       expect(countText).toContain("2");
-      expect(screen.getByText("70.00%")).toBeTruthy();
-      expect(screen.getByText("20.00%")).toBeTruthy();
+      // Percentages also appear in the allocation chart legend, so use *AllBy*
+      expect(screen.getAllByText("70.00%").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("20.00%").length).toBeGreaterThan(0);
     });
   });
 
@@ -621,5 +631,77 @@ describe("CollaboratorTable", () => {
         screen.getByText(/No collaborators match/i),
       ).toBeTruthy();
     });
+  });
+});
+
+/* ── Allocation chart integration (#719) ──────────────────────────────── */
+
+const COLLAB1 = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+const COLLAB2 = "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+
+describe("CollaboratorTable allocation chart", () => {
+  it("renders nothing when contractId is empty", () => {
+    const { container } = render(
+      <CollaboratorTable contractId="" refreshKey={0} />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("shows loading state, then renders the allocation chart and table with matching percentages", async () => {
+    setup([
+      { address: COLLAB1, basisPoints: 6500 },
+      { address: COLLAB2, basisPoints: 3500 },
+    ]);
+
+    expect(
+      screen.getAllByText(/Loading collaborators/i).length,
+    ).toBeGreaterThan(0);
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("collaborator-allocation-chart"),
+      ).toBeInTheDocument(),
+    );
+
+    // The exact percentage appears both in the chart legend and the table —
+    // they must never disagree, since both are derived from the same
+    // basisPoints values passed straight through without re-rounding.
+    expect(screen.getAllByText("65.00%").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("35.00%").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("shows an error state when the API call fails", async () => {
+    mockGetCollaborators.mockRejectedValue(new Error("network down"));
+
+    render(<CollaboratorTable contractId={MOCK_CONTRACT} refreshKey={0} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("network down")).toBeInTheDocument(),
+    );
+  });
+
+  it("shows an empty state and no chart when there are no collaborators", async () => {
+    setup([]);
+
+    await waitFor(() =>
+      expect(screen.getByText(/No collaborators found/i)).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByTestId("collaborator-allocation-chart"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("refetches when refreshKey changes", async () => {
+    mockGetCollaborators.mockResolvedValue([
+      { address: COLLAB1, basisPoints: 10000 },
+    ]);
+
+    const { rerender } = render(
+      <CollaboratorTable contractId={MOCK_CONTRACT} refreshKey={0} />,
+    );
+    await waitFor(() => expect(mockGetCollaborators).toHaveBeenCalledTimes(1));
+
+    rerender(<CollaboratorTable contractId={MOCK_CONTRACT} refreshKey={1} />);
+    await waitFor(() => expect(mockGetCollaborators).toHaveBeenCalledTimes(2));
   });
 });
