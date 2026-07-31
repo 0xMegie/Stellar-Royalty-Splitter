@@ -115,13 +115,26 @@ describe("Public audit API surface (backend/src/routes/history.js)", () => {
       getTransactionHistory: jest.fn(),
       getTransactionCount: jest.fn(),
       getTransactionDetails: jest.fn(),
+      getTransactionById: jest.fn(),
       getAuditLog,
+      countAuditLog: jest.fn(),
       addAuditLog,
       updateTransactionStatus: jest.fn(),
+      updateTransactionHash: jest.fn(),
+      archiveContractEvents: jest.fn(),
+      getArchivePolicy: jest.fn(),
+      getArchivedEventCount: jest.fn(),
+      getArchivedEvents: jest.fn(),
+      updateArchivePolicy: jest.fn(),
     }));
 
     await jest.unstable_mockModule("../src/stellar.js", () => ({
       server: {},
+      pollHorizonTransaction: jest.fn(),
+    }));
+
+    await jest.unstable_mockModule("../src/webhook-delivery.js", () => ({
+      deliverDistributeWebhooks: jest.fn(),
     }));
 
     const { default: historyRouter } = await import("../src/routes/history.js");
@@ -182,6 +195,6 @@ describe("Public audit API surface (backend/src/routes/history.js)", () => {
     const res = await request(app).get(`/api/v1/audit/${CONTRACT}?limit=10&offset=5`);
 
     expect(res.status).toBe(200);
-    expect(getAuditLog).toHaveBeenCalledWith(CONTRACT, 10, 5);
+    expect(getAuditLog).toHaveBeenCalledWith(CONTRACT, 10, 5, {});
   });
 });
