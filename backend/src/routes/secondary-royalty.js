@@ -70,31 +70,7 @@ secondaryRoyaltyRouter.post("/", validate(recordSecondarySaleSchema), async (req
       royaltyRate,
     } = req.body;
 
-    if (
-      !contractId ||
-      !walletAddress ||
-      !nftId ||
-      !previousOwner ||
-      !newOwner ||
-      salePrice == null ||
-      !saleToken ||
-      royaltyRate == null
-    ) {
-      return sendError(res, 400, "bad_request", "Missing required fields.");
-    }
 
-    if (salePrice <= 0) {
-      return sendError(res, 400, "invalid_sale_price", "Sale price must be positive.");
-    }
-
-    if (royaltyRate < 0 || royaltyRate > 10000) {
-      return sendError(
-        res,
-        400,
-        "invalid_royalty_rate",
-        "Royalty rate must be between 0 and 10000 basis points."
-      );
-    }
 
     // Fetch on-chain royalty rate
     const onChainRate = await getRoyaltyRateFromContract(contractId);
@@ -164,19 +140,6 @@ secondaryRoyaltyRouter.post("/set-rate", validate(setRoyaltyRateSchema), async (
   try {
     const { contractId, walletAddress, royaltyRate } = req.body;
 
-    if (!contractId || !walletAddress || royaltyRate == null) {
-      return sendError(res, 400, "bad_request", "Missing required fields.");
-    }
-
-    if (!Number.isInteger(royaltyRate) || royaltyRate < 0 || royaltyRate > 10000) {
-      return sendError(
-        res,
-        400,
-        "invalid_royalty_rate",
-        "Royalty rate must be between 0 and 10000 basis points."
-      );
-    }
-
     // Record transaction
     const transactionId = recordTransaction(contractId, "secondary_royalty", walletAddress, {
       royaltyRate,
@@ -202,10 +165,9 @@ secondaryRoyaltyRouter.post("/set-rate", validate(setRoyaltyRateSchema), async (
  * GET /api/secondary-royalty/rate/:contractId
  * Returns the current on-chain royalty rate for the contract.
  */
-secondaryRoyaltyRouter.get("/rate/:contractId", async (req, res, next) => {
+secondaryRoyaltyRouter.get("/rate/:contractId", validateContractIdMiddleware, async (req, res, next) => {
   try {
     const { contractId } = req.params;
-    if (!validateContractId(contractId, res)) return;
 
     const rate = await getRoyaltyRateFromContract(contractId);
     res.json({ contractId, royaltyRate: rate });
@@ -296,10 +258,9 @@ secondaryRoyaltyRouter.get("/stats/:contractId", validateContractIdMiddleware, (
  * startDate and endDate are ISO 8601 strings (e.g. "2024-01-01T00:00:00Z").
  * Returns 400 if startDate > endDate.
  */
-secondaryRoyaltyRouter.get("/sales/:contractId", (req, res, next) => {
+secondaryRoyaltyRouter.get("/sales/:contractId", validateContractIdMiddleware, (req, res, next) => {
   try {
     const { contractId } = req.params;
-    if (!validateContractId(contractId, res)) return;
 
     const pagination = parsePagination(req.query, res, 50, 100);
     if (!pagination) return;

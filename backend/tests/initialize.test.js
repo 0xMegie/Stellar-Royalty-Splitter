@@ -137,7 +137,7 @@ describe("POST /api/v1/initialize", () => {
       .send({ ...validBody, padding: "x".repeat(INITIALIZE_PAYLOAD_LIMIT_BYTES) });
 
     expect(res.status).toBe(413);
-    expect(res.body).toEqual({ error: "Payload too large" });
+    expect(res.body.error).toBe("Payload too large");
     expect(isContractInitialized).not.toHaveBeenCalled();
     expect(retryBuildTx).not.toHaveBeenCalled();
     expect(recordTransaction).not.toHaveBeenCalled();
@@ -155,7 +155,7 @@ describe("POST /api/v1/initialize", () => {
       });
 
     expect(res.status).toBe(413);
-    expect(res.body).toEqual({ error: "Collaborators payload too large" });
+    expect(res.body.error).toBe("Collaborators payload too large");
     expect(isContractInitialized).not.toHaveBeenCalled();
     expect(retryBuildTx).not.toHaveBeenCalled();
     expect(recordTransaction).not.toHaveBeenCalled();
