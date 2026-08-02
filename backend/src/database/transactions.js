@@ -324,3 +324,14 @@ export function getTransactionDetails(txHash) {
   };
 }
 
+
+export function getRetryEligibleTransactions(limit = 10) {
+  const stmt = db.prepare(`
+    SELECT *
+    FROM transactions
+    WHERE status = 'failed' AND retry_count < ?
+    ORDER BY CASE WHEN last_retry_time IS NULL THEN 0 ELSE 1 END, last_retry_time ASC, id ASC
+    LIMIT ?
+  `);
+  return stmt.all(MAX_RETRY_COUNT, limit);
+}
