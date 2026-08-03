@@ -12,6 +12,7 @@ import {
 import { analytics } from "./lib/analytics";
 
 import { Dashboard } from "./components/Dashboard";
+import { EarningsDashboard } from "./components/EarningsDashboard";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { Settings } from "./components/Settings";
 import WalletConnect from "./components/WalletConnect";
@@ -316,6 +317,14 @@ export default function App() {
             </div>
           ),
           "Dashboard",
+        );
+      case "earnings-dashboard":
+        return withErrorBoundary(
+          <EarningsDashboard
+            contractId={contractId}
+            walletAddress={walletAddress}
+          />,
+          "Earnings Dashboard",
         );
       case "connect-wallet":
         return withErrorBoundary(

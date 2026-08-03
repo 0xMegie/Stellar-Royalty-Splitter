@@ -20,26 +20,6 @@ initializeRouter.post(
     try {
       const { contractId, walletAddress, collaborators, shares } = req.body;
 
-    if (!contractId || !walletAddress || !collaborators?.length || !shares?.length) {
-      return sendError(res, 400, "validation_failed", "Missing required fields.");
-    }
-
-    if (Array.isArray(collaborators) && collaborators.length === 0) {
-      return sendError(res, 400, "validation_failed", "Collaborators array must be non-empty");
-    }
-
-    if (collaborators.length !== shares.length) {
-      return sendError(
-        res,
-        400,
-        "validation_failed",
-        "Collaborators and shares arrays must be the same length",
-      );
-    }
-    const total = shares.reduce((s, n) => s + n, 0);
-    if (total !== 10_000) {
-      return sendError(res, 400, "validation_failed", "Shares must sum to 10000 basis points");
-    }
 
       // Check if contract is already initialized on-chain
       const alreadyInitialized = await isContractInitialized(contractId);

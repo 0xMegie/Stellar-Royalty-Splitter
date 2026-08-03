@@ -459,6 +459,80 @@ export const api = {
       };
     }>(`/v1/earnings-history/${walletAddress}${query ? `?${query}` : ""}`);
   },
+
+  getContractPerformance: (
+    dateRange?: { start: string; end: string },
+    _options?: { sortBy?: string; direction?: string; limit?: number },
+  ) =>
+    get<{
+      success: boolean;
+      message?: string;
+      data: {
+        contracts: Array<{
+          contractId: string;
+          revenue: number;
+          transactions: number;
+          lastActivity: string | null;
+          status: string;
+        }>;
+      };
+    }>(
+      `/analytics/performance${dateRange ? `?start=${dateRange.start}&end=${dateRange.end}` : ""}`,
+    ),
+
+  getMultiContractEarnings: (address: string, _dateRange?: { start?: string; end?: string } | string) =>
+    get<any>(`/analytics/multi-contract?address=${address}`),
+
+  getNotifications: (walletAddress: string, _limit = 50, _offset = 0) =>
+    get<{ success: boolean; data: any[]; unreadCount: number }>(`/v1/notifications/${walletAddress}`),
+
+  getUnreadNotificationCount: (walletAddress: string) =>
+    get<{ success: boolean; count: number; unreadCount: number }>(`/v1/notifications/${walletAddress}/unread`),
+
+  markAllNotificationsRead: (walletAddress: string) =>
+    post<{ success: boolean }>(`/v1/notifications/${walletAddress}/read-all`, {}),
+
+  markNotificationRead: (id: number) =>
+    post<{ success: boolean }>(`/v1/notifications/read/${id}`, {}),
+
+  deleteNotification: (id: number) =>
+    del<{ success: boolean }>(`/v1/notifications/${id}`),
+
+  getNotificationPreferences: (walletAddress: string) =>
+    get<{ email?: any; sms?: any; inApp?: any; push?: any; [key: string]: any }>(`/v1/preferences/notifications/${walletAddress}`),
+
+  saveNotificationPreferences: (walletAddress: string, prefs: any) =>
+    post<{ success: boolean }>(`/v1/preferences/notifications/${walletAddress}`, prefs),
+
+  getHeldTransactions: (contractId: string, _status = "active", _offset = 0) =>
+    get<{ success: boolean; data: any[] }>(`/v1/payment-holds/${contractId}`),
+
+  approveHoldRelease: (holdId: number, _role?: string, _note?: string) =>
+    post<{ success: boolean }>(`/v1/payment-holds/approve/${holdId}`, {}),
+
+  releasePaymentHold: (holdId: number, _role?: string, _note?: string) =>
+    post<{ success: boolean }>(`/v1/payment-holds/release/${holdId}`, {}),
+
+  placePaymentHold: (body: any, _walletAddress?: string, _txId?: any, _reason?: string) =>
+    post<{ success: boolean }>(`/v1/payment-holds`, body),
+
+  getPaymentPreference: (walletAddress: string) =>
+    get<{ paymentMethod?: string; [key: string]: any }>(`/v1/preferences/payment/${walletAddress}`),
+
+  savePaymentPreference: (walletAddress: string, pending: string) =>
+    post<{ paymentMethod?: string; [key: string]: any }>(`/v1/preferences/payment/${walletAddress}`, { pending }),
+
+  getVerification: (walletAddress: string) => get<any>(`/verification/${walletAddress}`),
+  startVerification: (walletAddress: string, data?: any) => post<any>(`/verification/start`, { walletAddress, ...data }),
+  advanceVerification: (walletAddress: string, step?: any) => post<any>(`/verification/advance`, { walletAddress, step }),
+
+  getHealth: () => get<any>("/v1/health"),
+
+  getContractFees: (contractId: string) => get<any>(`/fees/${contractId}`),
+
+  getTaxComplianceReport: () => get<any>("/v1/contributor-tax/report"),
+
+  getContributorsMissingTaxInfo: () => get<any>("/v1/contributor-tax/missing"),
 };
 
 export interface OnboardingItem {

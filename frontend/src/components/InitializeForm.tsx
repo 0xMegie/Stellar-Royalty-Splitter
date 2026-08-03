@@ -577,17 +577,8 @@ export default function InitializeForm({
               >
                 ✕
               </button>
-              {collaborators.length > 1 && (
-                <button
-                  className="btn-danger"
-                  onClick={() => removeRow(i)}
-                  aria-label={`Remove collaborator ${i + 1}`}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </div>
       ))}
 

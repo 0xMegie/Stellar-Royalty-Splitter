@@ -43,10 +43,16 @@ export const INITIALIZE_COLLABORATORS_PAYLOAD_LIMIT_BYTES = 8 * 1024;
 export const MAX_COLLABORATORS_BACKEND = 20;
 export const MAX_NFT_ID_LENGTH = 256;
 
+export const amountSchema = z.union([
+  z.number().positive("Distribution amount must be positive"),
+  z.string().regex(/^[1-9]\d*$/, "Distribution amount must be a positive integer"),
+]);
+
 export const distributeSchema = z.object({
   contractId: contractAddress,
   walletAddress: stellarAddress,
   tokenId: contractAddress,
+  amount: amountSchema.optional(),
 });
 
 export const setRoyaltyRateSchema = z.object({
@@ -64,7 +70,7 @@ export const recordSecondarySaleSchema = z.object({
     .max(MAX_NFT_ID_LENGTH, `nftId must not exceed ${MAX_NFT_ID_LENGTH} characters`),
   previousOwner: stellarAddress,
   newOwner: stellarAddress,
-  salePrice: z.number().int().positive(),
+  salePrice: z.number().positive("Sale price must be positive"),
   saleToken: contractAddress,
   royaltyRate: basisPoints,
 });
@@ -73,6 +79,7 @@ export const distributeSecondarySchema = z.object({
   contractId: contractAddress,
   walletAddress: stellarAddress,
   tokenId: contractAddress,
+  amount: amountSchema.optional(),
 });
 
 export const emailDigestSubscribeSchema = z.object({
