@@ -1,5 +1,7 @@
 import { Router } from "express";
-import { getMigrationVersion, db } from "../database/index.js";
+import { getMigrationVersion } from "../database/index.js";
+import * as database from "../database/index.js";
+
 import {
   getConfiguredContractId,
   getNetworkLabel,
@@ -20,7 +22,8 @@ let cacheExpiresAt = 0;
  */
 function getDbMetrics() {
   try {
-    const txRow = db
+    if (!database.db) return null;
+    const txRow = database.db
       .prepare(
         `SELECT
           COUNT(*) AS total,
