@@ -14,7 +14,6 @@
 import crypto from "crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { stellarAddress, parsePagination } from "../validation.js";
 import { sendError, sendValidationError } from "../error-response.js";
 import { normaliseKycPayload, outcomeToVerificationState } from "../kyc-providers.js";
 import {
@@ -104,8 +103,7 @@ kycWebhooksRouter.post(
       "";
 
     const rawBody =
-      req.rawBody ??
-      (typeof req.body === "string" ? req.body : JSON.stringify(req.body));
+      req.rawBody ?? (typeof req.body === "string" ? req.body : JSON.stringify(req.body));
 
     if (!verifySignature(provider, rawBody, sig)) {
       logger.warn("KYC webhook signature verification failed", { provider, ip: req.ip });
@@ -133,7 +131,13 @@ kycWebhooksRouter.post(
       rawPayload,
     });
 
-    logger.info("KYC event received", { provider, providerSessionId, walletAddress, outcome, eventId });
+    logger.info("KYC event received", {
+      provider,
+      providerSessionId,
+      walletAddress,
+      outcome,
+      eventId,
+    });
 
     // Update contributor_verification if we have a wallet address
     let verificationRecord = null;
@@ -148,19 +152,14 @@ kycWebhooksRouter.post(
       );
 
       // Audit log entry
-      addAuditLog(
-        "SYSTEM",
-        "kyc_verification_updated",
-        walletAddress,
-        {
-          provider,
-          providerSessionId,
-          outcome,
-          step,
-          status,
-          kycEventId: eventId,
-        }
-      );
+      addAuditLog("SYSTEM", "kyc_verification_updated", walletAddress, {
+        provider,
+        providerSessionId,
+        outcome,
+        step,
+        status,
+        kycEventId: eventId,
+      });
 
       logger.info("Contributor verification updated from KYC callback", {
         walletAddress,
@@ -169,7 +168,10 @@ kycWebhooksRouter.post(
         provider,
       });
     } else if (walletAddress) {
-      logger.warn("KYC callback contained invalid wallet address format", { walletAddress, provider });
+      logger.warn("KYC callback contained invalid wallet address format", {
+        walletAddress,
+        provider,
+      });
     }
 
     return res.status(200).json({

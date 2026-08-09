@@ -14,7 +14,6 @@
  */
 
 import { db, countWrite } from "./core.js";
-import logger from "../logger.js";
 
 // ─── Schema ────────────────────────────────────────────────────────────────────
 
@@ -96,7 +95,20 @@ export function recordCommunication({
        (walletAddress, contractId, type, subject, body, direction, status, isInternal, metadata, referenceId, createdBy, createdAt)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(walletAddress, contractId, type, subject, body, direction, status, isInternal ? 1 : 0, metadataJson, referenceId, createdBy, now);
+    .run(
+      walletAddress,
+      contractId,
+      type,
+      subject,
+      body,
+      direction,
+      status,
+      isInternal ? 1 : 0,
+      metadataJson,
+      referenceId,
+      createdBy,
+      now
+    );
 
   countWrite();
 
@@ -125,7 +137,10 @@ export function recordCommunication({
  * @param {{ includeInternal?: boolean, limit?: number, offset?: number }} [opts]
  * @returns {object[]}
  */
-export function getCommunicationsByWallet(walletAddress, { includeInternal = false, limit = 50, offset = 0 } = {}) {
+export function getCommunicationsByWallet(
+  walletAddress,
+  { includeInternal = false, limit = 50, offset = 0 } = {}
+) {
   const internalClause = includeInternal ? "" : " AND isInternal = 0";
 
   return db
@@ -145,7 +160,10 @@ export function getCommunicationsByWallet(walletAddress, { includeInternal = fal
  * @param {{ includeInternal?: boolean, limit?: number, offset?: number }} [opts]
  * @returns {object[]}
  */
-export function getCommunicationsByContract(contractId, { includeInternal = false, limit = 50, offset = 0 } = {}) {
+export function getCommunicationsByContract(
+  contractId,
+  { includeInternal = false, limit = 50, offset = 0 } = {}
+) {
   const internalClause = includeInternal ? "" : " AND isInternal = 0";
 
   return db
@@ -165,7 +183,10 @@ export function getCommunicationsByContract(contractId, { includeInternal = fals
  * @param {{ includeInternal?: boolean, limit?: number, offset?: number }} [opts]
  * @returns {object[]}
  */
-export function searchCommunications(query, { includeInternal = false, limit = 50, offset = 0 } = {}) {
+export function searchCommunications(
+  query,
+  { includeInternal = false, limit = 50, offset = 0 } = {}
+) {
   const internalClause = includeInternal ? "" : " AND isInternal = 0";
   const searchTerm = `%${query}%`;
 
@@ -211,7 +232,10 @@ export function addInternalNote({ walletAddress, contractId = null, body, create
  * @param {{ includeInternal?: boolean, limit?: number, offset?: number }} [opts]
  * @returns {object[]}
  */
-export function getCommunicationTimeline(walletAddress, { includeInternal = false, limit = 100, offset = 0 } = {}) {
+export function getCommunicationTimeline(
+  walletAddress,
+  { includeInternal = false, limit = 100, offset = 0 } = {}
+) {
   const internalClause = includeInternal ? "" : " AND isInternal = 0";
 
   return db

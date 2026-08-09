@@ -62,7 +62,7 @@ export const retryConfig = {
  * Determine if an error is transient and worth retrying.
  * Returns { isTransient: boolean, reason: string, category: string }
  */
-export function isTransientError(error, operationType = "unknown") {
+export function isTransientError(error, _operationType = "unknown") {
   // Timeout errors from withTimeout wrapper
   if (error?.status === 504) {
     return {
@@ -273,7 +273,7 @@ export async function withRetry(operation, options = {}) {
   const {
     operationType = "unknown",
     maxRetries = retryConfig.maxRetries,
-    baseBackoffMs = retryConfig.baseBackoffMs,
+    _baseBackoffMs = retryConfig.baseBackoffMs,
     shouldRetry = null, // Custom retry predicate (overrides isTransientError if provided)
     details = {},
   } = options;

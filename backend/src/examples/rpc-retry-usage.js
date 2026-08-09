@@ -6,7 +6,7 @@
  */
 
 import { withRetry } from "../rpc-retry.js";
-import { server } from "../stellar.js";
+import { server, buildTx, fetchFeeStats } from "../stellar.js";
 
 // ── Example 1: Simple Account Fetch with Retry ─────────────────────────────
 

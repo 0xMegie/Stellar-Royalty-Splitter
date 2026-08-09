@@ -18,7 +18,6 @@ import fs from "fs";
 import path from "path";
 import { Router } from "express";
 import { z } from "zod";
-import { contractAddress } from "../validation.js";
 import { sendError, sendValidationError } from "../error-response.js";
 import {
   getComplianceReport,
@@ -32,22 +31,24 @@ export const complianceReportsRouter = Router();
 
 // ─── Validation schemas ────────────────────────────────────────────────────────
 
-const generateSchema = z.object({
-  type:       z.enum(REPORT_TYPES),
-  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "periodStart must be YYYY-MM-DD"),
-  periodEnd:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "periodEnd must be YYYY-MM-DD"),
-  contractId:  z.string().optional().default("ALL"),
-}).refine(
-  (d) => d.periodStart <= d.periodEnd,
-  { message: "periodStart must be before or equal to periodEnd", path: ["periodStart"] }
-);
+const generateSchema = z
+  .object({
+    type: z.enum(REPORT_TYPES),
+    periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "periodStart must be YYYY-MM-DD"),
+    periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "periodEnd must be YYYY-MM-DD"),
+    contractId: z.string().optional().default("ALL"),
+  })
+  .refine((d) => d.periodStart <= d.periodEnd, {
+    message: "periodStart must be before or equal to periodEnd",
+    path: ["periodStart"],
+  });
 
 const listQuerySchema = z.object({
-  type:       z.enum(REPORT_TYPES).optional(),
+  type: z.enum(REPORT_TYPES).optional(),
   contractId: z.string().optional(),
-  status:     z.string().optional(),
-  limit:      z.coerce.number().int().min(1).max(100).optional().default(50),
-  offset:     z.coerce.number().int().min(0).optional().default(0),
+  status: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+  offset: z.coerce.number().int().min(0).optional().default(0),
 });
 
 // ─── POST /api/v1/compliance-reports/generate ─────────────────────────────────

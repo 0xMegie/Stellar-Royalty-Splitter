@@ -23,7 +23,7 @@ import { sendError } from "../error-response.js";
 import { pollHorizonTransaction } from "../stellar.js";
 import { deliverDistributeWebhooks } from "../webhook-delivery.js";
 import logger from "../logger.js";
-import { cacheGet, cacheSet, cacheKey, TTL } from "../cache.js";
+import { cacheSet, cacheKey, TTL } from "../cache.js";
 
 const router = express.Router();
 
@@ -55,11 +55,21 @@ router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
     }
 
     if (startDate !== undefined && isNaN(new Date(startDate).getTime())) {
-      return sendError(res, 400, "invalid_query_parameter", "Invalid startDate. Use ISO 8601 or YYYY-MM-DD format.");
+      return sendError(
+        res,
+        400,
+        "invalid_query_parameter",
+        "Invalid startDate. Use ISO 8601 or YYYY-MM-DD format."
+      );
     }
 
     if (endDate !== undefined && isNaN(new Date(endDate).getTime())) {
-      return sendError(res, 400, "invalid_query_parameter", "Invalid endDate. Use ISO 8601 or YYYY-MM-DD format.");
+      return sendError(
+        res,
+        400,
+        "invalid_query_parameter",
+        "Invalid endDate. Use ISO 8601 or YYYY-MM-DD format."
+      );
     }
 
     const filters = {};
@@ -83,11 +93,17 @@ router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
       },
     };
 
+    const key = cacheKey("history", contractId, limit, offset, JSON.stringify(filters));
     cacheSet(key, body, TTL.history);
     res.json(body);
   } catch (error) {
     logger.error("Error fetching transaction history:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to fetch transaction history");
+    sendError(
+      res,
+      500,
+      "internal_server_error",
+      error.message ?? "Failed to fetch transaction history"
+    );
   }
 });
 
@@ -132,7 +148,12 @@ router.post("/archive/policy", (req, res) => {
     });
   } catch (error) {
     logger.error("Error updating archive policy:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to update archive policy");
+    sendError(
+      res,
+      500,
+      "internal_server_error",
+      error.message ?? "Failed to update archive policy"
+    );
   }
 });
 
@@ -155,7 +176,12 @@ router.post("/archive/run", (req, res) => {
     });
   } catch (error) {
     logger.error("Error archiving contract events:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to archive contract events");
+    sendError(
+      res,
+      500,
+      "internal_server_error",
+      error.message ?? "Failed to archive contract events"
+    );
   }
 });
 
@@ -183,7 +209,12 @@ router.get("/archive/:contractId", validateContractIdMiddleware, (req, res) => {
     });
   } catch (error) {
     logger.error("Error fetching archived contract events:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to fetch archived events");
+    sendError(
+      res,
+      500,
+      "internal_server_error",
+      error.message ?? "Failed to fetch archived events"
+    );
   }
 });
 
@@ -207,7 +238,12 @@ router.get("/transaction/:txHash", (req, res) => {
     });
   } catch (error) {
     logger.error("Error fetching transaction details:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to fetch transaction details");
+    sendError(
+      res,
+      500,
+      "internal_server_error",
+      error.message ?? "Failed to fetch transaction details"
+    );
   }
 });
 
@@ -270,14 +306,19 @@ router.post("/transaction/confirm/:txHash", async (req, res) => {
       pollResult = await pollHorizonTransaction(txHash);
     } catch (error) {
       const status = error?.status ?? 504;
-      return sendError(res, status, undefined, error?.message ?? "Failed to confirm transaction on Horizon");
+      return sendError(
+        res,
+        status,
+        undefined,
+        error?.message ?? "Failed to confirm transaction on Horizon"
+      );
     }
 
     updateTransactionStatus(
       txHash,
       pollResult.status,
       blockTime ?? pollResult.createdAt ?? null,
-      errorMessage ?? null,
+      errorMessage ?? null
     );
 
     const confirmed = getTransactionDetails(txHash);
@@ -294,7 +335,12 @@ router.post("/transaction/confirm/:txHash", async (req, res) => {
     });
   } catch (error) {
     logger.error("Error updating transaction status:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to update transaction status");
+    sendError(
+      res,
+      500,
+      "internal_server_error",
+      error.message ?? "Failed to update transaction status"
+    );
   }
 });
 

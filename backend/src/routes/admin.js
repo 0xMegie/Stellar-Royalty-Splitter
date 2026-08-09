@@ -15,18 +15,6 @@ import { addAuditLog } from "../database/index.js";
 
 export const adminRouter = Router();
 
-const rotateKeySchema = z
-  .object({
-    secretKey: z
-      .string()
-      .regex(/^S[A-Z2-7]{55}$/, "Invalid Stellar secret key")
-      .optional(),
-    reloadFromFile: z.boolean().optional(),
-  })
-  .refine((body) => Boolean(body.secretKey) || body.reloadFromFile === true, {
-    message: "Provide secretKey or set reloadFromFile to true",
-  });
-
 /**
  * Legacy bearer-token guard kept for backward compatibility.
  * New deployments should prefer RBAC API keys (requireAdminBearerOrRole).
@@ -37,7 +25,12 @@ function requireAdminRotateToken(req, res, next) {
       event: "signing_key_rotate_denied",
       reason: "token_not_configured",
     });
-    return sendError(res, 503, "service_unavailable", "Key rotation is not configured on this server");
+    return sendError(
+      res,
+      503,
+      "service_unavailable",
+      "Key rotation is not configured on this server"
+    );
   }
 
   const header = req.get("Authorization");
@@ -58,13 +51,9 @@ function requireAdminRotateToken(req, res, next) {
  * Returns current signing key status (public key, last rotation, provider).
  * Requires admin privilege.
  */
-adminRouter.get(
-  "/key-status",
-  requireAdminBearerOrRole("admin"),
-  (_req, res) => {
-    res.json(getSigningKeyStatus());
-  },
-);
+adminRouter.get("/key-status", requireAdminBearerOrRole("admin"), (_req, res) => {
+  res.json(getSigningKeyStatus());
+});
 
 /**
  * POST /admin/rotate-key
@@ -82,10 +71,8 @@ const rotateKeySchemaExtended = z
   })
   .refine(
     (body) =>
-      Boolean(body.secretKey) ||
-      body.reloadFromFile === true ||
-      body.reloadFromProvider === true,
-    { message: "Provide secretKey, reloadFromFile, or reloadFromProvider" },
+      Boolean(body.secretKey) || body.reloadFromFile === true || body.reloadFromProvider === true,
+    { message: "Provide secretKey, reloadFromFile, or reloadFromProvider" }
   );
 
 adminRouter.post(
@@ -109,7 +96,9 @@ adminRouter.post(
           source: result.source,
           publicKey: result.publicKey,
         });
-      } catch (_) { /* non-fatal */ }
+      } catch (_) {
+        /* non-fatal */
+      }
 
       res.json({
         publicKey: result.publicKey,
@@ -119,7 +108,7 @@ adminRouter.post(
     } catch (err) {
       next(err);
     }
-  },
+  }
 );
 
 /**
@@ -145,7 +134,7 @@ adminRouter.post(
     } catch (err) {
       next(err);
     }
-  },
+  }
 );
 
 /**

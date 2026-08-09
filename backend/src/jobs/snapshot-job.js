@@ -53,17 +53,13 @@ function computeContractState(contractId) {
 
   // Get transaction count
   const countRow = db
-    .prepare(
-      `SELECT COUNT(*) AS cnt FROM transactions WHERE contractId = ?`
-    )
+    .prepare(`SELECT COUNT(*) AS cnt FROM transactions WHERE contractId = ?`)
     .get(contractId);
   const transactionCount = countRow.cnt;
 
   // Get most recent transaction ID
   const lastTx = db
-    .prepare(
-      `SELECT id FROM transactions WHERE contractId = ? ORDER BY timestamp DESC LIMIT 1`
-    )
+    .prepare(`SELECT id FROM transactions WHERE contractId = ? ORDER BY timestamp DESC LIMIT 1`)
     .get(contractId);
   const lastTransactionId = lastTx?.id ?? null;
 
@@ -79,13 +75,11 @@ function computeContractState(contractId) {
 
   const shares = {};
   const balances = {};
-  let totalDistributed = 0;
 
   for (const row of shareRows) {
     const amount = Math.round(row.totalReceived * 100) / 100;
     shares[row.collaboratorAddress] = amount;
     balances[row.collaboratorAddress] = amount;
-    totalDistributed += amount;
   }
 
   return {
@@ -134,8 +128,8 @@ export async function executeSnapshotRun({ forceLabel } = {}) {
       snapshotsCreated++;
 
       // Prune old snapshots beyond retention
-      const pruned = await import("../database/contract-snapshots.js").then(
-        (mod) => mod.pruneSnapshots(contractId, SNAPSHOT_RETENTION_COUNT)
+      const pruned = await import("../database/contract-snapshots.js").then((mod) =>
+        mod.pruneSnapshots(contractId, SNAPSHOT_RETENTION_COUNT)
       );
       if (pruned > 0) {
         logger.debug(`Pruned ${pruned} old snapshots for contract ${contractId}`);

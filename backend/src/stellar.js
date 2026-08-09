@@ -21,7 +21,7 @@ import StellarSdk from "@stellar/stellar-sdk";
 import logger from "./logger.js";
 import { recordHorizonResponseTime } from "./metrics.js";
 import { sleep, parsePositiveInt } from "./utils.js";
-import { withRetry, isTransientError } from "./rpc-retry.js";
+import { withRetry } from "./rpc-retry.js";
 
 const {
   Contract,

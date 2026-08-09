@@ -19,7 +19,6 @@ import {
   listPaymentSchedules,
   countPaymentSchedules,
   updatePaymentSchedule,
-  disablePaymentSchedule,
   deletePaymentSchedule,
   getUpcomingSchedules,
   setNextRunAt,
@@ -35,51 +34,67 @@ export const paymentSchedulesRouter = Router();
 
 const createScheduleSchema = z
   .object({
-    name:          z.string().min(1).max(100),
-    type:          z.enum(SCHEDULE_TYPES),
-    contractId:    contractAddress,
-    tokenId:       contractAddress,
+    name: z.string().min(1).max(100),
+    type: z.enum(SCHEDULE_TYPES),
+    contractId: contractAddress,
+    tokenId: contractAddress,
     walletAddress: stellarAddress,
-    dayOfMonth:    z.number().int().min(1).max(28).optional().nullable(),
-    dayOfWeek:     z.number().int().min(0).max(6).optional().nullable(),
-    intervalDays:  z.number().int().min(1).max(365).optional().nullable(),
-    anchorDate:    z.string().datetime({ offset: true }).optional().nullable(),
-    hourOfDay:     z.number().int().min(0).max(23).optional().default(0),
-    timezone:      z.string().min(1).max(50).optional().default("UTC"),
-    metadata:      z.record(z.unknown()).optional().nullable(),
+    dayOfMonth: z.number().int().min(1).max(28).optional().nullable(),
+    dayOfWeek: z.number().int().min(0).max(6).optional().nullable(),
+    intervalDays: z.number().int().min(1).max(365).optional().nullable(),
+    anchorDate: z.string().datetime({ offset: true }).optional().nullable(),
+    hourOfDay: z.number().int().min(0).max(23).optional().default(0),
+    timezone: z.string().min(1).max(50).optional().default("UTC"),
+    metadata: z.record(z.unknown()).optional().nullable(),
   })
   .superRefine((d, ctx) => {
-    if (d.type === "monthly" && (d.dayOfMonth == null)) {
-      ctx.addIssue({ code: "custom", path: ["dayOfMonth"], message: "dayOfMonth is required for monthly schedules" });
+    if (d.type === "monthly" && d.dayOfMonth == null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["dayOfMonth"],
+        message: "dayOfMonth is required for monthly schedules",
+      });
     }
-    if (d.type === "weekly" && (d.dayOfWeek == null)) {
-      ctx.addIssue({ code: "custom", path: ["dayOfWeek"], message: "dayOfWeek is required for weekly schedules" });
+    if (d.type === "weekly" && d.dayOfWeek == null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["dayOfWeek"],
+        message: "dayOfWeek is required for weekly schedules",
+      });
     }
     if ((d.type === "biweekly" || d.type === "custom") && !d.anchorDate) {
-      ctx.addIssue({ code: "custom", path: ["anchorDate"], message: "anchorDate is required for biweekly/custom schedules" });
+      ctx.addIssue({
+        code: "custom",
+        path: ["anchorDate"],
+        message: "anchorDate is required for biweekly/custom schedules",
+      });
     }
-    if (d.type === "custom" && (d.intervalDays == null)) {
-      ctx.addIssue({ code: "custom", path: ["intervalDays"], message: "intervalDays is required for custom schedules" });
+    if (d.type === "custom" && d.intervalDays == null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["intervalDays"],
+        message: "intervalDays is required for custom schedules",
+      });
     }
   });
 
 const updateScheduleSchema = z.object({
-  name:         z.string().min(1).max(100).optional(),
-  dayOfMonth:   z.number().int().min(1).max(28).optional().nullable(),
-  dayOfWeek:    z.number().int().min(0).max(6).optional().nullable(),
+  name: z.string().min(1).max(100).optional(),
+  dayOfMonth: z.number().int().min(1).max(28).optional().nullable(),
+  dayOfWeek: z.number().int().min(0).max(6).optional().nullable(),
   intervalDays: z.number().int().min(1).max(365).optional().nullable(),
-  anchorDate:   z.string().datetime({ offset: true }).optional().nullable(),
-  hourOfDay:    z.number().int().min(0).max(23).optional(),
-  timezone:     z.string().min(1).max(50).optional(),
-  enabled:      z.boolean().optional(),
-  metadata:     z.record(z.unknown()).optional().nullable(),
+  anchorDate: z.string().datetime({ offset: true }).optional().nullable(),
+  hourOfDay: z.number().int().min(0).max(23).optional(),
+  timezone: z.string().min(1).max(50).optional(),
+  enabled: z.boolean().optional(),
+  metadata: z.record(z.unknown()).optional().nullable(),
 });
 
 const listQuerySchema = z.object({
-  contractId:      z.string().optional(),
+  contractId: z.string().optional(),
   includeDisabled: z.coerce.boolean().optional().default(false),
-  limit:           z.coerce.number().int().min(1).max(100).optional().default(50),
-  offset:          z.coerce.number().int().min(0).optional().default(0),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+  offset: z.coerce.number().int().min(0).optional().default(0),
 });
 
 // ─── POST /api/v1/payment-schedules ──────────────────────────────────────────
@@ -186,7 +201,14 @@ paymentSchedulesRouter.patch("/:id", (req, res) => {
   const updated = updatePaymentSchedule(id, updates);
 
   // If schedule timing changed, recompute nextRunAt
-  const timingFields = ["dayOfMonth", "dayOfWeek", "intervalDays", "anchorDate", "hourOfDay", "enabled"];
+  const timingFields = [
+    "dayOfMonth",
+    "dayOfWeek",
+    "intervalDays",
+    "anchorDate",
+    "hourOfDay",
+    "enabled",
+  ];
   if (timingFields.some((f) => f in updates)) {
     try {
       const merged = { ...existing, ...updates };
@@ -196,7 +218,10 @@ paymentSchedulesRouter.patch("/:id", (req, res) => {
         updated.nextRunAt = nextRunAt;
       }
     } catch (err) {
-      logger.warn("Could not recompute nextRunAt after schedule update", { id, error: err.message });
+      logger.warn("Could not recompute nextRunAt after schedule update", {
+        id,
+        error: err.message,
+      });
     }
   }
 

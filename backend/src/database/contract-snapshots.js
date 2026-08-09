@@ -14,7 +14,6 @@
 
 import { createHash } from "crypto";
 import { db, countWrite } from "./core.js";
-import logger from "../logger.js";
 
 // ─── Schema ────────────────────────────────────────────────────────────────────
 
@@ -92,7 +91,17 @@ export function createSnapshot({
        (contractId, label, collaborators, shares, balances, transactionCount, lastTransactionId, stateHash, createdBy)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(contractId, label, collaborators, shares, balances, transactionCount, lastTransactionId, stateHash, createdBy);
+    .run(
+      contractId,
+      label,
+      collaborators,
+      shares,
+      balances,
+      transactionCount,
+      lastTransactionId,
+      stateHash,
+      createdBy
+    );
 
   countWrite();
 

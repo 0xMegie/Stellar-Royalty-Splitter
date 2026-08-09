@@ -4,7 +4,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import { sendError } from "../error-response.js";
-import { requireRole } from "../middleware/rbac.js";
 import {
   createCsvImport,
   markImportSuccess,
@@ -116,7 +115,12 @@ csvImportRouter.post("/import", upload.single("file"), (req, res) => {
     const rows = parseCsv(csvContent);
     const validation = validateCsvRows(rows);
 
-    const csvImport = createCsvImport(contractId, req.file.originalname, validation.valid.length + validation.errors.length, importedBy ?? "unknown");
+    const csvImport = createCsvImport(
+      contractId,
+      req.file.originalname,
+      validation.valid.length + validation.errors.length,
+      importedBy ?? "unknown"
+    );
 
     let successCount = 0;
     let errorCount = 0;
@@ -127,7 +131,14 @@ csvImportRouter.post("/import", upload.single("file"), (req, res) => {
     }
 
     for (const row of validation.errors) {
-      addImportResult(csvImport.id, row.rowIndex, row.address ?? "", row.share ?? 0, "error", row.error);
+      addImportResult(
+        csvImport.id,
+        row.rowIndex,
+        row.address ?? "",
+        row.share ?? 0,
+        "error",
+        row.error
+      );
       errorCount++;
     }
 
@@ -137,13 +148,18 @@ csvImportRouter.post("/import", upload.single("file"), (req, res) => {
       markImportFailed(csvImport.id, `${errorCount} row(s) had errors`);
     }
 
-    addAuditLog(contractId, "csv_import", importedBy ?? "unknown", JSON.stringify({
-      fileName: req.file.originalname,
-      totalRows: validation.valid.length + validation.errors.length,
-      successCount,
-      errorCount,
-      importId: csvImport.id,
-    }));
+    addAuditLog(
+      contractId,
+      "csv_import",
+      importedBy ?? "unknown",
+      JSON.stringify({
+        fileName: req.file.originalname,
+        totalRows: validation.valid.length + validation.errors.length,
+        successCount,
+        errorCount,
+        importId: csvImport.id,
+      })
+    );
 
     fs.unlinkSync(req.file.path);
 
@@ -152,7 +168,11 @@ csvImportRouter.post("/import", upload.single("file"), (req, res) => {
       data: {
         importId: csvImport.id,
         fileName: req.file.originalname,
-        summary: { total: validation.valid.length + validation.errors.length, successCount, errorCount },
+        summary: {
+          total: validation.valid.length + validation.errors.length,
+          successCount,
+          errorCount,
+        },
       },
     });
   } catch (err) {
@@ -184,11 +204,14 @@ csvImportRouter.get("/results/:importId", (req, res) => {
 });
 
 function parseCsv(content) {
-  const lines = content.split(/\r?\n/).filter(line => line.trim().length > 0);
+  const lines = content.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (lines.length < 2) return [];
 
-  const headerLine = lines[0].replace(/^\uFEFF/, "").toLowerCase().trim();
-  const headers = headerLine.split(",").map(h => h.trim());
+  const headerLine = lines[0]
+    .replace(/^\uFEFF/, "")
+    .toLowerCase()
+    .trim();
+  const headers = headerLine.split(",").map((h) => h.trim());
 
   const addressIdx = headers.indexOf("address");
   const shareIdx = headers.indexOf("share_percentage");
@@ -199,7 +222,7 @@ function parseCsv(content) {
 
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(",").map(c => c.trim());
+    const cols = lines[i].split(",").map((c) => c.trim());
     rows.push({
       rowIndex: i,
       address: cols[addressIdx] ?? "",
@@ -236,10 +259,12 @@ function validateCsvRows(rows) {
 
   const totalShare = valid.reduce((sum, r) => sum + r.share, 0);
   if (valid.length > 0 && totalShare !== 100) {
-    errors.push(...valid.splice(0, valid.length).map(r => ({
-      ...r,
-      error: `Shares sum to ${totalShare}%, must sum to exactly 100%`,
-    })));
+    errors.push(
+      ...valid.splice(0, valid.length).map((r) => ({
+        ...r,
+        error: `Shares sum to ${totalShare}%, must sum to exactly 100%`,
+      }))
+    );
   }
 
   return { valid, errors };
