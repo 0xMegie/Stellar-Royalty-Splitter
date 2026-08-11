@@ -43,10 +43,8 @@ import { earningsHistoryRouter } from "./routes/earnings-history.js";
 import { versionRouter } from "./routes/version.js";
 import { initializeWebSocket } from "./websocket.js";
 import { startSnapshotScheduler } from "./jobs/snapshot-job.js";
-import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
 import { adminApiKeysRouter } from "./routes/admin-api-keys.js";
 import { recordApiKeyRequest } from "./database/rate-limit.js";
-import { startWebhookRetryScheduler } from "./jobs/retry-failed-webhooks.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -295,12 +293,6 @@ const server = app.listen(PORT, () => logger.info(`API listening on http://local
 // Initialize WebSocket for real-time notifications (#594)
 const wss = initializeWebSocket(server);
 
-// Start the failed-distribution retry scheduler
-const retryScheduler = startRetryScheduler();
-
-// Start the webhook retry scheduler
-const webhookRetryScheduler = startWebhookRetryScheduler();
-
 // Start the snapshot scheduler (#613)
 const snapshotScheduler = startSnapshotScheduler();
 
@@ -340,12 +332,6 @@ const handleShutdown = createGracefulShutdownHandler({
     if (digestInterval) {
       clearInterval(digestInterval);
       digestInterval = null;
-    }
-    if (retryScheduler) {
-      retryScheduler.stop();
-    }
-    if (webhookRetryScheduler) {
-      webhookRetryScheduler.stop();
     }
     if (snapshotScheduler) {
       snapshotScheduler.stop();
