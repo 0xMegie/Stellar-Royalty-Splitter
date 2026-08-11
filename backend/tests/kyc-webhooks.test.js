@@ -30,7 +30,8 @@ const express = (await import("express")).default;
 const { kycWebhooksRouter } = await import("../src/routes/kyc-webhooks.js");
 
 const app = express();
-app.use(express.json());
+// Don't use express.json() globally - the router has its own body capture middleware
+// app.use(express.json());
 app.use("/api/v1/kyc", kycWebhooksRouter);
 
 const VALID_WALLET = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
@@ -56,9 +57,7 @@ describe("POST /api/v1/kyc/webhook/veriff", () => {
       status: "completed",
     });
 
-    const res = await request(app)
-      .post("/api/v1/kyc/webhook/veriff")
-      .send(veriffApproved);
+    const res = await request(app).post("/api/v1/kyc/webhook/veriff").send(veriffApproved);
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -107,10 +106,18 @@ describe("POST /api/v1/kyc/webhook/veriff", () => {
 
   test("maps resubmission_requested to kyc/failed step", async () => {
     mockRecordKycEvent.mockReturnValue(3);
-    mockUpsertVerification.mockReturnValue({ walletAddress: VALID_WALLET, step: "kyc", status: "failed" });
+    mockUpsertVerification.mockReturnValue({
+      walletAddress: VALID_WALLET,
+      step: "kyc",
+      status: "failed",
+    });
 
     const payload = {
-      verification: { id: "session-789", status: "resubmission_requested", vendorData: VALID_WALLET },
+      verification: {
+        id: "session-789",
+        status: "resubmission_requested",
+        vendorData: VALID_WALLET,
+      },
     };
 
     const res = await request(app).post("/api/v1/kyc/webhook/veriff").send(payload);
@@ -171,7 +178,11 @@ describe("POST /api/v1/kyc/webhook/jumio", () => {
 
   test("maps DENIED_FRAUD to declined", async () => {
     mockRecordKycEvent.mockReturnValue(11);
-    mockUpsertVerification.mockReturnValue({ walletAddress: VALID_WALLET, step: "rejected", status: "failed" });
+    mockUpsertVerification.mockReturnValue({
+      walletAddress: VALID_WALLET,
+      step: "rejected",
+      status: "failed",
+    });
 
     const payload = {
       jumioIdScanReference: "jumio-ref-002",

@@ -10,6 +10,109 @@ const CACHE_TTL = 60 * 1000; // 60 seconds
 
 const router = express.Router();
 
+/**
+ * GET /api/v1/analytics/multi-contract
+ * Aggregate earnings across multiple contracts for a contributor (#568).
+ * Must be defined BEFORE /:contractId to avoid being matched as a contract ID.
+ *
+ * Query params (required):
+ *   address   Stellar G... address
+ * Optional:
+ *   start     YYYY-MM-DD  (default: all time)
+ *   end       YYYY-MM-DD
+ */
+router.get("/analytics/multi-contract", (req, res) => {
+  const { address, start, end } = req.query;
+
+  if (!address || !/^G[A-Z2-7]{55}$/.test(address)) {
+    return sendError(
+      res,
+      400,
+      "invalid_query_parameter",
+      "Valid Stellar address is required (address=G...)"
+    );
+  }
+
+  try {
+    const startDate = start ? new Date(start) : null;
+    const endDate = end ? new Date(end) : new Date();
+
+    if (start && isNaN(startDate?.getTime()))
+      return sendError(res, 400, "invalid_query_parameter", "Invalid start date. Use YYYY-MM-DD.");
+    if (end && isNaN(endDate.getTime()))
+      return sendError(res, 400, "invalid_query_parameter", "Invalid end date. Use YYYY-MM-DD.");
+    if (startDate && startDate > endDate)
+      return sendError(res, 400, "invalid_query_parameter", "start date must be before end date.");
+
+    const cacheKey = `multi:${address}:${startDate?.toISOString() ?? "all"}:${endDate.toISOString()}`;
+    const cached = cache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      res.set("Cache-Control", "max-age=60");
+      return res.json(cached.data);
+    }
+
+    let query = `
+      SELECT
+        t.contractId,
+        SUM(CAST(dp.amountReceived AS REAL)) AS totalEarned,
+        COUNT(*) AS payoutCount,
+        AVG(CAST(dp.amountReceived AS REAL)) AS avgPayout,
+        MAX(t.timestamp) AS lastActivity
+      FROM distribution_payouts dp
+      JOIN transactions t ON dp.transactionId = t.id
+      WHERE dp.collaboratorAddress = ?
+        AND t.status = 'confirmed'
+    `;
+    const params = [address];
+
+    if (startDate) {
+      query += ` AND t.timestamp >= ?`;
+      params.push(startDate.toISOString());
+    }
+    query += ` AND t.timestamp <= ?`;
+    params.push(endDate.toISOString());
+    query += ` GROUP BY t.contractId ORDER BY totalEarned DESC`;
+
+    const perContract = db.prepare(query).all(...params);
+
+    const grandTotal = perContract.reduce((acc, r) => acc + r.totalEarned, 0);
+    const totalPayouts = perContract.reduce((acc, r) => acc + r.payoutCount, 0);
+
+    const data = {
+      success: true,
+      data: {
+        address,
+        period: {
+          start: startDate ? startDate.toISOString() : null,
+          end: endDate.toISOString(),
+        },
+        summary: {
+          totalEarned: Math.round(grandTotal * 100) / 100,
+          totalPayouts,
+          contractCount: perContract.length,
+          avgPerContract:
+            perContract.length > 0 ? Math.round((grandTotal / perContract.length) * 100) / 100 : 0,
+        },
+        contracts: perContract.map((r) => ({
+          contractId: r.contractId,
+          totalEarned: Math.round(r.totalEarned * 100) / 100,
+          payoutCount: r.payoutCount,
+          avgPayout: Math.round(r.avgPayout * 100) / 100,
+          lastActivity: r.lastActivity,
+          share: grandTotal > 0 ? Math.round((r.totalEarned / grandTotal) * 10000) / 100 : 0,
+        })),
+      },
+    };
+
+    cache.set(cacheKey, { data, timestamp: Date.now() });
+    res.set("Cache-Control", "max-age=60");
+    res.json(data);
+  } catch (error) {
+    logger.error("Multi-contract analytics error:", error);
+    sendError(res, 500, "analytics_fetch_failed", "Failed to load multi-contract analytics");
+  }
+});
+
 router.get("/analytics/:contractId", validateContractIdMiddleware, (req, res) => {
   const { contractId } = req.params;
   const { start, end } = req.query;
@@ -226,7 +329,10 @@ router.get("/analytics/:contractId/volume", validateContractIdMiddleware, (req, 
       )
       .all(contractId, startDate.toISOString(), endDate.toISOString());
 
-    const totals = statusCounts.reduce((acc, r) => { acc[r.status] = r.cnt; return acc; }, {});
+    const totals = statusCounts.reduce((acc, r) => {
+      acc[r.status] = r.cnt;
+      return acc;
+    }, {});
     const confirmed = totals.confirmed ?? 0;
     const failed = totals.failed ?? 0;
     const pending = totals.pending ?? 0;
@@ -255,104 +361,6 @@ router.get("/analytics/:contractId/volume", validateContractIdMiddleware, (req, 
   } catch (error) {
     logger.error("Volume analytics error:", error);
     sendError(res, 500, "analytics_fetch_failed", "Failed to load volume analytics");
-  }
-});
-
-/**
- * GET /api/v1/analytics/multi-contract
- * Aggregate earnings across multiple contracts for a contributor (#568).
- *
- * Query params (required):
- *   address   Stellar G... address
- * Optional:
- *   start     YYYY-MM-DD  (default: all time)
- *   end       YYYY-MM-DD
- */
-router.get("/analytics/multi-contract", (req, res) => {
-  const { address, start, end } = req.query;
-
-  if (!address || !/^G[A-Z2-7]{55}$/.test(address)) {
-    return sendError(res, 400, "invalid_query_parameter", "Valid Stellar address is required (address=G...)");
-  }
-
-  try {
-    const startDate = start ? new Date(start) : null;
-    const endDate = end ? new Date(end) : new Date();
-
-    if (start && isNaN(startDate?.getTime()))
-      return sendError(res, 400, "invalid_query_parameter", "Invalid start date. Use YYYY-MM-DD.");
-    if (end && isNaN(endDate.getTime()))
-      return sendError(res, 400, "invalid_query_parameter", "Invalid end date. Use YYYY-MM-DD.");
-    if (startDate && startDate > endDate)
-      return sendError(res, 400, "invalid_query_parameter", "start date must be before end date.");
-
-    const cacheKey = `multi:${address}:${startDate?.toISOString() ?? "all"}:${endDate.toISOString()}`;
-    const cached = cache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      res.set("Cache-Control", "max-age=60");
-      return res.json(cached.data);
-    }
-
-    let query = `
-      SELECT
-        t.contractId,
-        SUM(CAST(dp.amountReceived AS REAL)) AS totalEarned,
-        COUNT(*) AS payoutCount,
-        AVG(CAST(dp.amountReceived AS REAL)) AS avgPayout,
-        MAX(t.timestamp) AS lastActivity
-      FROM distribution_payouts dp
-      JOIN transactions t ON dp.transactionId = t.id
-      WHERE dp.collaboratorAddress = ?
-        AND t.status = 'confirmed'
-    `;
-    const params = [address];
-
-    if (startDate) {
-      query += ` AND t.timestamp >= ?`;
-      params.push(startDate.toISOString());
-    }
-    query += ` AND t.timestamp <= ?`;
-    params.push(endDate.toISOString());
-    query += ` GROUP BY t.contractId ORDER BY totalEarned DESC`;
-
-    const perContract = db.prepare(query).all(...params);
-
-    const grandTotal = perContract.reduce((acc, r) => acc + r.totalEarned, 0);
-    const totalPayouts = perContract.reduce((acc, r) => acc + r.payoutCount, 0);
-
-    const data = {
-      success: true,
-      data: {
-        address,
-        period: {
-          start: startDate ? startDate.toISOString() : null,
-          end: endDate.toISOString(),
-        },
-        summary: {
-          totalEarned: Math.round(grandTotal * 100) / 100,
-          totalPayouts,
-          contractCount: perContract.length,
-          avgPerContract: perContract.length > 0
-            ? Math.round((grandTotal / perContract.length) * 100) / 100
-            : 0,
-        },
-        contracts: perContract.map((r) => ({
-          contractId: r.contractId,
-          totalEarned: Math.round(r.totalEarned * 100) / 100,
-          payoutCount: r.payoutCount,
-          avgPayout: Math.round(r.avgPayout * 100) / 100,
-          lastActivity: r.lastActivity,
-          share: grandTotal > 0 ? Math.round((r.totalEarned / grandTotal) * 10000) / 100 : 0,
-        })),
-      },
-    };
-
-    cache.set(cacheKey, { data, timestamp: Date.now() });
-    res.set("Cache-Control", "max-age=60");
-    res.json(data);
-  } catch (error) {
-    logger.error("Multi-contract analytics error:", error);
-    sendError(res, 500, "analytics_fetch_failed", "Failed to load multi-contract analytics");
   }
 });
 

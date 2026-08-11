@@ -32,7 +32,7 @@ const app = express();
 app.use(express.json());
 app.use("/api/v1/contributor-status", contributorStatusRouter);
 
-const VALID_CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const VALID_CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
 const VALID_ADDRESS = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
 
 describe("GET /api/v1/contributor-status/:contractId", () => {
@@ -87,9 +87,7 @@ describe("GET /api/v1/contributor-status/:contractId/:address", () => {
   });
 
   test("returns 400 for invalid address", async () => {
-    const res = await request(app).get(
-      `/api/v1/contributor-status/${VALID_CONTRACT}/INVALID_ADDR`
-    );
+    const res = await request(app).get(`/api/v1/contributor-status/${VALID_CONTRACT}/INVALID_ADDR`);
     expect(res.status).toBe(400);
   });
 });

@@ -3,7 +3,22 @@
  * Covers transient/permanent error detection, backoff calculation, and retry behavior.
  */
 
-import {
+import { jest, describe, test, expect, beforeEach } from "@jest/globals";
+
+// Mock logger before importing rpc-retry
+const mockLogger = {
+  warn: jest.fn(),
+  error: jest.fn(),
+  info: jest.fn(),
+  debug: jest.fn(),
+};
+
+await jest.unstable_mockModule("../src/logger.js", () => ({
+  default: mockLogger,
+}));
+
+// Now import rpc-retry after logger is mocked
+const {
   isTransientError,
   getBackoffDelay,
   logRetryAttempt,
@@ -12,7 +27,7 @@ import {
   withRetry,
   retryConfig,
   retryMetrics,
-} from "../src/rpc-retry.js";
+} = await import("../src/rpc-retry.js");
 
 describe("RPC Retry Handler", () => {
   beforeEach(() => {
@@ -213,7 +228,7 @@ describe("RPC Retry Handler", () => {
 
   describe("Logging functions", () => {
     test("logRetryAttempt logs safe information", () => {
-      const spy = jest.spyOn(console, "log").mockImplementation();
+      mockLogger.warn.mockClear();
       logRetryAttempt({
         attemptNumber: 1,
         totalAttempts: 3,
@@ -223,40 +238,35 @@ describe("RPC Retry Handler", () => {
         details: { walletAddress: "G..." },
       });
 
-      expect(spy).toHaveBeenCalled();
-      const output = spy.mock.calls[0][1];
+      expect(mockLogger.warn).toHaveBeenCalled();
+      const output = mockLogger.warn.mock.calls[0][1];
       expect(output.event).toBe("rpc_retry_attempt");
       expect(output.attemptNumber).toBe(1);
       expect(output.errorReason).toBe("service_unavailable");
-
-      spy.mockRestore();
     });
 
     test("logRetryExhausted logs exhaustion event", () => {
-      const spy = jest.spyOn(console, "error").mockImplementation();
+      mockLogger.error.mockClear();
       logRetryExhausted({
         operationType: "getAccount",
         totalAttempts: 3,
         lastError: { status: 503 },
       });
 
-      expect(spy).toHaveBeenCalled();
-      spy.mockRestore();
+      expect(mockLogger.error).toHaveBeenCalled();
     });
 
     test("logRetrySuccess logs recovery", () => {
-      const spy = jest.spyOn(console, "info").mockImplementation();
+      mockLogger.info.mockClear();
       logRetrySuccess({
         operationType: "getAccount",
         attemptNumber: 2,
       });
 
-      expect(spy).toHaveBeenCalled();
-      const output = spy.mock.calls[0][1];
+      expect(mockLogger.info).toHaveBeenCalled();
+      const output = mockLogger.info.mock.calls[0][1];
       expect(output.event).toBe("rpc_retry_success");
       expect(output.successfulAttempt).toBe(2);
-
-      spy.mockRestore();
     });
   });
 
@@ -388,7 +398,7 @@ describe("RPC Retry Handler", () => {
 
     describe("Details parameter", () => {
       test("passes details to logging", async () => {
-        const spy = jest.spyOn(console, "warn").mockImplementation();
+        mockLogger.warn.mockClear();
         const operation = jest
           .fn()
           .mockRejectedValueOnce({ status: 503 })
@@ -400,11 +410,9 @@ describe("RPC Retry Handler", () => {
           details,
         });
 
-        expect(spy).toHaveBeenCalled();
-        const output = spy.mock.calls[0][1];
+        expect(mockLogger.warn).toHaveBeenCalled();
+        const output = mockLogger.warn.mock.calls[0][1];
         expect(output.walletAddress).toBe("G...");
-
-        spy.mockRestore();
       });
     });
 

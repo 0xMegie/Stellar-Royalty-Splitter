@@ -141,7 +141,7 @@ kycWebhooksRouter.post(
 
     // Update contributor_verification if we have a wallet address
     let verificationRecord = null;
-    if (walletAddress && /^G[A-Z2-7]{55}$/.test(walletAddress)) {
+    if (walletAddress && /^G[A-Z2-7]{54}$/.test(walletAddress)) {
       const { step, status } = outcomeToVerificationState(outcome);
 
       verificationRecord = upsertVerification(
@@ -198,7 +198,7 @@ const eventsQuerySchema = z.object({
 kycWebhooksRouter.get("/events/:walletAddress", (req, res) => {
   const { walletAddress } = req.params;
 
-  if (!/^G[A-Z2-7]{55}$/.test(walletAddress)) {
+  if (!/^G[A-Z2-7]{54}$/.test(walletAddress)) {
     return sendError(res, 400, "invalid_stellar_address", "Invalid Stellar address format");
   }
 

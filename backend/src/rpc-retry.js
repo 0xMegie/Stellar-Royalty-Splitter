@@ -63,13 +63,39 @@ export const retryConfig = {
  * Returns { isTransient: boolean, reason: string, category: string }
  */
 export function isTransientError(error, _operationType = "unknown") {
-  // Timeout errors from withTimeout wrapper
-  if (error?.status === 504) {
+  if (!error) {
     return {
-      isTransient: true,
-      reason: "timeout",
-      category: "timeout_error",
-      retryable: true,
+      isTransient: false,
+      reason: "unknown_error",
+      category: "invalid",
+      retryable: false,
+    };
+  }
+
+  // Check error message patterns
+  const errorMsg = (error?.message ?? error?.msg ?? "").toLowerCase();
+
+  // Simulation errors (contract logic failures) - never retry (CHECK FIRST - more specific)
+  if (
+    errorMsg.includes("simulation") ||
+    errorMsg.includes("contract") ||
+    errorMsg.includes("invocation")
+  ) {
+    return {
+      isTransient: false,
+      reason: "simulation_error",
+      category: "contract_error",
+      retryable: false,
+    };
+  }
+
+  // Account not found - never retry (CHECK BEFORE generic timeout - more specific)
+  if (errorMsg.includes("account not found")) {
+    return {
+      isTransient: false,
+      reason: "account_not_found",
+      category: "account_error",
+      retryable: false,
     };
   }
 
@@ -135,35 +161,9 @@ export function isTransientError(error, _operationType = "unknown") {
     };
   }
 
-  // Check error message patterns
-  const errorMsg = (error?.message ?? "").toLowerCase();
-
-  // Simulation errors (contract logic failures) - never retry
+  // Generic network/timeout messages - transient (CHECK LAST - less specific)
   if (
-    errorMsg.includes("simulation") ||
-    errorMsg.includes("contract") ||
-    errorMsg.includes("invocation")
-  ) {
-    return {
-      isTransient: false,
-      reason: "simulation_error",
-      category: "contract_error",
-      retryable: false,
-    };
-  }
-
-  // Account not found - never retry (account doesn't exist on network)
-  if (errorMsg.includes("account not found")) {
-    return {
-      isTransient: false,
-      reason: "account_not_found",
-      category: "account_error",
-      retryable: false,
-    };
-  }
-
-  // Generic network/timeout messages - transient
-  if (
+    errorMsg.includes("timed out") ||
     errorMsg.includes("timeout") ||
     errorMsg.includes("network") ||
     errorMsg.includes("econnrefused")
@@ -196,11 +196,12 @@ export function getBackoffDelay(attemptNumber, config = retryConfig) {
   // Cap at maxBackoffMs
   const cappedDelay = Math.min(exponentialDelay, config.maxBackoffMs);
 
-  // Add jitter: ±10% randomness
+  // Add jitter: ±10% randomness, but cap result at maxBackoffMs
   const jitterFactor = 0.9 + Math.random() * 0.2;
   const delayWithJitter = Math.round(cappedDelay * jitterFactor);
 
-  return delayWithJitter;
+  // Ensure we never exceed max backoff even with jitter
+  return Math.min(delayWithJitter, config.maxBackoffMs);
 }
 
 /**

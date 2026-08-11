@@ -61,13 +61,12 @@ describe("CSV Import - Template", () => {
 
 describe("CSV Import - Validation", () => {
   test("POST /validate with valid CSV returns parsed data", async () => {
-    const csvContent = "address,share_percentage\nGABCDEF1234567890XYZ,10\nG1234567890ABCDEFXYZ,90";
+    const csvContent =
+      "address,share_percentage\nGAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN,10\nGDINTLCC2ELBWZPTW3PDBZ4IZH4CPNVVDWXLPQQ3BVPVWB4VP5Z274ER,90";
     const tmpFile = path.join(__dirname, "_test_valid.csv");
     fs.writeFileSync(tmpFile, csvContent, "utf-8");
 
-    const res = await request(app)
-      .post("/api/v1/csv-import/validate")
-      .attach("file", tmpFile);
+    const res = await request(app).post("/api/v1/csv-import/validate").attach("file", tmpFile);
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -82,9 +81,7 @@ describe("CSV Import - Validation", () => {
     const tmpFile = path.join(__dirname, "_test_invalid.csv");
     fs.writeFileSync(tmpFile, csvContent, "utf-8");
 
-    const res = await request(app)
-      .post("/api/v1/csv-import/validate")
-      .attach("file", tmpFile);
+    const res = await request(app).post("/api/v1/csv-import/validate").attach("file", tmpFile);
 
     expect(res.status).toBe(200);
     expect(res.body.data.errors.length).toBeGreaterThan(0);
@@ -93,13 +90,12 @@ describe("CSV Import - Validation", () => {
   });
 
   test("POST /validate with shares not summing to 100 returns errors", async () => {
-    const csvContent = "address,share_percentage\nGABCDEF1234567890XYZ,10\nG1234567890ABCDEFXYZ,10";
+    const csvContent =
+      "address,share_percentage\nGAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN,10\nGDINTLCC2ELBWZPTW3PDBZ4IZH4CPNVVDWXLPQQ3BVPVWB4VP5Z274ER,10";
     const tmpFile = path.join(__dirname, "_test_sum.csv");
     fs.writeFileSync(tmpFile, csvContent, "utf-8");
 
-    const res = await request(app)
-      .post("/api/v1/csv-import/validate")
-      .attach("file", tmpFile);
+    const res = await request(app).post("/api/v1/csv-import/validate").attach("file", tmpFile);
 
     expect(res.status).toBe(200);
     expect(res.body.data.errors.length).toBeGreaterThan(0);
@@ -108,8 +104,7 @@ describe("CSV Import - Validation", () => {
   });
 
   test("POST /validate without file returns error", async () => {
-    const res = await request(app)
-      .post("/api/v1/csv-import/validate");
+    const res = await request(app).post("/api/v1/csv-import/validate");
 
     expect(res.status).toBe(400);
   });
@@ -117,7 +112,8 @@ describe("CSV Import - Validation", () => {
 
 describe("CSV Import - Preview", () => {
   test("POST /preview returns preview data", async () => {
-    const csvContent = "address,share_percentage\nGABCDEF1234567890XYZ,50\nG1234567890ABCDEFXYZ,50";
+    const csvContent =
+      "address,share_percentage\nGAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN,50\nGDINTLCC2ELBWZPTW3PDBZ4IZH4CPNVVDWXLPQQ3BVPVWB4VP5Z274ER,50";
     const tmpFile = path.join(__dirname, "_test_preview.csv");
     fs.writeFileSync(tmpFile, csvContent, "utf-8");
 
@@ -136,15 +132,27 @@ describe("CSV Import - Preview", () => {
 
 describe("CSV Import - Import Flow", () => {
   beforeEach(() => {
-    mockCreateCsvImport.mockReturnValue({ id: 1, contractId: CONTRACT_ID, fileName: "test.csv", rowCount: 2, importedBy: "admin" });
-    mockGetCsvImport.mockReturnValue({ id: 1, contractId: CONTRACT_ID, fileName: "test.csv", status: "completed" });
+    mockCreateCsvImport.mockReturnValue({
+      id: 1,
+      contractId: CONTRACT_ID,
+      fileName: "test.csv",
+      rowCount: 2,
+      importedBy: "admin",
+    });
+    mockGetCsvImport.mockReturnValue({
+      id: 1,
+      contractId: CONTRACT_ID,
+      fileName: "test.csv",
+      status: "completed",
+    });
     mockGetImportResults.mockReturnValue([]);
     mockGetImportSummary.mockReturnValue({ total: 2, successCount: 2, errorCount: 0 });
     mockGetCsvImportsByContract.mockReturnValue([]);
   });
 
   test("POST /import imports CSV successfully", async () => {
-    const csvContent = "address,share_percentage\nGABCDEF1234567890XYZ,50\nG1234567890ABCDEFXYZ,50";
+    const csvContent =
+      "address,share_percentage\nGAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN,50\nGDINTLCC2ELBWZPTW3PDBZ4IZH4CPNVVDWXLPQQ3BVPVWB4VP5Z274ER,50";
     const tmpFile = path.join(__dirname, "_test_import.csv");
     fs.writeFileSync(tmpFile, csvContent, "utf-8");
 
@@ -165,9 +173,7 @@ describe("CSV Import - Import Flow", () => {
     const tmpFile = path.join(__dirname, "_test_no_contract.csv");
     fs.writeFileSync(tmpFile, csvContent, "utf-8");
 
-    const res = await request(app)
-      .post("/api/v1/csv-import/import")
-      .attach("file", tmpFile);
+    const res = await request(app).post("/api/v1/csv-import/import").attach("file", tmpFile);
 
     expect(res.status).toBe(400);
 
@@ -175,7 +181,9 @@ describe("CSV Import - Import Flow", () => {
   });
 
   test("GET /history/:contractId returns import history", async () => {
-    mockGetCsvImportsByContract.mockReturnValue([{ id: 1, contractId: CONTRACT_ID, fileName: "test.csv", status: "completed" }]);
+    mockGetCsvImportsByContract.mockReturnValue([
+      { id: 1, contractId: CONTRACT_ID, fileName: "test.csv", status: "completed" },
+    ]);
     const res = await request(app).get(`/api/v1/csv-import/history/${CONTRACT_ID}`);
     expect(res.status).toBe(200);
     expect(res.body.data.length).toBe(1);
@@ -183,7 +191,9 @@ describe("CSV Import - Import Flow", () => {
 
   test("GET /results/:importId returns import results", async () => {
     mockGetCsvImport.mockReturnValue({ id: 1, contractId: CONTRACT_ID });
-    mockGetImportResults.mockReturnValue([{ id: 1, rowIndex: 1, address: "G...", share: 50, status: "success" }]);
+    mockGetImportResults.mockReturnValue([
+      { id: 1, rowIndex: 1, address: "G...", share: 50, status: "success" },
+    ]);
     mockGetImportSummary.mockReturnValue({ total: 1, successCount: 1, errorCount: 0 });
 
     const res = await request(app).get("/api/v1/csv-import/results/1");

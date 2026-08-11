@@ -46,7 +46,14 @@ describe("deliverDistributeWebhooks (#295)", () => {
 
   test("POSTs payload to registered webhooks", async () => {
     listWebhooks.mockReturnValue([
-      { id: 1, url: "https://example.com/hook", contractId: "CAAA", enabled: 1, retry_count: 0, next_retry_time: null },
+      {
+        id: 1,
+        url: "https://example.com/hook",
+        contractId: "CAAA",
+        enabled: 1,
+        retry_count: 0,
+        next_retry_time: null,
+      },
     ]);
 
     global.fetch = jest.fn(async () => ({
@@ -80,7 +87,14 @@ describe("deliverDistributeWebhooks (#295)", () => {
 
   test("stores payload and schedules retry on first delivery failure", async () => {
     listWebhooks.mockReturnValue([
-      { id: 1, url: "https://example.com/hook", contractId: "CAAA", enabled: 1, retry_count: 0, next_retry_time: null },
+      {
+        id: 1,
+        url: "https://example.com/hook",
+        contractId: "CAAA",
+        enabled: 1,
+        retry_count: 0,
+        next_retry_time: null,
+      },
     ]);
 
     global.fetch = jest.fn(async () => ({
@@ -108,14 +122,22 @@ describe("deliverDistributeWebhooks (#295)", () => {
     const callArgs = updateWebhookRetryStateWithPayload.mock.calls[0];
     expect(callArgs[0]).toBe(1);
     expect(callArgs[1]).toBeGreaterThan(0);
-    const payload = JSON.parse(callArgs[2]);
+    expect(callArgs[2]).toBeTruthy(); // nextRetryTime
+    const payload = JSON.parse(callArgs[3]);
     expect(payload.event).toBe("distribute.confirmed");
     expect(payload.transactionHash).toBe("d".repeat(64));
   });
 
   test("resets retry state on successful delivery after previous failures", async () => {
     listWebhooks.mockReturnValue([
-      { id: 1, url: "https://example.com/hook", contractId: "CAAA", enabled: 1, retry_count: 2, next_retry_time: "2026-01-01T00:00:00.000Z" },
+      {
+        id: 1,
+        url: "https://example.com/hook",
+        contractId: "CAAA",
+        enabled: 1,
+        retry_count: 2,
+        next_retry_time: "2026-01-01T00:00:00.000Z",
+      },
     ]);
 
     global.fetch = jest.fn(async () => ({

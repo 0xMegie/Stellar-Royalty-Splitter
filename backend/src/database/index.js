@@ -68,11 +68,7 @@ export {
 export { getPaymentPreference, savePaymentPreference } from "./payment-preferences.js";
 
 // Transaction fee display (#606)
-export {
-  recordTransactionFee,
-  getTransactionFee,
-  getFeesByContract,
-} from "./transaction-fees.js";
+export { recordTransactionFee, getTransactionFee, getFeesByContract } from "./transaction-fees.js";
 
 // Notification preferences (#605)
 export {
@@ -246,12 +242,24 @@ export {
 } from "./contributor-communications.js";
 
 // Reusable royalty split templates (#652)
+export { createTemplate, listTemplates, getTemplateById, deleteTemplate } from "./templates.js";
+
+// Contributor metrics (#600)
 export {
-  createTemplate,
-  listTemplates,
-  getTemplateById,
-  deleteTemplate,
-} from "./templates.js";
+  getCachedMetrics,
+  recomputeMetrics,
+  getOrComputeMetrics,
+  recomputeContractMetrics,
+  getContractLeaderboard,
+} from "./contributor-metrics.js";
+
+// Contributor status (#593)
+export {
+  getContributorStatus,
+  listContributorStatuses,
+  setContributorStatus,
+  isContributorBlocked,
+} from "./contributor-status.js";
 
 // Default export for backwards compatibility
 import { db } from "./core.js";

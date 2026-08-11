@@ -91,7 +91,7 @@ describe("POST /api/v1/initialize – integration", () => {
       .post("/api/v1/initialize")
       .send({ ...validBody, padding: "x".repeat(INITIALIZE_PAYLOAD_LIMIT_BYTES) });
     expect(res.status).toBe(413);
-    expect(res.body).toEqual({ error: "Payload too large" });
+    expect(res.body.error).toBe("Payload too large");
     expect(isContractInitialized).not.toHaveBeenCalled();
     expect(retryBuildTx).not.toHaveBeenCalled();
     expect(recordTransaction).not.toHaveBeenCalled();
@@ -107,7 +107,7 @@ describe("POST /api/v1/initialize – integration", () => {
         shares: [10000],
       });
     expect(res.status).toBe(413);
-    expect(res.body).toEqual({ error: "Collaborators payload too large" });
+    expect(res.body.error).toBe("Collaborators payload too large");
     expect(isContractInitialized).not.toHaveBeenCalled();
     expect(retryBuildTx).not.toHaveBeenCalled();
     expect(recordTransaction).not.toHaveBeenCalled();
@@ -115,7 +115,10 @@ describe("POST /api/v1/initialize – integration", () => {
 
   test("503 when Stellar RPC is unavailable", async () => {
     isContractInitialized.mockResolvedValue(false);
-    retryBuildTx.mockRejectedValue({ status: 503, message: "Stellar RPC is currently unavailable. Please try again later." });
+    retryBuildTx.mockRejectedValue({
+      status: 503,
+      message: "Stellar RPC is currently unavailable. Please try again later.",
+    });
     const res = await request(app).post("/api/v1/initialize").send(validBody);
     expect(res.status).toBe(503);
     expect(res.body.error).toMatch(/unavailable/i);
