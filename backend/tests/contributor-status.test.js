@@ -33,7 +33,7 @@ app.use(express.json());
 app.use("/api/v1/contributor-status", contributorStatusRouter);
 
 const VALID_CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
-const VALID_ADDRESS = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+const VALID_ADDRESS = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2QZAAA";
 
 describe("GET /api/v1/contributor-status/:contractId", () => {
   beforeEach(() => jest.clearAllMocks());

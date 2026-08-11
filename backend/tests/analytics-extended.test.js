@@ -28,7 +28,7 @@ app.use(express.json());
 app.use("/api/v1", analyticsRouter);
 
 const VALID_CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const VALID_ADDRESS = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+const VALID_ADDRESS = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2QZAAA";
 
 describe("GET /api/v1/analytics/:contractId/volume (#590)", () => {
   beforeEach(() => {
@@ -47,9 +47,7 @@ describe("GET /api/v1/analytics/:contractId/volume (#590)", () => {
       all: () => {
         callCount++;
         if (callCount === 1) {
-          return [
-            { period: "2024-01-15", transactions: 5, volume: 100.5 },
-          ];
+          return [{ period: "2024-01-15", transactions: 5, volume: 100.5 }];
         }
         // status counts query
         return [
@@ -70,9 +68,7 @@ describe("GET /api/v1/analytics/:contractId/volume (#590)", () => {
 
   test("returns 400 for invalid bucket param — defaults gracefully", async () => {
     mockPrepare.mockReturnValue({ all: () => [], get: () => null });
-    const res = await request(app).get(
-      `/api/v1/analytics/${VALID_CONTRACT}/volume?bucket=invalid`
-    );
+    const res = await request(app).get(`/api/v1/analytics/${VALID_CONTRACT}/volume?bucket=invalid`);
     // Invalid bucket defaults to 'day', so still 200
     expect(res.status).toBe(200);
     expect(res.body.data.bucket).toBe("day");
@@ -104,9 +100,7 @@ describe("GET /api/v1/analytics/multi-contract (#568)", () => {
       ],
     });
 
-    const res = await request(app).get(
-      `/api/v1/analytics/multi-contract?address=${VALID_ADDRESS}`
-    );
+    const res = await request(app).get(`/api/v1/analytics/multi-contract?address=${VALID_ADDRESS}`);
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.summary.contractCount).toBe(1);
@@ -120,17 +114,13 @@ describe("GET /api/v1/analytics/multi-contract (#568)", () => {
   });
 
   test("returns 400 for invalid address format", async () => {
-    const res = await request(app).get(
-      "/api/v1/analytics/multi-contract?address=INVALID"
-    );
+    const res = await request(app).get("/api/v1/analytics/multi-contract?address=INVALID");
     expect(res.status).toBe(400);
   });
 
   test("returns empty contracts array when no earnings found", async () => {
     mockPrepare.mockReturnValue({ all: () => [] });
-    const res = await request(app).get(
-      `/api/v1/analytics/multi-contract?address=${VALID_ADDRESS}`
-    );
+    const res = await request(app).get(`/api/v1/analytics/multi-contract?address=${VALID_ADDRESS}`);
     expect(res.status).toBe(200);
     expect(res.body.data.summary.totalEarned).toBe(0);
     expect(res.body.data.contracts).toHaveLength(0);

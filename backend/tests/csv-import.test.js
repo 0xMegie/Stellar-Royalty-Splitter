@@ -62,7 +62,7 @@ describe("CSV Import - Template", () => {
 describe("CSV Import - Validation", () => {
   test("POST /validate with valid CSV returns parsed data", async () => {
     const csvContent =
-      "address,share_percentage\nGAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN,10\nGDINTLCC2ELBWZPTW3PDBZ4IZH4CPNVVDWXLPQQ3BVPVWB4VP5Z274ER,90";
+      "address,share_percentage\nGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2QZAAA,10\nGBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB2QZAAA,90";
     const tmpFile = path.join(__dirname, "_test_valid.csv");
     fs.writeFileSync(tmpFile, csvContent, "utf-8");
 
@@ -91,7 +91,7 @@ describe("CSV Import - Validation", () => {
 
   test("POST /validate with shares not summing to 100 returns errors", async () => {
     const csvContent =
-      "address,share_percentage\nGAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN,10\nGDINTLCC2ELBWZPTW3PDBZ4IZH4CPNVVDWXLPQQ3BVPVWB4VP5Z274ER,10";
+      "address,share_percentage\nGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2QZAAA,10\nGBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB2QZAAA,10";
     const tmpFile = path.join(__dirname, "_test_sum.csv");
     fs.writeFileSync(tmpFile, csvContent, "utf-8");
 
@@ -113,7 +113,7 @@ describe("CSV Import - Validation", () => {
 describe("CSV Import - Preview", () => {
   test("POST /preview returns preview data", async () => {
     const csvContent =
-      "address,share_percentage\nGAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN,50\nGDINTLCC2ELBWZPTW3PDBZ4IZH4CPNVVDWXLPQQ3BVPVWB4VP5Z274ER,50";
+      "address,share_percentage\nGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2QZAAA,50\nGBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB2QZAAA,50";
     const tmpFile = path.join(__dirname, "_test_preview.csv");
     fs.writeFileSync(tmpFile, csvContent, "utf-8");
 
@@ -152,7 +152,7 @@ describe("CSV Import - Import Flow", () => {
 
   test("POST /import imports CSV successfully", async () => {
     const csvContent =
-      "address,share_percentage\nGAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN,50\nGDINTLCC2ELBWZPTW3PDBZ4IZH4CPNVVDWXLPQQ3BVPVWB4VP5Z274ER,50";
+      "address,share_percentage\nGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2QZAAA,50\nGBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB2QZAAA,50";
     const tmpFile = path.join(__dirname, "_test_import.csv");
     fs.writeFileSync(tmpFile, csvContent, "utf-8");
 

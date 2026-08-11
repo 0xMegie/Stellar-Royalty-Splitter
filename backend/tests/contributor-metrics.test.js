@@ -32,7 +32,7 @@ const app = express();
 app.use(express.json());
 app.use("/api/v1/contributor-metrics", contributorMetricsRouter);
 
-const VALID_WALLET = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+const VALID_WALLET = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2QZAAA";
 const VALID_CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 const sampleMetrics = {
@@ -73,8 +73,7 @@ describe("GET /api/v1/contributor-metrics/:walletAddress", () => {
   test("force-refreshes metrics when refresh=true", async () => {
     mockRecomputeMetrics.mockReturnValue(sampleMetrics);
 
-    const res = await request(app)
-      .get(`/api/v1/contributor-metrics/${VALID_WALLET}?refresh=true`);
+    const res = await request(app).get(`/api/v1/contributor-metrics/${VALID_WALLET}?refresh=true`);
 
     expect(res.status).toBe(200);
     expect(mockRecomputeMetrics).toHaveBeenCalledWith(VALID_WALLET);
@@ -84,8 +83,9 @@ describe("GET /api/v1/contributor-metrics/:walletAddress", () => {
   test("respects custom maxAgeMs parameter", async () => {
     mockGetOrComputeMetrics.mockReturnValue(sampleMetrics);
 
-    const res = await request(app)
-      .get(`/api/v1/contributor-metrics/${VALID_WALLET}?maxAgeMs=60000`);
+    const res = await request(app).get(
+      `/api/v1/contributor-metrics/${VALID_WALLET}?maxAgeMs=60000`
+    );
 
     expect(res.status).toBe(200);
     expect(mockGetOrComputeMetrics).toHaveBeenCalledWith(VALID_WALLET, 60000);
@@ -122,9 +122,7 @@ describe("POST /api/v1/contributor-metrics/:walletAddress/refresh", () => {
   });
 
   test("returns 400 for invalid wallet address", async () => {
-    const res = await request(app)
-      .post("/api/v1/contributor-metrics/BADINPUT/refresh")
-      .send({});
+    const res = await request(app).post("/api/v1/contributor-metrics/BADINPUT/refresh").send({});
     expect(res.status).toBe(400);
   });
 });
@@ -139,9 +137,7 @@ describe("GET /api/v1/contributor-metrics/leaderboard/:contractId", () => {
       { walletAddress: VALID_WALLET, reliabilityScore: 90, successRate: 97, totalPayouts: 30 },
     ]);
 
-    const res = await request(app).get(
-      `/api/v1/contributor-metrics/leaderboard/${VALID_CONTRACT}`
-    );
+    const res = await request(app).get(`/api/v1/contributor-metrics/leaderboard/${VALID_CONTRACT}`);
 
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(1);
@@ -186,7 +182,10 @@ describe("POST /api/v1/contributor-metrics/recompute/:contractId", () => {
     expect(res.status).toBe(200);
     expect(res.body.data.updated).toBe(5);
     expect(mockAddAuditLog).toHaveBeenCalledWith(
-      VALID_CONTRACT, "contributor_metrics_bulk_recomputed", "system", { updated: 5 }
+      VALID_CONTRACT,
+      "contributor_metrics_bulk_recomputed",
+      "system",
+      { updated: 5 }
     );
   });
 

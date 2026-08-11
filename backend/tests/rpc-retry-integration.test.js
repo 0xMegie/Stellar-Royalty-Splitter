@@ -3,6 +3,7 @@
  * Simulates real transient failures in getAccount and fee fetching.
  */
 
+import { jest, describe, test, expect, beforeEach } from "@jest/globals";
 import { withRetry, retryConfig } from "../src/rpc-retry.js";
 
 describe("RPC Retry Integration with Stellar Operations", () => {
