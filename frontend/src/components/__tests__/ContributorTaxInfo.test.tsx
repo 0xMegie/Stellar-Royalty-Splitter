@@ -1,17 +1,18 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, beforeEach, test, expect, vi } from "vitest";
 import { ContributorTaxInfo } from "../ContributorTaxInfo";
 import { api } from "../../api";
 
-jest.mock("../../api");
+vi.mock("../../api");
 
-const mockApi = api as jest.Mocked<typeof api>;
+const mockApi = api as any;
 const WALLET = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 
 describe("ContributorTaxInfo", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-    mockApi.getContributorTax = jest.fn();
-    mockApi.saveContributorTax = jest.fn();
+    vi.clearAllMocks();
+    mockApi.getContributorTax = vi.fn();
+    mockApi.saveContributorTax = vi.fn();
   });
 
   test("loads existing tax info on mount", async () => {
@@ -90,7 +91,7 @@ describe("ContributorTaxInfo", () => {
     await waitFor(() => {
       const select = screen.getByLabelText(/Tax Status/i) as HTMLSelectElement;
       expect(select).toBeDefined();
-      const options = Array.from(select.options).map(o => o.value);
+      const options = Array.from(select.options).map((o) => o.value);
       expect(options).toContain("not_collected");
       expect(options).toContain("pending");
       expect(options).toContain("completed");

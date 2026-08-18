@@ -1,4 +1,4 @@
-import { describe, test, expect } from "@jest/globals";
+import { describe, test, expect } from "vitest";
 import { getStellarExpertTxUrl, formatTxHash } from "./explorer";
 
 /**
@@ -55,9 +55,7 @@ describe("explorer helpers (#299, #686)", () => {
   // -----------------------------------------------------------------------
 
   test("truncates a 64-char hash for display", () => {
-    expect(formatTxHash(FULL_HASH)).toBe(
-      `${"a".repeat(8)}…${"a".repeat(8)}`,
-    );
+    expect(formatTxHash(FULL_HASH)).toBe(`${"a".repeat(8)}…${"a".repeat(8)}`);
   });
 
   test("short hash (≤ head+tail+3) is returned unchanged", () => {

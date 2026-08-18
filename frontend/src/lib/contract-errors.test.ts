@@ -3,7 +3,7 @@
  * Error codes match the `ContractError` enum in `src/lib.rs`.
  */
 
-import { describe, test, expect } from "@jest/globals";
+import { describe, test, expect } from "vitest";
 import {
   CONTRACT_ERROR_MESSAGES,
   extractContractError,

@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api, RoyaltyTemplate, RoyaltyTemplateAllocation } from "../api";
-import React, { useCallback, useRef, useState } from "react";
-import { api } from "../api";
 import { signAndSubmitTransaction } from "../stellar";
 import { useNetwork } from "../context/NetworkContext";
 import FormStatus from "./FormStatus";
-import ValidationSummary, { type ValidationSummaryIssue } from "./ValidationSummary";
+import ValidationSummary, {
+  type ValidationSummaryIssue,
+} from "./ValidationSummary";
 import { useFormStatus } from "../hooks/useFormStatus";
 import { useRoyaltyDraft } from "../hooks/useRoyaltyDraft";
 import {
@@ -15,7 +15,6 @@ import {
   downloadRoyaltyConfig,
   RoyaltyConfigExportError,
 } from "../utils/royaltyConfig";
-
 
 interface Collaborator {
   address: string;
@@ -86,7 +85,9 @@ function validateTemplateAllocations(allocations: RoyaltyTemplateAllocation[]) {
 
 function updatePercentageError(
   setErrors: React.Dispatch<
-    React.SetStateAction<Record<number, { address?: string; basisPoints?: string }>>
+    React.SetStateAction<
+      Record<number, { address?: string; basisPoints?: string }>
+    >
   >,
   i: number,
   error: string,
@@ -149,7 +150,10 @@ export default function InitializeForm({
       const imported = parseRoyaltyConfigImport(text);
       setCollaborators(imported);
       setErrors({});
-      setStatus("ok", `Imported ${imported.length} collaborator(s) from ${file.name}.`);
+      setStatus(
+        "ok",
+        `Imported ${imported.length} collaborator(s) from ${file.name}.`,
+      );
     } catch (e: unknown) {
       if (e instanceof RoyaltyConfigImportError) {
         setStatus("error", e.errors.join(" "));
@@ -161,7 +165,10 @@ export default function InitializeForm({
 
   function handleExport() {
     try {
-      const config = buildRoyaltyConfigExport(collaborators, new Date().toISOString());
+      const config = buildRoyaltyConfigExport(
+        collaborators,
+        new Date().toISOString(),
+      );
       const suffix = contractId ? contractId.slice(0, 8) : "draft";
       downloadRoyaltyConfig(config, `royalty-split-${suffix}.json`);
       setStatus("ok", "Exported royalty split configuration.");
@@ -180,9 +187,10 @@ export default function InitializeForm({
   const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [templateName, setTemplateName] = useState("");
   const [savingTemplate, setSavingTemplate] = useState(false);
-  const [templateStatus, setTemplateStatus] = useState<
-    { type: "ok" | "error"; message: string } | null
-  >(null);
+  const [templateStatus, setTemplateStatus] = useState<{
+    type: "ok" | "error";
+    message: string;
+  } | null>(null);
 
   const fetchTemplates = useCallback(() => {
     if (!walletAddress) return;
@@ -192,7 +200,9 @@ export default function InitializeForm({
       .listTemplates(walletAddress)
       .then((res) => setTemplates(res.data))
       .catch((e: unknown) =>
-        setTemplatesError(e instanceof Error ? e.message : "Failed to load templates"),
+        setTemplatesError(
+          e instanceof Error ? e.message : "Failed to load templates",
+        ),
       )
       .finally(() => setTemplatesLoading(false));
   }, [walletAddress]);
@@ -203,7 +213,9 @@ export default function InitializeForm({
 
   function update(i: number, field: keyof Collaborator, value: string) {
     setCollaborators((prev: Collaborator[]) =>
-      prev.map((c: Collaborator, idx: number) => (idx === i ? { ...c, [field]: value } : c)),
+      prev.map((c: Collaborator, idx: number) =>
+        idx === i ? { ...c, [field]: value } : c,
+      ),
     );
   }
 
@@ -230,7 +242,7 @@ export default function InitializeForm({
       return;
     }
     setCollaborators((prev) =>
-      prev.map((c, idx) => (idx === i ? { ...editBuffer } : c))
+      prev.map((c, idx) => (idx === i ? { ...editBuffer } : c)),
     );
     setEditingIndex(-1);
     setEditBuffer({ address: "", basisPoints: "" });
@@ -248,7 +260,7 @@ export default function InitializeForm({
 
   function removeRow(i: number) {
     setCollaborators((prev) =>
-      prev.filter((_: Collaborator, idx: number) => idx !== i)
+      prev.filter((_: Collaborator, idx: number) => idx !== i),
     );
     if (editingIndex === i) {
       setEditingIndex(-1);
@@ -264,13 +276,17 @@ export default function InitializeForm({
 
     const name = templateName.trim();
     if (!name) {
-      setTemplateStatus({ type: "error", message: "Enter a name for the template." });
+      setTemplateStatus({
+        type: "error",
+        message: "Enter a name for the template.",
+      });
       return;
     }
     if (hasErrors || hasEmptyFields || hasInvalidPercentages) {
       setTemplateStatus({
         type: "error",
-        message: "Fix the collaborator allocation errors before saving as a template.",
+        message:
+          "Fix the collaborator allocation errors before saving as a template.",
       });
       return;
     }
@@ -318,7 +334,10 @@ export default function InitializeForm({
       })),
     );
     setErrors({});
-    setTemplateStatus({ type: "ok", message: `Applied template "${template.name}".` });
+    setTemplateStatus({
+      type: "ok",
+      message: `Applied template "${template.name}".`,
+    });
   }
 
   async function handleDeleteTemplate(id: number, name: string) {
@@ -342,7 +361,7 @@ export default function InitializeForm({
 
   const hasUnsavedEdit = editingIndex >= 0;
   const allRowsCommitted = collaborators.every(
-    (c) => c.address && c.basisPoints
+    (c) => c.address && c.basisPoints,
   );
 
   // Issue #694 — one summary of every active validation issue, derived from
@@ -406,19 +425,27 @@ export default function InitializeForm({
 
   async function submit() {
     if (networkMismatch)
-      return setStatus("error", "Your wallet is on the wrong network. Switch it before submitting.");
-    if (!contractId)
-      return setStatus("error", "Enter a contract ID first.");
+      return setStatus(
+        "error",
+        "Your wallet is on the wrong network. Switch it before submitting.",
+      );
+    if (!contractId) return setStatus("error", "Enter a contract ID first.");
 
     if (hasUnsavedEdit) {
-      return setStatus("error", "Please save or cancel the current edit before submitting.");
+      return setStatus(
+        "error",
+        "Please save or cancel the current edit before submitting.",
+      );
     }
 
     const nextErrors = collaborators.reduce<
       Record<number, { address?: string; basisPoints?: string }>
     >((acc, c, i) => {
       if (!c.address || !STELLAR_ADDRESS_RE.test(c.address)) {
-        acc[i] = { ...acc[i], address: "Must be a valid Stellar address (G..., 56 chars)" };
+        acc[i] = {
+          ...acc[i],
+          address: "Must be a valid Stellar address (G..., 56 chars)",
+        };
       }
       const percentageError = getPercentageError(c.basisPoints);
       if (percentageError) {
@@ -429,7 +456,9 @@ export default function InitializeForm({
 
     if (Object.keys(nextErrors).length > 0) {
       setErrors((prev) => ({ ...prev, ...nextErrors }));
-      const firstErrorIdx = Object.keys(nextErrors).map(Number).sort((a, b) => a - b)[0];
+      const firstErrorIdx = Object.keys(nextErrors)
+        .map(Number)
+        .sort((a, b) => a - b)[0];
       if (firstErrorIdx !== undefined) {
         const fieldErrors = nextErrors[firstErrorIdx];
         if (fieldErrors?.address) {
@@ -438,11 +467,17 @@ export default function InitializeForm({
           percentageRefs.current[firstErrorIdx]?.focus();
         }
       }
-      return setStatus("error", "Please fix all field errors before submitting.");
+      return setStatus(
+        "error",
+        "Please fix all field errors before submitting.",
+      );
     }
 
     if (Math.round(total * 100) !== 10_000)
-      return setStatus("error", `Percentages must sum to 100% (currently ${total.toFixed(2)}%).`);
+      return setStatus(
+        "error",
+        `Percentages must sum to 100% (currently ${total.toFixed(2)}%).`,
+      );
 
     const addresses = collaborators.map((c: Collaborator) => c.address);
     const hasDuplicates = new Set(addresses).size !== addresses.length;
@@ -458,7 +493,9 @@ export default function InitializeForm({
         contractId,
         walletAddress,
         collaborators: addresses,
-        shares: collaborators.map((c: Collaborator) => Math.round(parseFloat(c.basisPoints) * 100)),
+        shares: collaborators.map((c: Collaborator) =>
+          Math.round(parseFloat(c.basisPoints) * 100),
+        ),
       });
 
       setStatus("info", "Signing transaction with Freighter...");
@@ -472,11 +509,16 @@ export default function InitializeForm({
 
       setStatus("ok", `Initialized. Tx: ${hash}`);
       onSuccess();
-
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : "Unknown error";
-      if (errorMessage.includes('409') || errorMessage.includes('already initialized')) {
-        setStatus("error", "⚠️ This contract is already initialized. You cannot re-initialize an existing contract.");
+      if (
+        errorMessage.includes("409") ||
+        errorMessage.includes("already initialized")
+      ) {
+        setStatus(
+          "error",
+          "⚠️ This contract is already initialized. You cannot re-initialize an existing contract.",
+        );
       } else {
         setStatus("error", errorMessage);
       }
@@ -490,8 +532,14 @@ export default function InitializeForm({
       <span className="badge">Initialize</span>
 
       {pendingDraft && (
-        <div className="status info" role="alert" aria-live="polite" data-testid="draft-restore-banner">
-          A saved draft from {new Date(pendingDraft.savedAt).toLocaleString()} was found.{" "}
+        <div
+          className="status info"
+          role="alert"
+          aria-live="polite"
+          data-testid="draft-restore-banner"
+        >
+          A saved draft from {new Date(pendingDraft.savedAt).toLocaleString()}{" "}
+          was found.{" "}
           <button
             type="button"
             onClick={acceptDraft}
@@ -519,17 +567,33 @@ export default function InitializeForm({
               </label>
               <input
                 id={`collaborator-${i}-address`}
-                ref={(el) => { addressRefs.current[i] = el; }}
+                ref={(el) => {
+                  addressRefs.current[i] = el;
+                }}
                 placeholder="Wallet address (G...)"
                 value={c.address}
                 aria-invalid={Boolean(errors[i]?.address)}
-                aria-describedby={errors[i]?.address ? `collaborator-${i}-address-error` : undefined}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => update(i, "address", e.target.value)}
-                onBlur={(e: React.FocusEvent<HTMLInputElement>) => handleBlur(i, "address", e.target.value)}
-                style={{ marginBottom: errors[i]?.address ? "0.25rem" : undefined }}
+                aria-describedby={
+                  errors[i]?.address
+                    ? `collaborator-${i}-address-error`
+                    : undefined
+                }
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  update(i, "address", e.target.value)
+                }
+                onBlur={(e: React.FocusEvent<HTMLInputElement>) =>
+                  handleBlur(i, "address", e.target.value)
+                }
+                style={{
+                  marginBottom: errors[i]?.address ? "0.25rem" : undefined,
+                }}
               />
               {errors[i]?.address && (
-                <span id={`collaborator-${i}-address-error`} className="field-error" role="alert">
+                <span
+                  id={`collaborator-${i}-address-error`}
+                  className="field-error"
+                  role="alert"
+                >
                   {errors[i].address}
                 </span>
               )}
@@ -540,7 +604,9 @@ export default function InitializeForm({
               </label>
               <input
                 id={`collaborator-${i}-percentage`}
-                ref={(el) => { percentageRefs.current[i] = el; }}
+                ref={(el) => {
+                  percentageRefs.current[i] = el;
+                }}
                 placeholder="% (0–100)"
                 type="number"
                 min={0}
@@ -549,22 +615,38 @@ export default function InitializeForm({
                 value={c.basisPoints}
                 className={errors[i]?.basisPoints ? "input-error" : ""}
                 aria-invalid={Boolean(errors[i]?.basisPoints)}
-                aria-describedby={errors[i]?.basisPoints ? `collaborator-${i}-percentage-error` : undefined}
+                aria-describedby={
+                  errors[i]?.basisPoints
+                    ? `collaborator-${i}-percentage-error`
+                    : undefined
+                }
                 onKeyDown={handlePercentageKeyDown}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                   const { value } = e.target;
                   if (!isAllowedPercentageInput(value)) {
-                    updatePercentageError(setErrors, i, getPercentageError(value));
+                    updatePercentageError(
+                      setErrors,
+                      i,
+                      getPercentageError(value),
+                    );
                     return;
                   }
                   update(i, "basisPoints", value);
                   validateRow(i, "basisPoints", value);
                 }}
-                onBlur={(e: React.FocusEvent<HTMLInputElement>) => handleBlur(i, "basisPoints", e.target.value)}
-                style={{ marginBottom: errors[i]?.basisPoints ? "0.25rem" : undefined }}
+                onBlur={(e: React.FocusEvent<HTMLInputElement>) =>
+                  handleBlur(i, "basisPoints", e.target.value)
+                }
+                style={{
+                  marginBottom: errors[i]?.basisPoints ? "0.25rem" : undefined,
+                }}
               />
               {errors[i]?.basisPoints && (
-                <span id={`collaborator-${i}-percentage-error`} className="field-error" role="alert">
+                <span
+                  id={`collaborator-${i}-percentage-error`}
+                  className="field-error"
+                  role="alert"
+                >
                   {errors[i].basisPoints}
                 </span>
               )}
@@ -592,7 +674,12 @@ export default function InitializeForm({
         Total: {total.toFixed(2)}% / 100%
         {Math.round(total * 100) !== 10_000 && total > 0 && (
           <span className="share-total__hint" aria-hidden="true">
-            {" "}({Math.round(total * 100) < 10_000 ? `${(100 - total).toFixed(2)}% remaining` : `${(total - 100).toFixed(2)}% over`})
+            {" "}
+            (
+            {Math.round(total * 100) < 10_000
+              ? `${(100 - total).toFixed(2)}% remaining`
+              : `${(total - 100).toFixed(2)}% over`}
+            )
           </span>
         )}
       </div>
@@ -604,14 +691,17 @@ export default function InitializeForm({
       />
       <ValidationSummary issues={validationIssues} onFocusField={focusField} />
 
-      {collaborators.length >= MAX_COLLABORATORS - 5 && collaborators.length < MAX_COLLABORATORS && (
-        <div className="status info">
-          Approaching the limit — max {MAX_COLLABORATORS} collaborators allowed ({MAX_COLLABORATORS - collaborators.length} remaining).
-        </div>
-      )}
+      {collaborators.length >= MAX_COLLABORATORS - 5 &&
+        collaborators.length < MAX_COLLABORATORS && (
+          <div className="status info">
+            Approaching the limit — max {MAX_COLLABORATORS} collaborators
+            allowed ({MAX_COLLABORATORS - collaborators.length} remaining).
+          </div>
+        )}
       {collaborators.length >= MAX_COLLABORATORS && (
         <div className="status error">
-          Maximum of {MAX_COLLABORATORS} collaborators reached. Remove one to add another.
+          Maximum of {MAX_COLLABORATORS} collaborators reached. Remove one to
+          add another.
         </div>
       )}
 
@@ -641,7 +731,13 @@ export default function InitializeForm({
           className="btn-primary"
           onClick={submit}
           disabled={loading || hasUnsavedEdit || !allRowsCommitted}
-          disabled={loading || hasErrors || hasEmptyFields || hasInvalidPercentages || networkMismatch}
+          disabled={
+            loading ||
+            hasErrors ||
+            hasEmptyFields ||
+            hasInvalidPercentages ||
+            networkMismatch
+          }
         >
           {loading ? "Submitting…" : "Initialize contract"}
         </button>
@@ -649,7 +745,9 @@ export default function InitializeForm({
 
       {networkMismatch && (
         <div className="status error" role="alert">
-          Your wallet is on the wrong network. Switch it to {network === "mainnet" ? "Mainnet" : "Testnet"} to initialize this contract.
+          Your wallet is on the wrong network. Switch it to{" "}
+          {network === "mainnet" ? "Mainnet" : "Testnet"} to initialize this
+          contract.
         </div>
       )}
       {status && <FormStatus type={status.type} message={status.message} />}

@@ -1,24 +1,25 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
+import { describe, it, expect, vi } from "vitest";
 import { Navigation } from "../Navigation";
 
-jest.mock("../NotificationBadge", () => ({
+vi.mock("../NotificationBadge", () => ({
   NotificationBadge: () => <div data-testid="notification-badge" />,
 }));
 
-jest.mock("../../context/ThemeContext", () => ({
-  useTheme: () => ({ isDark: false, toggleTheme: jest.fn() }),
+vi.mock("../../context/ThemeContext", () => ({
+  useTheme: () => ({ isDark: false, toggleTheme: vi.fn() }),
 }));
 
-jest.mock("../../context/NetworkContext", () => ({
-  useNetwork: () => ({ network: "testnet", setNetwork: jest.fn() }),
+vi.mock("../../context/NetworkContext", () => ({
+  useNetwork: () => ({ network: "testnet", setNetwork: vi.fn() }),
 }));
 
 const WALLET = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 
 function setup(props = {}) {
-  const onPageChange = jest.fn();
-  const onDisconnect = jest.fn();
+  const onPageChange = vi.fn();
+  const onDisconnect = vi.fn();
   render(
     <Navigation
       currentPage="dashboard"
@@ -27,7 +28,7 @@ function setup(props = {}) {
       onDisconnect={onDisconnect}
       wsConnected={false}
       {...props}
-    />
+    />,
   );
   return { onPageChange, onDisconnect };
 }

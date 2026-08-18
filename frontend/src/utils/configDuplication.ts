@@ -69,7 +69,7 @@ export function getDuplicateSourceDescription(
     return "Configuration";
   }
 
-  const shortId = draft.sourceContractId.slice(0, 8) + "...";
+  const shortId = draft.sourceContractId.slice(0, 7) + "...";
   return `Configuration from ${shortId}`;
 }
 

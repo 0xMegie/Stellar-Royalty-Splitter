@@ -1,18 +1,19 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, beforeEach, test, expect, vi } from "vitest";
 import { BulkContributorUpload } from "../BulkContributorUpload";
 import { api } from "../../api";
 
-jest.mock("../../api");
+vi.mock("../../api");
 
-const mockApi = api as jest.Mocked<typeof api>;
+const mockApi = api as any;
 const CONTRACT_ID = "CAFQE4X7R7X7R7X7R7X7R7X7R7X7R7X7R7X7R7X7R7X7R7X7R7X7R7";
 
 describe("BulkContributorUpload", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-    mockApi.previewCsv = jest.fn();
-    mockApi.importCsv = jest.fn();
-    mockApi.downloadCsvTemplate = jest.fn();
+    vi.clearAllMocks();
+    mockApi.previewCsv = vi.fn();
+    mockApi.importCsv = vi.fn();
+    mockApi.downloadCsvTemplate = vi.fn();
   });
 
   test("renders upload dropzone", () => {
@@ -63,7 +64,12 @@ describe("BulkContributorUpload", () => {
         totalRows: 2,
         validRows: [],
         errorRows: [
-          { rowIndex: 1, address: "invalid", share: "50", error: "Invalid Stellar address" },
+          {
+            rowIndex: 1,
+            address: "invalid",
+            share: "50",
+            error: "Invalid Stellar address",
+          },
         ],
         summary: { total: 1, valid: 0, errors: 1 },
       },

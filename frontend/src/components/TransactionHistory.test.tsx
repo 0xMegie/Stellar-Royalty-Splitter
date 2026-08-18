@@ -11,17 +11,17 @@
 
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
+import { describe, beforeEach, test, expect, vi } from "vitest";
 import { TransactionHistory } from "./TransactionHistory";
 
-jest.mock("../api");
+vi.mock("../api");
 
 import { api } from "../api";
 
-const mockGetTransactionHistory = api.getTransactionHistory as jest.Mock;
-const mockConfirmTransaction = api.confirmTransaction as jest.Mock;
+const mockGetTransactionHistory = api.getTransactionHistory as any;
+const mockConfirmTransaction = api.confirmTransaction as any;
 
-const MOCK_CONTRACT =
-  "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const MOCK_CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 const mockTransactions = [
   {
@@ -174,7 +174,10 @@ describe("TransactionHistory lifecycle status (#712)", () => {
   });
 
   it("shows an 'Unknown' badge for a status outside pending/confirmed/failed", async () => {
-    const weirdStatusTx = { ...mockTransactions[0], status: "something_new" as never };
+    const weirdStatusTx = {
+      ...mockTransactions[0],
+      status: "something_new" as never,
+    };
     mockGetTransactionHistory.mockResolvedValue({
       success: true,
       data: [weirdStatusTx],
@@ -203,10 +206,14 @@ describe("TransactionHistory lifecycle status (#712)", () => {
 
     // Exactly one row (the pending one) gets a refresh action.
     expect(
-      screen.getByLabelText(`Refresh status for transaction ${pendingTx.txHash}`),
+      screen.getByLabelText(
+        `Refresh status for transaction ${pendingTx.txHash}`,
+      ),
     ).toBeTruthy();
     expect(
-      screen.queryByLabelText(`Refresh status for transaction ${mockTransactions[0].txHash}`),
+      screen.queryByLabelText(
+        `Refresh status for transaction ${mockTransactions[0].txHash}`,
+      ),
     ).toBeNull();
   });
 

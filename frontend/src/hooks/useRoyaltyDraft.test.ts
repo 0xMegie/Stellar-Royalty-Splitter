@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, jest } from "@jest/globals";
+import { describe, test, expect, beforeEach, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { useRoyaltyDraft, DRAFT_STORAGE_KEY } from "./useRoyaltyDraft";
 
@@ -12,11 +12,16 @@ const validCollaborators = [
 
 function renderDraftHook(
   collaborators = [{ address: "", basisPoints: "" }],
-  onRestore = jest.fn<(c: { address: string; basisPoints: string }[]) => void>(),
+  onRestore = vi.fn<(c: { address: string; basisPoints: string }[]) => void>(),
 ) {
   return renderHook(
-    ({ cols, restore }: { cols: typeof collaborators; restore: typeof onRestore }) =>
-      useRoyaltyDraft(cols, restore),
+    ({
+      cols,
+      restore,
+    }: {
+      cols: typeof collaborators;
+      restore: typeof onRestore;
+    }) => useRoyaltyDraft(cols, restore),
     { initialProps: { cols: collaborators, restore: onRestore } },
   );
 }
@@ -24,11 +29,11 @@ function renderDraftHook(
 describe("useRoyaltyDraft — autosave (#669)", () => {
   beforeEach(() => {
     localStorage.clear();
-    jest.useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
-    jest.useRealTimers();
+    vi.useRealTimers();
   });
 
   test("returns null pendingDraft when localStorage is empty", () => {
@@ -39,10 +44,10 @@ describe("useRoyaltyDraft — autosave (#669)", () => {
   test("autosaves collaborators to localStorage after the debounce delay", async () => {
     const { rerender } = renderDraftHook();
 
-    rerender({ cols: validCollaborators, restore: jest.fn() });
+    rerender({ cols: validCollaborators, restore: vi.fn() });
 
     act(() => {
-      jest.advanceTimersByTime(700);
+      vi.advanceTimersByTime(700);
     });
 
     const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
@@ -55,10 +60,10 @@ describe("useRoyaltyDraft — autosave (#669)", () => {
   test("does not save when all collaborators are empty", () => {
     const { rerender } = renderDraftHook();
 
-    rerender({ cols: [{ address: "", basisPoints: "" }], restore: jest.fn() });
+    rerender({ cols: [{ address: "", basisPoints: "" }], restore: vi.fn() });
 
     act(() => {
-      jest.advanceTimersByTime(700);
+      vi.advanceTimersByTime(700);
     });
 
     expect(localStorage.getItem(DRAFT_STORAGE_KEY)).toBeNull();
@@ -66,10 +71,10 @@ describe("useRoyaltyDraft — autosave (#669)", () => {
 
   test("saved draft includes a savedAt timestamp", () => {
     const { rerender } = renderDraftHook();
-    rerender({ cols: validCollaborators, restore: jest.fn() });
+    rerender({ cols: validCollaborators, restore: vi.fn() });
 
     act(() => {
-      jest.advanceTimersByTime(700);
+      vi.advanceTimersByTime(700);
     });
 
     const saved = JSON.parse(localStorage.getItem(DRAFT_STORAGE_KEY)!);
@@ -99,8 +104,11 @@ describe("useRoyaltyDraft — restore (#669)", () => {
 
   test("acceptDraft calls onRestore with draft collaborators", () => {
     seedDraft();
-    const onRestore = jest.fn();
-    const { result } = renderDraftHook(undefined, onRestore as unknown as Parameters<typeof renderDraftHook>[1]);
+    const onRestore = vi.fn();
+    const { result } = renderDraftHook(
+      undefined,
+      onRestore as unknown as Parameters<typeof renderDraftHook>[1],
+    );
 
     act(() => {
       result.current.acceptDraft();
@@ -133,8 +141,11 @@ describe("useRoyaltyDraft — restore (#669)", () => {
 
   test("discardDraft clears pendingDraft without calling onRestore", () => {
     seedDraft();
-    const onRestore = jest.fn();
-    const { result } = renderDraftHook(undefined, onRestore as unknown as Parameters<typeof renderDraftHook>[1]);
+    const onRestore = vi.fn();
+    const { result } = renderDraftHook(
+      undefined,
+      onRestore as unknown as Parameters<typeof renderDraftHook>[1],
+    );
 
     act(() => {
       result.current.discardDraft();
@@ -164,7 +175,10 @@ describe("useRoyaltyDraft — validation (#669)", () => {
   test("ignores a draft where collaborators is not an array", () => {
     localStorage.setItem(
       DRAFT_STORAGE_KEY,
-      JSON.stringify({ collaborators: "bad", savedAt: new Date().toISOString() }),
+      JSON.stringify({
+        collaborators: "bad",
+        savedAt: new Date().toISOString(),
+      }),
     );
     const { result } = renderDraftHook();
     expect(result.current.pendingDraft).toBeNull();

@@ -2,7 +2,7 @@
  * Tests for wallet/app network mismatch detection (#663).
  */
 
-import { describe, test, expect, afterEach, jest } from "@jest/globals";
+import { describe, test, expect, afterEach, vi } from "vitest";
 import { render, screen, act, waitFor, cleanup } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import {
@@ -39,7 +39,8 @@ describe("computeNetworkMismatch #663", () => {
 });
 
 function TestConsumer() {
-  const { network, walletNetworkName, networkMismatch, setNetwork } = useNetwork();
+  const { network, walletNetworkName, networkMismatch, setNetwork } =
+    useNetwork();
   return (
     <div>
       <span data-testid="app-network">{network}</span>
@@ -73,7 +74,7 @@ describe("NetworkProvider integration #663", () => {
 
   test("wallet network matches the configured (default testnet) app network", async () => {
     window.freighter = {
-      getNetwork: jest.fn(async () => ({ network: "TESTNET" })),
+      getNetwork: vi.fn(async () => ({ network: "TESTNET" })),
     } as unknown as Window["freighter"];
 
     render(
@@ -90,7 +91,7 @@ describe("NetworkProvider integration #663", () => {
 
   test("wallet network mismatches the configured app network", async () => {
     window.freighter = {
-      getNetwork: jest.fn(async () => ({ network: "PUBLIC" })),
+      getNetwork: vi.fn(async () => ({ network: "PUBLIC" })),
     } as unknown as Window["freighter"];
 
     render(
@@ -107,7 +108,7 @@ describe("NetworkProvider integration #663", () => {
 
   test("switching the app network re-evaluates the mismatch without re-detecting the wallet", async () => {
     window.freighter = {
-      getNetwork: jest.fn(async () => ({ network: "PUBLIC" })),
+      getNetwork: vi.fn(async () => ({ network: "PUBLIC" })),
     } as unknown as Window["freighter"];
 
     render(
@@ -132,7 +133,7 @@ describe("NetworkProvider integration #663", () => {
 
   test("falls back to getNetworkDetails when getNetwork is unavailable", async () => {
     window.freighter = {
-      getNetworkDetails: jest.fn(async () => ({ network: "TESTNET" })),
+      getNetworkDetails: vi.fn(async () => ({ network: "TESTNET" })),
     } as unknown as Window["freighter"];
 
     render(
@@ -148,7 +149,7 @@ describe("NetworkProvider integration #663", () => {
 
   test("a rejected network lookup is treated as unknown, not a mismatch", async () => {
     window.freighter = {
-      getNetwork: jest.fn(async () => {
+      getNetwork: vi.fn(async () => {
         throw new Error("wallet locked");
       }),
     } as unknown as Window["freighter"];

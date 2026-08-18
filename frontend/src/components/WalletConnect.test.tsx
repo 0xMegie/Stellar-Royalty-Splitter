@@ -6,11 +6,12 @@
 
 import { render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import WalletConnect from "./WalletConnect";
 
-jest.mock("../context/NetworkContext", () => ({
+vi.mock("../context/NetworkContext", () => ({
   useNetwork: () => ({
-    refreshWalletNetwork: jest.fn(),
+    refreshWalletNetwork: vi.fn(),
   }),
 }));
 
@@ -32,12 +33,16 @@ describe("WalletConnect session recovery", () => {
   it("silently restores a previously-connected session without prompting", async () => {
     localStorage.setItem("freighter_connected", "true");
     localStorage.setItem("lastWalletAddress", ADDRESS);
-    const getAddress = jest.fn().mockResolvedValue({ address: ADDRESS });
+    const getAddress = vi.fn().mockResolvedValue({ address: ADDRESS });
     setFreighter({ getAddress });
 
-    const onConnect = jest.fn();
+    const onConnect = vi.fn();
     render(
-      <WalletConnect walletAddress={null} onConnect={onConnect} onDisconnect={jest.fn()} />,
+      <WalletConnect
+        walletAddress={null}
+        onConnect={onConnect}
+        onDisconnect={vi.fn()}
+      />,
     );
 
     await waitFor(() => expect(onConnect).toHaveBeenCalledWith(ADDRESS));
@@ -45,12 +50,16 @@ describe("WalletConnect session recovery", () => {
   });
 
   it("does not attempt a silent restore if no prior session was recorded", async () => {
-    const getAddress = jest.fn().mockResolvedValue({ address: ADDRESS });
+    const getAddress = vi.fn().mockResolvedValue({ address: ADDRESS });
     setFreighter({ getAddress });
 
-    const onConnect = jest.fn();
+    const onConnect = vi.fn();
     render(
-      <WalletConnect walletAddress={null} onConnect={onConnect} onDisconnect={jest.fn()} />,
+      <WalletConnect
+        walletAddress={null}
+        onConnect={onConnect}
+        onDisconnect={vi.fn()}
+      />,
     );
 
     await new Promise((r) => setTimeout(r, 0));
@@ -61,11 +70,15 @@ describe("WalletConnect session recovery", () => {
   it("clears the stale session flag and shows a reconnect prompt when restore fails", async () => {
     localStorage.setItem("freighter_connected", "true");
     localStorage.setItem("lastWalletAddress", ADDRESS);
-    const getAddress = jest.fn().mockRejectedValue(new Error("not authorized"));
+    const getAddress = vi.fn().mockRejectedValue(new Error("not authorized"));
     setFreighter({ getAddress });
 
     render(
-      <WalletConnect walletAddress={null} onConnect={jest.fn()} onDisconnect={jest.fn()} />,
+      <WalletConnect
+        walletAddress={null}
+        onConnect={vi.fn()}
+        onDisconnect={vi.fn()}
+      />,
     );
 
     await waitFor(() =>
@@ -73,16 +86,22 @@ describe("WalletConnect session recovery", () => {
     );
     expect(localStorage.getItem("freighter_connected")).toBeNull();
     expect(localStorage.getItem("lastWalletAddress")).toBeNull();
-    expect(screen.getByRole("button", { name: /retry connection/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /retry connection/i }),
+    ).toBeInTheDocument();
   });
 
   it("persists the session after a successful manual connect", async () => {
-    const requestAccess = jest.fn().mockResolvedValue({ address: ADDRESS });
+    const requestAccess = vi.fn().mockResolvedValue({ address: ADDRESS });
     setFreighter({ requestAccess });
 
-    const onConnect = jest.fn();
+    const onConnect = vi.fn();
     render(
-      <WalletConnect walletAddress={null} onConnect={onConnect} onDisconnect={jest.fn()} />,
+      <WalletConnect
+        walletAddress={null}
+        onConnect={onConnect}
+        onDisconnect={vi.fn()}
+      />,
     );
 
     screen.getByRole("button", { name: /connect freighter/i }).click();
@@ -93,11 +112,17 @@ describe("WalletConnect session recovery", () => {
   });
 
   it("shows a readable error and keeps the connect button available when the user rejects the request", async () => {
-    const requestAccess = jest.fn().mockRejectedValue(new Error("User declined access"));
+    const requestAccess = vi
+      .fn()
+      .mockRejectedValue(new Error("User declined access"));
     setFreighter({ requestAccess });
 
     render(
-      <WalletConnect walletAddress={null} onConnect={jest.fn()} onDisconnect={jest.fn()} />,
+      <WalletConnect
+        walletAddress={null}
+        onConnect={vi.fn()}
+        onDisconnect={vi.fn()}
+      />,
     );
 
     screen.getByRole("button", { name: /connect freighter/i }).click();
@@ -105,7 +130,9 @@ describe("WalletConnect session recovery", () => {
     await waitFor(() =>
       expect(screen.getByText(/connection rejected/i)).toBeInTheDocument(),
     );
-    expect(screen.getByRole("button", { name: /retry connection/i })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: /retry connection/i }),
+    ).toBeEnabled();
   });
 
   it("clears the persisted session on disconnect", () => {
@@ -113,9 +140,13 @@ describe("WalletConnect session recovery", () => {
     localStorage.setItem("lastWalletAddress", ADDRESS);
     setFreighter({});
 
-    const onDisconnect = jest.fn();
+    const onDisconnect = vi.fn();
     render(
-      <WalletConnect walletAddress={ADDRESS} onConnect={jest.fn()} onDisconnect={onDisconnect} />,
+      <WalletConnect
+        walletAddress={ADDRESS}
+        onConnect={vi.fn()}
+        onDisconnect={onDisconnect}
+      />,
     );
 
     screen.getByRole("button", { name: /disconnect/i }).click();
@@ -126,20 +157,25 @@ describe("WalletConnect session recovery", () => {
   });
 
   it("updates the connected address and persists it when Freighter reports an account change", () => {
-    const onConnect = jest.fn();
+    const onConnect = vi.fn();
     const handlers: Record<string, (data: { address: string }) => void> = {};
     setFreighter({
-      getAddress: jest.fn().mockResolvedValue({ address: ADDRESS }),
+      getAddress: vi.fn().mockResolvedValue({ address: ADDRESS }),
       on: (event, handler) => {
         handlers[event] = handler;
       },
     });
 
     render(
-      <WalletConnect walletAddress={ADDRESS} onConnect={onConnect} onDisconnect={jest.fn()} />,
+      <WalletConnect
+        walletAddress={ADDRESS}
+        onConnect={onConnect}
+        onDisconnect={vi.fn()}
+      />,
     );
 
-    const NEW_ADDRESS = "GBBZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWNB";
+    const NEW_ADDRESS =
+      "GBBZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWNB";
     handlers.accountChanged({ address: NEW_ADDRESS });
 
     expect(onConnect).toHaveBeenCalledWith(NEW_ADDRESS);

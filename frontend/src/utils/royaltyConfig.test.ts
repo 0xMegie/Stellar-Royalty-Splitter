@@ -2,7 +2,7 @@
  * Tests for royalty split configuration versioning (#679).
  */
 
-import { describe, test, expect } from "@jest/globals";
+import { describe, test, expect } from "vitest";
 import {
   ROYALTY_CONFIG_VERSION,
   SUPPORTED_CONFIG_VERSIONS,
@@ -51,11 +51,15 @@ describe("parseRoyaltyConfigImport — version validation (#679)", () => {
     const raw = JSON.stringify({
       collaborators: [{ address: ADDR_A, percentage: 100 }],
     });
-    expect(() => parseRoyaltyConfigImport(raw)).toThrow(RoyaltyConfigImportError);
+    expect(() => parseRoyaltyConfigImport(raw)).toThrow(
+      RoyaltyConfigImportError,
+    );
     try {
       parseRoyaltyConfigImport(raw);
     } catch (e) {
-      expect((e as RoyaltyConfigImportError).errors[0]).toContain('"version" field is required');
+      expect((e as RoyaltyConfigImportError).errors[0]).toContain(
+        '"version" field is required',
+      );
     }
   });
 
@@ -64,41 +68,59 @@ describe("parseRoyaltyConfigImport — version validation (#679)", () => {
       version: null,
       collaborators: [{ address: ADDR_A, percentage: 100 }],
     });
-    expect(() => parseRoyaltyConfigImport(raw)).toThrow(RoyaltyConfigImportError);
+    expect(() => parseRoyaltyConfigImport(raw)).toThrow(
+      RoyaltyConfigImportError,
+    );
   });
 
   test("throws when version is a string instead of number", () => {
-    expect(() => parseRoyaltyConfigImport(validConfig("1"))).toThrow(RoyaltyConfigImportError);
+    expect(() => parseRoyaltyConfigImport(validConfig("1"))).toThrow(
+      RoyaltyConfigImportError,
+    );
     try {
       parseRoyaltyConfigImport(validConfig("1"));
     } catch (e) {
-      expect((e as RoyaltyConfigImportError).errors[0]).toContain('"version" must be an integer');
+      expect((e as RoyaltyConfigImportError).errors[0]).toContain(
+        '"version" must be an integer',
+      );
     }
   });
 
   test("throws when version is a float", () => {
-    expect(() => parseRoyaltyConfigImport(validConfig(1.5))).toThrow(RoyaltyConfigImportError);
+    expect(() => parseRoyaltyConfigImport(validConfig(1.5))).toThrow(
+      RoyaltyConfigImportError,
+    );
   });
 
   test("throws a clear error for unsupported version 2", () => {
-    expect(() => parseRoyaltyConfigImport(validConfig(2))).toThrow(RoyaltyConfigImportError);
+    expect(() => parseRoyaltyConfigImport(validConfig(2))).toThrow(
+      RoyaltyConfigImportError,
+    );
     try {
       parseRoyaltyConfigImport(validConfig(2));
     } catch (e) {
-      expect((e as RoyaltyConfigImportError).errors[0]).toContain("Unsupported configuration version 2");
-      expect((e as RoyaltyConfigImportError).errors[0]).toContain("Supported versions: 1");
+      expect((e as RoyaltyConfigImportError).errors[0]).toContain(
+        "Unsupported configuration version 2",
+      );
+      expect((e as RoyaltyConfigImportError).errors[0]).toContain(
+        "Supported versions: 1",
+      );
     }
   });
 
   test("throws a clear error for unsupported version 0", () => {
-    expect(() => parseRoyaltyConfigImport(validConfig(0))).toThrow(RoyaltyConfigImportError);
+    expect(() => parseRoyaltyConfigImport(validConfig(0))).toThrow(
+      RoyaltyConfigImportError,
+    );
   });
 
   test("throws a clear error for a large unsupported version", () => {
     try {
       parseRoyaltyConfigImport(validConfig(99));
     } catch (e) {
-      expect((e as RoyaltyConfigImportError).errors[0]).toContain("Unsupported configuration version 99");
+      expect((e as RoyaltyConfigImportError).errors[0]).toContain(
+        "Unsupported configuration version 99",
+      );
     }
   });
 });
@@ -106,7 +128,9 @@ describe("parseRoyaltyConfigImport — version validation (#679)", () => {
 describe("parseRoyaltyConfigImport — existing validation still works (#679)", () => {
   test("throws when collaborators array is missing", () => {
     const raw = JSON.stringify({ version: 1 });
-    expect(() => parseRoyaltyConfigImport(raw)).toThrow(RoyaltyConfigImportError);
+    expect(() => parseRoyaltyConfigImport(raw)).toThrow(
+      RoyaltyConfigImportError,
+    );
   });
 
   test("throws when percentages do not sum to 100", () => {
@@ -114,7 +138,9 @@ describe("parseRoyaltyConfigImport — existing validation still works (#679)", 
       version: 1,
       collaborators: [{ address: ADDR_A, percentage: 50 }],
     });
-    expect(() => parseRoyaltyConfigImport(raw)).toThrow(RoyaltyConfigImportError);
+    expect(() => parseRoyaltyConfigImport(raw)).toThrow(
+      RoyaltyConfigImportError,
+    );
   });
 
   test("throws on duplicate address", () => {
@@ -125,7 +151,9 @@ describe("parseRoyaltyConfigImport — existing validation still works (#679)", 
         { address: ADDR_A, percentage: 50 },
       ],
     });
-    expect(() => parseRoyaltyConfigImport(raw)).toThrow(RoyaltyConfigImportError);
+    expect(() => parseRoyaltyConfigImport(raw)).toThrow(
+      RoyaltyConfigImportError,
+    );
   });
 });
 

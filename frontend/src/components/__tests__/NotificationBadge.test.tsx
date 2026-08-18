@@ -1,24 +1,28 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, beforeEach, test, expect, vi } from "vitest";
 import { NotificationBadge } from "../NotificationBadge";
 import { api } from "../../api";
 
-jest.mock("../../api");
+vi.mock("../../api");
 
-const mockApi = api as jest.Mocked<typeof api>;
+const mockApi = api as any;
 const WALLET = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 
 describe("NotificationBadge", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-    mockApi.getUnreadNotificationCount = jest.fn();
-    mockApi.getNotifications = jest.fn();
-    mockApi.markNotificationRead = jest.fn();
-    mockApi.markAllNotificationsRead = jest.fn();
-    mockApi.deleteNotification = jest.fn();
+    vi.clearAllMocks();
+    mockApi.getUnreadNotificationCount = vi.fn();
+    mockApi.getNotifications = vi.fn();
+    mockApi.markNotificationRead = vi.fn();
+    mockApi.markAllNotificationsRead = vi.fn();
+    mockApi.deleteNotification = vi.fn();
   });
 
   test("shows zero unread when no notifications", async () => {
-    mockApi.getUnreadNotificationCount.mockResolvedValue({ success: true, count: 0 });
+    mockApi.getUnreadNotificationCount.mockResolvedValue({
+      success: true,
+      count: 0,
+    });
 
     render(<NotificationBadge walletAddress={WALLET} wsConnected={true} />);
 
@@ -28,7 +32,10 @@ describe("NotificationBadge", () => {
   });
 
   test("shows unread count badge", async () => {
-    mockApi.getUnreadNotificationCount.mockResolvedValue({ success: true, count: 5 });
+    mockApi.getUnreadNotificationCount.mockResolvedValue({
+      success: true,
+      count: 5,
+    });
 
     render(<NotificationBadge walletAddress={WALLET} wsConnected={true} />);
 
@@ -39,10 +46,13 @@ describe("NotificationBadge", () => {
   });
 
   test("shows WebSocket connection indicator", () => {
-    mockApi.getUnreadNotificationCount.mockResolvedValue({ success: true, count: 0 });
+    mockApi.getUnreadNotificationCount.mockResolvedValue({
+      success: true,
+      count: 0,
+    });
 
     const { container } = render(
-      <NotificationBadge walletAddress={WALLET} wsConnected={true} />
+      <NotificationBadge walletAddress={WALLET} wsConnected={true} />,
     );
 
     const indicator = container.querySelector(".ws-indicator.connected");
@@ -50,10 +60,13 @@ describe("NotificationBadge", () => {
   });
 
   test("shows disconnected indicator when ws not connected", () => {
-    mockApi.getUnreadNotificationCount.mockResolvedValue({ success: true, count: 0 });
+    mockApi.getUnreadNotificationCount.mockResolvedValue({
+      success: true,
+      count: 0,
+    });
 
     const { container } = render(
-      <NotificationBadge walletAddress={WALLET} wsConnected={false} />
+      <NotificationBadge walletAddress={WALLET} wsConnected={false} />,
     );
 
     const indicator = container.querySelector(".ws-indicator.disconnected");
@@ -61,7 +74,10 @@ describe("NotificationBadge", () => {
   });
 
   test("opens notification panel on click", async () => {
-    mockApi.getUnreadNotificationCount.mockResolvedValue({ success: true, count: 1 });
+    mockApi.getUnreadNotificationCount.mockResolvedValue({
+      success: true,
+      count: 1,
+    });
     mockApi.getNotifications.mockResolvedValue({
       success: true,
       data: [],

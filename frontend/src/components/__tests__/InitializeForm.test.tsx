@@ -1,29 +1,30 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { describe, beforeEach, test, expect, vi } from "vitest";
 import InitializeForm from "../InitializeForm";
 import { api } from "../../api";
 
-jest.mock("../../api");
-jest.mock("../../stellar", () => ({
-  signAndSubmitTransaction: jest.fn(),
+vi.mock("../../api");
+vi.mock("../../stellar", () => ({
+  signAndSubmitTransaction: vi.fn(),
 }));
-jest.mock("../../context/NetworkContext", () => ({
+vi.mock("../../context/NetworkContext", () => ({
   useNetwork: () => ({ network: "testnet" }),
 }));
 
-const mockApi = api as jest.Mocked<typeof api>;
+const mockApi = api as any;
 const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const WALLET = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 const defaultProps = {
   contractId: CONTRACT,
   walletAddress: WALLET,
-  onSuccess: jest.fn(),
+  onSuccess: vi.fn(),
 };
 
 describe("InitializeForm — accessibility", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   test("every address input has an associated visible label", () => {
@@ -40,22 +41,30 @@ describe("InitializeForm — accessibility", () => {
 
   test("address error span is linked via aria-describedby", async () => {
     render(<InitializeForm {...defaultProps} />);
-    const addressInput = screen.getByLabelText(/Collaborator 1 wallet address/i);
+    const addressInput = screen.getByLabelText(
+      /Collaborator 1 wallet address/i,
+    );
 
     fireEvent.blur(addressInput);
-    fireEvent.change(addressInput, { target: { value: "not-a-stellar-address" } });
+    fireEvent.change(addressInput, {
+      target: { value: "not-a-stellar-address" },
+    });
     fireEvent.blur(addressInput);
 
     await waitFor(() => {
       const errorSpan = document.getElementById("collaborator-0-address-error");
       expect(errorSpan).toBeTruthy();
-      expect(addressInput.getAttribute("aria-describedby")).toBe("collaborator-0-address-error");
+      expect(addressInput.getAttribute("aria-describedby")).toBe(
+        "collaborator-0-address-error",
+      );
     });
   });
 
   test("address input carries aria-invalid=true when field is invalid", async () => {
     render(<InitializeForm {...defaultProps} />);
-    const addressInput = screen.getByLabelText(/Collaborator 1 wallet address/i);
+    const addressInput = screen.getByLabelText(
+      /Collaborator 1 wallet address/i,
+    );
 
     fireEvent.change(addressInput, { target: { value: "BAD" } });
     fireEvent.blur(addressInput);
@@ -73,15 +82,21 @@ describe("InitializeForm — accessibility", () => {
     fireEvent.blur(pctInput);
 
     await waitFor(() => {
-      const errorSpan = document.getElementById("collaborator-0-percentage-error");
+      const errorSpan = document.getElementById(
+        "collaborator-0-percentage-error",
+      );
       expect(errorSpan).toBeTruthy();
-      expect(pctInput.getAttribute("aria-describedby")).toBe("collaborator-0-percentage-error");
+      expect(pctInput.getAttribute("aria-describedby")).toBe(
+        "collaborator-0-percentage-error",
+      );
     });
   });
 
   test("error messages use role=alert for immediate SR announcement", async () => {
     render(<InitializeForm {...defaultProps} />);
-    const addressInput = screen.getByLabelText(/Collaborator 1 wallet address/i);
+    const addressInput = screen.getByLabelText(
+      /Collaborator 1 wallet address/i,
+    );
 
     fireEvent.change(addressInput, { target: { value: "BAD" } });
     fireEvent.blur(addressInput);
@@ -109,7 +124,7 @@ describe("InitializeForm — accessibility", () => {
   });
 
   test("submit button exposes aria-busy during loading", async () => {
-    mockApi.initialize = jest.fn(() => new Promise(() => {}));
+    mockApi.initialize = vi.fn(() => new Promise(() => {}));
 
     render(<InitializeForm {...defaultProps} />);
     const addrInput = screen.getByLabelText(/Collaborator 1 wallet address/i);

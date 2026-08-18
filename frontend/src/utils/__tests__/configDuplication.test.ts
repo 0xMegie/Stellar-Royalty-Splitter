@@ -229,7 +229,7 @@ describe("Configuration Duplication", () => {
       expect(isValidDuplicateConfiguration(draft)).toBe(true);
 
       const description = getDuplicateSourceDescription(draft);
-      expect(description).toContain("CORIG...");
+      expect(description).toContain("CORIGIN...");
 
       const formCollaborators = draftToCollaborators(draft);
       expect(formCollaborators).toHaveLength(2);
