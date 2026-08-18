@@ -730,9 +730,10 @@ export default function InitializeForm({
         <button
           className="btn-primary"
           onClick={submit}
-          disabled={loading || hasUnsavedEdit || !allRowsCommitted}
           disabled={
             loading ||
+            hasUnsavedEdit ||
+            !allRowsCommitted ||
             hasErrors ||
             hasEmptyFields ||
             hasInvalidPercentages ||
