@@ -1,4 +1,4 @@
-﻿import { jest, describe, test, expect, beforeEach } from "@jest/globals";
+import { jest, describe, test, expect, beforeEach } from "@jest/globals";
 import request from "supertest";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
@@ -30,7 +30,7 @@ const { default: app } = await import("./app.js");
 // ── Test fixtures ─────────────────────────────────────────────────────────────
 
 const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const WALLET = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const WALLET = "GAPTAQKSMN2ILFVHXDE5V274BUPC6QCRMJZYJFNGW7ENT2X3BQOS4M3C";
 const TOKEN = "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 
 const validBody = { contractId: CONTRACT, walletAddress: WALLET, tokenId: TOKEN };

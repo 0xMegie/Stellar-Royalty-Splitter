@@ -34,7 +34,7 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: err.message ?? "Internal server error" });
 });
 
-const WALLET = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+const WALLET = "GA7E6YDRQKJ2JNOG27UPSCQ3FQ6U4X3QQGJKHNGF23T7QCI2FM6E3W2P";
 
 describe("Contributor Tax - CRUD", () => {
   test("GET /:walletAddress returns tax info", async () => {

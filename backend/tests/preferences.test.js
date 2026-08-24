@@ -40,7 +40,7 @@ app.use((err, _req, res, _next) => {
 
 // ─── Test data ────────────────────────────────────────────────────────────
 
-const WALLET = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+const WALLET = "GA7E6YDRQKJ2JNOG27UPSCQ3FQ6U4X3QQGJKHNGF23T7QCI2FM6E3W2P";
 const TIMESTAMP = "2026-07-24T12:00:00.000Z";
 
 const prefRecord = (method) => ({

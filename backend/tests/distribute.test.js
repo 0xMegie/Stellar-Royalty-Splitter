@@ -1,6 +1,12 @@
 import { jest, describe, test, expect, beforeEach } from "@jest/globals";
 import request from "supertest";
 import express from "express";
+import {
+  buildDistributePayload,
+  VALID_CONTRACT_ID as CONTRACT,
+  VALID_TOKEN_ID as TOKEN,
+  VALID_WALLET_A as WALLET,
+} from "./test-helpers.js";
 
 const retryBuildTx = jest.fn();
 
@@ -54,11 +60,7 @@ app.use("/api/v1/distribute", distributeRouter);
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const WALLET   = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const TOKEN    = "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-
-const validBody = { contractId: CONTRACT, walletAddress: WALLET, tokenId: TOKEN };
+const validBody = buildDistributePayload({ contractId: CONTRACT, walletAddress: WALLET, tokenId: TOKEN });
 
 describe("POST /api/v1/distribute", () => {
   beforeEach(() => {

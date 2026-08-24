@@ -2,8 +2,8 @@ import { describe, test, expect, beforeEach, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { useRoyaltyDraft, DRAFT_STORAGE_KEY } from "./useRoyaltyDraft";
 
-const VALID_ADDRESS_A = `G${"A".repeat(55)}`;
-const VALID_ADDRESS_B = `G${"B".repeat(55)}`;
+const VALID_ADDRESS_A = `GAPTAQKSMN2ILFVHXDE5V274BUPC6QCRMJZYJFNGW7ENT2X3BQOS4M3C`;
+const VALID_ADDRESS_B = `GA7E6YDRQKJ2JNOG27UPSCQ3FQ6U4X3QQGJKHNGF23T7QCI2FM6E3W2P`;
 
 const validCollaborators = [
   { address: VALID_ADDRESS_A, basisPoints: "60" },
@@ -47,7 +47,7 @@ describe("useRoyaltyDraft — autosave (#669)", () => {
     rerender({ cols: validCollaborators, restore: vi.fn() });
 
     act(() => {
-      vi.advanceTimersByTime(700);
+      vi.advanceTimersByTime(5100);
     });
 
     const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
@@ -63,7 +63,7 @@ describe("useRoyaltyDraft — autosave (#669)", () => {
     rerender({ cols: [{ address: "", basisPoints: "" }], restore: vi.fn() });
 
     act(() => {
-      vi.advanceTimersByTime(700);
+      vi.advanceTimersByTime(5100);
     });
 
     expect(localStorage.getItem(DRAFT_STORAGE_KEY)).toBeNull();
@@ -74,7 +74,7 @@ describe("useRoyaltyDraft — autosave (#669)", () => {
     rerender({ cols: validCollaborators, restore: vi.fn() });
 
     act(() => {
-      vi.advanceTimersByTime(700);
+      vi.advanceTimersByTime(5100);
     });
 
     const saved = JSON.parse(localStorage.getItem(DRAFT_STORAGE_KEY)!);

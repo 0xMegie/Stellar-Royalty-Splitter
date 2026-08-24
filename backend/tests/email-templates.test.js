@@ -48,7 +48,7 @@ const mockSingleContract = {
 };
 
 const commonProps = {
-  walletAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  walletAddress: "GAPTAQKSMN2ILFVHXDE5V274BUPC6QCRMJZYJFNGW7ENT2X3BQOS4M3C",
   weekStart: "Jul 20, 2026",
   weekEnd: "Jul 26, 2026",
   unsubscribeUrl: "https://example.com/unsubscribe?token=abc123",

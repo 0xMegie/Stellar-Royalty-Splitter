@@ -20,7 +20,7 @@ const app = express();
 app.use(express.json());
 app.use("/api/v1", earningsHistoryRouter);
 
-const WALLET = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const WALLET = "GAPTAQKSMN2ILFVHXDE5V274BUPC6QCRMJZYJFNGW7ENT2X3BQOS4M3C";
 
 describe("Earnings history API", () => {
   test("GET /earnings-history/:walletAddress returns snapshots and events", async () => {

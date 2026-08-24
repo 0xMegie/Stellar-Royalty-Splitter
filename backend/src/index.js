@@ -45,6 +45,7 @@ import { initializeWebSocket } from "./websocket.js";
 import { startSnapshotScheduler } from "./jobs/snapshot-job.js";
 import { adminApiKeysRouter } from "./routes/admin-api-keys.js";
 import { recordApiKeyRequest } from "./database/rate-limit.js";
+import { createMetricsPusher } from "./metrics-pushgateway.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -258,6 +259,7 @@ app.use("/api/v1/tiers", tiersRouter);
 
 // API documentation (#587)
 app.use("/api/docs", docsRouter);
+app.use("/api/v1/docs", docsRouter);
 
 // CSV bulk import (#597)
 app.use("/api/v1/csv-import", csvImportRouter);
@@ -328,6 +330,8 @@ const wss = initializeWebSocket(server);
 
 // Start the snapshot scheduler (#613)
 const snapshotScheduler = startSnapshotScheduler();
+const metricsPusher = createMetricsPusher();
+metricsPusher.start();
 
 // Start weekly email digest scheduler if email is configured
 let digestInterval = null;
@@ -369,6 +373,7 @@ const handleShutdown = createGracefulShutdownHandler({
     if (snapshotScheduler) {
       snapshotScheduler.stop();
     }
+    metricsPusher.stop();
   },
 });
 

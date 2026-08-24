@@ -24,6 +24,15 @@ pub struct RoyaltyRateChange {
     pub caller: Address,
 }
 
+#[contracttype]
+#[derive(Clone)]
+pub struct MigrationRecord {
+    pub from_version: String,
+    pub to_version: String,
+    pub applied_at: u64,
+    pub note: String,
+}
+
 /// Typed storage keys.
 ///
 /// Instance storage keys: small, frequently accessed values (Admin, Paused, etc.).
@@ -55,6 +64,8 @@ pub enum StorageKey {
     InitializeSharesHash,
     InitializeCommitLedger,
     InitializeNonce,
+    AppliedMigrations,
+    MigrationMemo,
 }
 
 /// Maximum number of rate-change entries kept in history.
@@ -343,6 +354,56 @@ impl RoyaltySplitter {
         env.storage().instance().remove(&StorageKey::InitializeCollaboratorsHash);
         env.storage().instance().remove(&StorageKey::InitializeSharesHash);
         env.storage().instance().remove(&StorageKey::InitializeCommitLedger);
+    }
+
+    /// Apply versioned state migrations after a WASM upgrade.
+    ///
+    /// The current migration is intentionally additive: it records that the
+    /// instance has been migrated from `from_version` to the current contract
+    /// `VERSION` and writes an optional memo slot for future schema evolution.
+    /// Re-running the same migration is idempotent and leaves storage unchanged.
+    pub fn migrate(env: Env, from_version: String) {
+        storage::extend_instance_ttl(&env);
+        Self::check_admin_auth(&env, auth::msg::UPDATE_WASM_ADMIN);
+
+        let to_version = String::from_str(&env, VERSION);
+        let mut records: Vec<MigrationRecord> =
+            storage::persistent_get(&env, &StorageKey::AppliedMigrations)
+                .unwrap_or(Vec::new(&env));
+
+        for record in records.iter() {
+            if record.from_version == from_version && record.to_version == to_version {
+                return;
+            }
+        }
+
+        if !env.storage().instance().has(&StorageKey::MigrationMemo) {
+            storage::instance_set(
+                &env,
+                &StorageKey::MigrationMemo,
+                &String::from_str(&env, "optional-field-placeholder"),
+            );
+        }
+
+        records.push_back(MigrationRecord {
+            from_version: from_version.clone(),
+            to_version: to_version.clone(),
+            applied_at: env.ledger().timestamp(),
+            note: String::from_str(&env, "recorded additive migration framework"),
+        });
+        storage::persistent_set(&env, &StorageKey::AppliedMigrations, &records);
+        storage::instance_set(&env, &StorageKey::ContractVersion, &to_version);
+
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("migrate")),
+            (from_version, to_version),
+        );
+    }
+
+    pub fn get_applied_migrations(env: Env) -> Vec<MigrationRecord> {
+        storage::extend_instance_ttl(&env);
+        storage::persistent_get(&env, &StorageKey::AppliedMigrations)
+            .unwrap_or(Vec::new(&env))
     }
 
     /// Set the secondary royalty rate for resales.
