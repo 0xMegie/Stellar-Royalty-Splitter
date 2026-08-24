@@ -1,6 +1,8 @@
 // Thin client that talks to the Express backend
 
+import { Keypair } from "@stellar/stellar-sdk";
 import { extractContractError } from "./lib/contract-errors";
+import { signRequest, type SignatureHeaders } from "./utils/sign-request";
 
 const BASE = "/api";
 export const SESSION_EXPIRED_EVENT = "srs:session-expired";
@@ -102,6 +104,30 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
+/**
+ * Sign a POST request with a Stellar keypair and attach the four Ed25519
+ * signature headers required by the backend (#392).
+ *
+ * The `apiPath` must be the full path as seen by the server (e.g.
+ * "/v1/distribute"), because BASE="/api" is prepended in `request()`.
+ */
+async function signedPost<T>(
+  apiPath: string,
+  body: unknown,
+  keypair: Keypair,
+): Promise<T> {
+  const fullPath = `${BASE}${apiPath}`;
+  const sigHeaders: SignatureHeaders = await signRequest(keypair, "POST", fullPath, body);
+  return request<T>(apiPath, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...sigHeaders,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 async function get<T>(path: string): Promise<T> {
   return request<T>(path);
 }
@@ -161,18 +187,34 @@ export interface RoyaltyStats {
 }
 
 export const api = {
-  initialize: (body: {
-    contractId: string;
-    walletAddress: string;
-    collaborators: string[];
-    shares: number[];
-  }) => post<{ xdr: string; transactionId: number }>("/initialize", body),
+  /**
+   * Initialize a royalty-splitter contract.
+   * Requires a Stellar keypair to sign the request (#392).
+   */
+  initialize: (
+    body: {
+      contractId: string;
+      walletAddress: string;
+      collaborators: string[];
+      shares: number[];
+    },
+    keypair: Keypair,
+  ) =>
+    signedPost<{ xdr: string; transactionId: number }>("/initialize", body, keypair),
 
-  distribute: (body: {
-    contractId: string;
-    walletAddress: string;
-    tokenId: string;
-  }) => post<{ xdr: string; transactionId: number }>("/distribute", body),
+  /**
+   * Trigger a royalty distribution.
+   * Requires a Stellar keypair to sign the request (#392).
+   */
+  distribute: (
+    body: {
+      contractId: string;
+      walletAddress: string;
+      tokenId: string;
+    },
+    keypair: Keypair,
+  ) =>
+    signedPost<{ xdr: string; transactionId: number }>("/distribute", body, keypair),
 
   getContractBalance: (contractId: string, tokenId: string) =>
     get<{ balance: string }>(
@@ -227,42 +269,53 @@ export const api = {
     post<{ success: boolean; message: string }>(`/audit/${contractId}`, body),
 
   // Secondary Royalty APIs
-  recordSecondarySale: (body: {
-    contractId: string;
-    walletAddress: string;
-    nftId: string;
-    previousOwner: string;
-    newOwner: string;
-    salePrice: number;
-    saleToken: string;
-    royaltyRate: number;
-  }) =>
-    post<{ xdr: string; transactionId: number; royaltyAmount: number }>(
+  recordSecondarySale: (
+    body: {
+      contractId: string;
+      walletAddress: string;
+      nftId: string;
+      previousOwner: string;
+      newOwner: string;
+      salePrice: number;
+      saleToken: string;
+      royaltyRate: number;
+    },
+    keypair: Keypair,
+  ) =>
+    signedPost<{ xdr: string; transactionId: number; royaltyAmount: number }>(
       "/secondary-royalty",
       body,
+      keypair,
     ),
 
-  setRoyaltyRate: (body: {
-    contractId: string;
-    walletAddress: string;
-    royaltyRate: number;
-  }) =>
-    post<{ xdr: string; transactionId: number }>(
+  setRoyaltyRate: (
+    body: {
+      contractId: string;
+      walletAddress: string;
+      royaltyRate: number;
+    },
+    keypair: Keypair,
+  ) =>
+    signedPost<{ xdr: string; transactionId: number }>(
       "/secondary-royalty/set-rate",
       body,
+      keypair,
     ),
 
-  distributeSecondaryRoyalties: (body: {
-    contractId: string;
-    walletAddress: string;
-    tokenId: string;
-  }) =>
-    post<{
+  distributeSecondaryRoyalties: (
+    body: {
+      contractId: string;
+      walletAddress: string;
+      tokenId: string;
+    },
+    keypair: Keypair,
+  ) =>
+    signedPost<{
       xdr: string;
       transactionId: number;
       numberOfSales: number;
       totalRoyalties: string;
-    }>("/secondary-royalty/distribute", body),
+    }>("/secondary-royalty/distribute", body, keypair),
 
   getRoyaltyStats: (contractId: string) =>
     get<RoyaltyStats>(`/secondary-royalty/stats/${contractId}`),

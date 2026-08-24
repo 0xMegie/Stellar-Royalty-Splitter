@@ -26,6 +26,7 @@ import { sendWeeklyDigests } from "./jobs/weekly-digest-job.js";
 import { isEmailConfigured } from "./email/email-service.js";
 import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
 import { createBodySizeLimiters } from "./body-size-limit.js";
+import { verifySignatureMiddleware } from "./verify-signature.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -114,7 +115,8 @@ app.use(generalLimiter);
 
 // Body size limits: 10 KB JSON, 50 KB multipart — with DoS rate limiting,
 // logging, and metrics for rejected payloads (#426).
-const bodySizeLimiters = createBodySizeLimiters();
+// captureRawBody=true stashes req.rawBody for Ed25519 signature verification (#392).
+const bodySizeLimiters = createBodySizeLimiters({ captureRawBody: true });
 app.use(...bodySizeLimiters);
 
 // Enforce Content-Type: application/json on POST requests
@@ -143,6 +145,12 @@ app.use("/api/v1/initialize", writeLimiter);
 app.use("/api/v1/distribute", writeLimiter);
 app.use("/api/v1/secondary-royalty", writeLimiter);
 app.use("/api/v1/webhooks", writeLimiter);
+
+// Ed25519 signature verification on all write endpoints (#392).
+// Set SIGNATURE_VERIFICATION_ENABLED=false to log-only during rollout.
+app.use("/api/v1/initialize", verifySignatureMiddleware);
+app.use("/api/v1/distribute", verifySignatureMiddleware);
+app.use("/api/v1/secondary-royalty", verifySignatureMiddleware);
 
 app.use("/api/v1/initialize", initializeRouter);
 app.use("/api/v1/distribute", distributeRouter);
