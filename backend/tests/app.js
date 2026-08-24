@@ -1,5 +1,6 @@
 // Minimal Express app for testing — no DB init, no listen
 import express from "express";
+import { createBodySizeLimiters } from "../src/body-size-limit.js";
 import { initializeRouter } from "../src/routes/initialize.js";
 import { distributeRouter } from "../src/routes/distribute.js";
 import { collaboratorsRouter } from "../src/routes/collaborators.js";
@@ -8,7 +9,9 @@ import { metricsRouter } from "../src/routes/metrics.js";
 import { notFoundHandler, errorHandler } from "../src/error-response.js";
 
 const app = express();
-app.use(express.json({ limit: "10kb" }));
+
+// Body size limits mirror production: 10 KB JSON, 50 KB multipart (#426)
+app.use(...createBodySizeLimiters());
 
 app.use("/api/v1/initialize", initializeRouter);
 app.use("/api/v1/distribute", distributeRouter);

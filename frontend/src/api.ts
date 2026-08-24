@@ -1,6 +1,8 @@
 // Thin client that talks to the Express backend
 
+import { Keypair } from "@stellar/stellar-sdk";
 import { extractContractError } from "./lib/contract-errors";
+import { signRequest, type SignatureHeaders } from "./utils/sign-request";
 
 const BASE = "/api";
 export const SESSION_EXPIRED_EVENT = "srs:session-expired";
@@ -299,42 +301,53 @@ export const api = {
     ),
 
   // Secondary Royalty APIs
-  recordSecondarySale: (body: {
-    contractId: string;
-    walletAddress: string;
-    nftId: string;
-    previousOwner: string;
-    newOwner: string;
-    salePrice: number;
-    saleToken: string;
-    royaltyRate: number;
-  }) =>
-    post<{ xdr: string; transactionId: number; royaltyAmount: number }>(
+  recordSecondarySale: (
+    body: {
+      contractId: string;
+      walletAddress: string;
+      nftId: string;
+      previousOwner: string;
+      newOwner: string;
+      salePrice: number;
+      saleToken: string;
+      royaltyRate: number;
+    },
+    keypair: Keypair,
+  ) =>
+    signedPost<{ xdr: string; transactionId: number; royaltyAmount: number }>(
       "/secondary-royalty",
       body,
+      keypair,
     ),
 
-  setRoyaltyRate: (body: {
-    contractId: string;
-    walletAddress: string;
-    royaltyRate: number;
-  }) =>
-    post<{ xdr: string; transactionId: number }>(
+  setRoyaltyRate: (
+    body: {
+      contractId: string;
+      walletAddress: string;
+      royaltyRate: number;
+    },
+    keypair: Keypair,
+  ) =>
+    signedPost<{ xdr: string; transactionId: number }>(
       "/secondary-royalty/set-rate",
       body,
+      keypair,
     ),
 
-  distributeSecondaryRoyalties: (body: {
-    contractId: string;
-    walletAddress: string;
-    tokenId: string;
-  }) =>
-    post<{
+  distributeSecondaryRoyalties: (
+    body: {
+      contractId: string;
+      walletAddress: string;
+      tokenId: string;
+    },
+    keypair: Keypair,
+  ) =>
+    signedPost<{
       xdr: string;
       transactionId: number;
       numberOfSales: number;
       totalRoyalties: string;
-    }>("/secondary-royalty/distribute", body),
+    }>("/secondary-royalty/distribute", body, keypair),
 
   getRoyaltyStats: (contractId: string) =>
     get<RoyaltyStats>(`/secondary-royalty/stats/${contractId}`),

@@ -195,6 +195,12 @@ app.use("/api/v1/secondary-royalty", writeLimiter);
 app.use("/api/v1/webhooks", writeLimiter);
 app.use("/api/v1/onboarding", writeLimiter);
 
+// Ed25519 signature verification on all write endpoints (#392).
+// Set SIGNATURE_VERIFICATION_ENABLED=false to log-only during rollout.
+app.use("/api/v1/initialize", verifySignatureMiddleware);
+app.use("/api/v1/distribute", verifySignatureMiddleware);
+app.use("/api/v1/secondary-royalty", verifySignatureMiddleware);
+
 app.use("/api/v1/initialize", initializeRouter);
 app.use("/api/v1/distribute", distributeRouter);
 app.use("/api/v1/collaborators", collaboratorsRouter);
