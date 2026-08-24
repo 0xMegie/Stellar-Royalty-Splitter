@@ -126,15 +126,15 @@ export function logDigestFailed(subscriberId, weekStart, weekEnd, earningsSummar
   return result.lastInsertRowid;
 }
 
-export function getDigestHistory(subscriberId, limit = 10) {
+export function getDigestHistory(subscriberId, limit = 10, offset = 0) {
   return db
     .prepare(`
       SELECT * FROM email_digest_log
       WHERE subscriberId = ?
       ORDER BY sentAt DESC
-      LIMIT ?
+      LIMIT ? OFFSET ?
     `)
-    .all(subscriberId, limit);
+    .all(subscriberId, limit, offset);
 }
 
 export function getEarningsForWeek(walletAddress, weekStart, weekEnd) {

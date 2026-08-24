@@ -1,7 +1,7 @@
 import express from "express";
 import db from "../database/index.js";
 import logger from "../logger.js";
-import { validateContractIdMiddleware } from "../validation.js";
+import { validateContractIdMiddleware, validateQuery, analyticsQuerySchema } from "../validation.js";
 import { sendError } from "../error-response.js";
 
 // Simple in-memory cache with TTL
@@ -113,28 +113,18 @@ router.get("/analytics/multi-contract", (req, res) => {
   }
 });
 
-router.get("/analytics/:contractId", validateContractIdMiddleware, (req, res) => {
+router.get("/analytics/:contractId", validateContractIdMiddleware, validateQuery(analyticsQuerySchema), (req, res) => {
   const { contractId } = req.params;
-  const { start, end } = req.query;
+  // req.query has been parsed and validated by validateQuery(analyticsQuerySchema)
+  const { start, end, topLimit } = req.query;
 
   try {
-    // Parse date range
+    // Parse date range — schema already validated ISO format and ordering
     const startDate = start ? new Date(start) : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
     const endDate = end ? new Date(end) : new Date();
 
-    // Validate parsed dates
-    if (start && isNaN(startDate.getTime())) {
-      return sendError(res, 400, "invalid_query_parameter", "Invalid start date. Use YYYY-MM-DD.");
-    }
-    if (end && isNaN(endDate.getTime())) {
-      return sendError(res, 400, "invalid_query_parameter", "Invalid end date. Use YYYY-MM-DD.");
-    }
-    if (start && end && startDate > endDate) {
-      return sendError(res, 400, "invalid_query_parameter", "start date must be before end date.");
-    }
-
-    // Create cache key
-    const cacheKey = `${contractId}-${startDate.toISOString()}-${endDate.toISOString()}`;
+    // Create cache key (include topLimit so different topLimit values don't share a cached result)
+    const cacheKey = `${contractId}-${startDate.toISOString()}-${endDate.toISOString()}-top${topLimit}`;
 
     // Check cache
     const cached = cache.get(cacheKey);
@@ -186,7 +176,7 @@ router.get("/analytics/:contractId", validateContractIdMiddleware, (req, res) =>
           AND t.timestamp BETWEEN ? AND ?
         GROUP BY dp.collaboratorAddress
         ORDER BY totalEarned DESC
-        LIMIT 10`
+        LIMIT ${topLimit}`
       )
       .all(contractId, startDate.toISOString(), endDate.toISOString());
 

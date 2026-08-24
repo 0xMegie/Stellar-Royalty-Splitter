@@ -343,7 +343,49 @@ Required environment:
 
 ## Secondary royalty
 
-See route module `src/routes/secondary-royalty.js` for pool, sales, and distribution endpoints.
+### `GET /api/v1/secondary-royalty/sales/:contractId`
+
+Returns paginated secondary sale records for a contract with optional filtering.
+
+**Query params:**
+
+| Param | Type | Default | Min | Max | Description |
+| ----- | ---- | ------- | --- | --- | ----------- |
+| `limit` | integer | `50` | `1` | `100` | Number of sales to return |
+| `offset` | integer | `0` | `0` | — | Pagination offset |
+| `nftId` | string | — | — | — | Filter to a specific NFT ID |
+| `startDate` | ISO 8601 | — | — | — | Filter sales on or after this date |
+| `endDate` | ISO 8601 | — | — | — | Filter sales on or before this date |
+
+Returns `400` if `startDate` is after `endDate`, or if either date is not a valid ISO 8601 string.
+
+### `GET /api/v1/secondary-royalty/distributions/:contractId`
+
+Returns paginated secondary royalty distribution records for a contract.
+
+**Query params:**
+
+| Param | Type | Default | Min | Max | Description |
+| ----- | ---- | ------- | --- | --- | ----------- |
+| `limit` | integer | `10` | `1` | `100` | Number of distributions to return |
+| `offset` | integer | `0` | `0` | — | Pagination offset |
+
+**Response:**
+
+```json
+{
+  "distributions": [ /* distribution objects */ ],
+  "pagination": { "limit": 10, "offset": 0 }
+}
+```
+
+**Example:**
+
+```bash
+curl "http://localhost:3001/api/v1/secondary-royalty/distributions/C...?limit=20&offset=40"
+```
+
+See route module `src/routes/secondary-royalty.js` for pool, stats, and set-rate endpoints.
 
 ## History & analytics
 
@@ -354,19 +396,103 @@ See route module `src/routes/secondary-royalty.js` for pool, sales, and distribu
 - `POST /api/v1/archive/run`
 - `GET /api/v1/analytics/:contractId`
 
+All paginated read endpoints (`history`, `archive`, `audit`) share a common constraint model: `limit` is an integer between 1 and the endpoint-specific maximum; `offset` must be a non-negative integer. Invalid values return `400 Bad Request`.
+
+These endpoints are subject to a dedicated read rate limiter (default 30 req/min per IP, configurable via `RATE_LIMIT_READ_MAX`) in addition to the global limiter.
+
 Contract event archival moves `transactions` rows older than the configured retention period into `contract_event_archive`.
 The default policy is enabled with a 90 day retention period.
+
+### `GET /api/v1/history/:contractId`
+
+Returns paginated transaction history for a contract.
+
+**Query params:**
+
+| Param | Type | Default | Min | Max | Description |
+| ----- | ---- | ------- | --- | --- | ----------- |
+| `limit` | integer | `50` | `1` | `100` | Number of transactions to return |
+| `offset` | integer | `0` | `0` | — | Number of rows to skip (pagination offset) |
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": [ /* transaction objects */ ],
+  "pagination": { "limit": 50, "offset": 0, "total": 142 }
+}
+```
+
+**Example — page 2 with 20 results per page:**
+
+```bash
+curl "http://localhost:3001/api/v1/history/C...?limit=20&offset=20"
+```
+
+**Invalid pagination returns 400:**
+
+```bash
+curl "http://localhost:3001/api/v1/history/C...?limit=abc"
+# → 400 { "code": "invalid_query_parameter", "message": "limit must be a number" }
+
+curl "http://localhost:3001/api/v1/history/C...?limit=0"
+# → 400 { "code": "invalid_query_parameter", "message": "limit must be a number" }
+
+curl "http://localhost:3001/api/v1/history/C...?limit=101"
+# → limit is clamped to 100 (parsePagination clamps silently)
+
+curl "http://localhost:3001/api/v1/history/C...?offset=-1"
+# → offset is clamped to 0 (parsePagination clamps silently)
+```
+
+### `GET /api/v1/analytics/:contractId`
+
+Returns aggregated distribution analytics for a contract over a configurable date range.
+
+**Query params:**
+
+| Param | Type | Default | Constraints | Description |
+| ----- | ---- | ------- | ----------- | ----------- |
+| `start` | ISO 8601 string | 90 days ago | Valid date, must be ≤ `end` | Range start (inclusive) |
+| `end` | ISO 8601 string | now | Valid date, must be ≥ `start` | Range end (inclusive) |
+| `topLimit` | integer | `10` | 1–100 | Number of top earners to return |
+
+Invalid date formats or a `start` after `end` return `400 Bad Request`. Results are cached for 60 seconds per `contractId + start + end + topLimit` combination.
+
+**Example:**
+
+```bash
+# Default — last 90 days, top 10 earners
+curl "http://localhost:3001/api/v1/analytics/C..."
+
+# Custom range with 25 top earners
+curl "http://localhost:3001/api/v1/analytics/C...?start=2024-01-01&end=2024-06-30&topLimit=25"
+```
+
+**Invalid query returns 400:**
+
+```bash
+curl "http://localhost:3001/api/v1/analytics/C...?start=not-a-date"
+# → 400 { "code": "validation_failed", "message": "Invalid start date. Use ISO 8601 format." }
+
+curl "http://localhost:3001/api/v1/analytics/C...?start=2024-12-31&end=2024-01-01"
+# → 400 { "code": "validation_failed", "message": "start date must be before end date." }
+
+curl "http://localhost:3001/api/v1/analytics/C...?topLimit=0"
+# → 400 { "code": "validation_failed", "message": "topLimit must be at least 1" }
+```
 
 ### `GET /api/v1/archive/:contractId`
 
 Query archived contract events for a contract.
 
-Query params:
+**Query params:**
 
-| Param | Default | Max | Description |
-| ----- | ------- | --- | ----------- |
-| `limit` | `50` | `200` | Number of archived events to return |
-| `offset` | `0` | — | Pagination offset |
+| Param | Type | Default | Min | Max | Description |
+| ----- | ---- | ------- | --- | --- | ----------- |
+| `limit` | integer | `50` | `1` | `200` | Number of archived events to return |
+| `offset` | integer | `0` | `0` | — | Pagination offset |
 
 ### `GET /api/v1/archive/policy`
 
@@ -503,6 +629,12 @@ environment variables:
 | `WEBHOOK_MAX_RETRIES` | `3` | Max delivery attempts per webhook (#295). |
 | `WEBHOOK_RETRY_BASE_MS` | `1000` | Base backoff for webhook retries (#295). |
 | `WEBHOOK_TIMEOUT_MS` | `10000` | Per-request timeout for webhook POST calls (#295). |
+| `RATE_LIMIT_MAX` | `100` | Max requests per window for unauthenticated (public) endpoints. |
+| `RATE_LIMIT_AUTH_MAX` | `1000` | Max requests per window for authenticated (`x-api-key`) requests. |
+| `RATE_LIMIT_WRITE_MAX` | `10` | Max requests per window for write/mutation endpoints (`initialize`, `distribute`, `secondary-royalty`, `webhooks`). |
+| `RATE_LIMIT_READ_MAX` | `30` | Max requests per window for read-heavy query endpoints (`analytics`, `history`, `archive`, `audit`) per IP or API key (#394). |
+| `RATE_LIMIT_ADMIN_MAX` | `5` | Max requests per window for admin routes (`/admin/*`). |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Sliding window duration for all rate limiters in milliseconds. |
 
 When the fee fetch fails the backend falls back to `BASE_FEE` (`100` stroops) so transaction submission keeps working.
 
