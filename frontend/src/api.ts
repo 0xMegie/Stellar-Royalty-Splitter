@@ -211,6 +211,20 @@ export const api = {
     shares: number[];
   }) => post<{ xdr: string; transactionId: number }>("/initialize", body),
 
+  initializeCommit: (body: {
+    contractId: string;
+    walletAddress: string;
+    collaborators: string[];
+    shares: number[];
+  }) => post<{ xdr: string; transactionId: number }>("/initialize/commit", body),
+
+  initializeReveal: (body: {
+    contractId: string;
+    walletAddress: string;
+    collaborators: string[];
+    shares: number[];
+  }) => post<{ xdr: string; transactionId: number }>("/initialize/reveal", body),
+
   distribute: (body: {
     contractId: string;
     walletAddress: string;

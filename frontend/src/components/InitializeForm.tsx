@@ -131,6 +131,10 @@ export default function InitializeForm({
   ]);
   const { status, setStatus } = useFormStatus();
   const [loading, setLoading] = useState(false);
+  const [pendingCommit, setPendingCommit] = useState<{
+    collaborators: string[];
+    shares: number[];
+  } | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const addressRefs = useRef<(HTMLInputElement | null)[]>([]);
   const percentageRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -485,18 +489,24 @@ export default function InitializeForm({
       return setStatus("error", "Duplicate addresses are not allowed.");
     }
 
-    setLoading(true);
-    setStatus("info", "Building transaction…");
-
-    try {
-      const res = await api.initialize({
-        contractId,
-        walletAddress,
-        collaborators: addresses,
-        shares: collaborators.map((c: Collaborator) =>
+    const payload = {
+      contractId,
+      walletAddress,
+      collaborators: pendingCommit?.collaborators ?? addresses,
+      shares:
+        pendingCommit?.shares ??
+        collaborators.map((c: Collaborator) =>
           Math.round(parseFloat(c.basisPoints) * 100),
         ),
-      });
+    };
+
+    setLoading(true);
+    setStatus("info", pendingCommit ? "Building reveal transaction…" : "Building commitment transaction…");
+
+    try {
+      const res = pendingCommit
+        ? await api.initializeReveal(payload)
+        : await api.initializeCommit(payload);
 
       setStatus("info", "Signing transaction with Freighter...");
       const hash = await signAndSubmitTransaction(res.xdr, network);
@@ -507,8 +517,14 @@ export default function InitializeForm({
         blockTime: new Date().toISOString(),
       });
 
-      setStatus("ok", `Initialized. Tx: ${hash}`);
-      onSuccess();
+      if (pendingCommit) {
+        setPendingCommit(null);
+        setStatus("ok", `Initialized. Tx: ${hash}`);
+        onSuccess();
+      } else {
+        setPendingCommit({ collaborators: payload.collaborators, shares: payload.shares });
+        setStatus("info", `Commitment confirmed. Wait for one ledger, then reveal it. Tx: ${hash}`);
+      }
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : "Unknown error";
       if (
@@ -740,9 +756,19 @@ export default function InitializeForm({
             networkMismatch
           }
         >
-          {loading ? "Submitting…" : "Initialize contract"}
+          {loading
+            ? "Submitting…"
+            : pendingCommit
+              ? "Reveal initialization"
+              : "Commit initialization"}
         </button>
       </div>
+
+      {pendingCommit && (
+        <div className="status info" role="status" aria-live="polite">
+          Initialization is committed. Submit the reveal after the next ledger.
+        </div>
+      )}
 
       {networkMismatch && (
         <div className="status error" role="alert">
