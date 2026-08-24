@@ -15,6 +15,7 @@ import {
   downloadRoyaltyConfig,
   RoyaltyConfigExportError,
 } from "../utils/royaltyConfig";
+import { isValidStellarAccountAddress } from "../../../shared/stellar-address";
 
 interface Collaborator {
   address: string;
@@ -27,7 +28,6 @@ interface Props {
   onSuccess: () => void;
 }
 
-const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
 const MAX_COLLABORATORS = 50;
 const PERCENTAGE_INPUT_RE = /^(\d+(\.\d*)?|\.\d+)?$/;
 const SIGNED_PERCENTAGE_INPUT_RE = /^-(\d+(\.\d*)?|\.\d+)$/;
@@ -138,6 +138,23 @@ export default function InitializeForm({
   const importInputRef = useRef<HTMLInputElement>(null);
   const addressRefs = useRef<(HTMLInputElement | null)[]>([]);
   const percentageRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const [errors, setErrors] = useState<
+    Record<number, { address?: string; basisPoints?: string }>
+  >({});
+
+  const restoreDraft = useCallback((draftCollaborators: Collaborator[]) => {
+    setCollaborators(draftCollaborators);
+    setErrors({});
+  }, []);
+
+  const {
+    pendingDraft,
+    acceptDraft,
+    discardDraft,
+    clearSavedDraft,
+    saving: draftSaving,
+    savedAt: draftSavedAt,
+  } = useRoyaltyDraft(collaborators, restoreDraft);
 
   function triggerImport() {
     importInputRef.current?.click();
@@ -223,56 +240,15 @@ export default function InitializeForm({
     );
   }
 
-  function cancelEdit() {
-    setEditingIndex(-1);
-    setEditBuffer({ address: "", basisPoints: "" });
-    setEditErrors({});
-  }
-
-  function validateEditBuffer(buf: Collaborator) {
-    const errs: { address?: string; basisPoints?: string } = {};
-    if (!buf.address || !STELLAR_ADDRESS_RE.test(buf.address)) {
-      errs.address = "Must be a valid Stellar address (G..., 56 chars)";
-    }
-    const pctErr = getPercentageError(buf.basisPoints);
-    if (pctErr) errs.basisPoints = pctErr;
-    return errs;
-  }
-
-  function saveEdit(i: number) {
-    const errs = validateEditBuffer(editBuffer);
-    if (Object.keys(errs).length > 0) {
-      setEditErrors(errs);
-      return;
-    }
-    setCollaborators((prev) =>
-      prev.map((c, idx) => (idx === i ? { ...editBuffer } : c)),
-    );
-    setEditingIndex(-1);
-    setEditBuffer({ address: "", basisPoints: "" });
-    setEditErrors({});
-  }
-
   function addRow() {
     if (collaborators.length >= MAX_COLLABORATORS) return;
-    const newIndex = collaborators.length;
     setCollaborators((prev) => [...prev, { address: "", basisPoints: "" }]);
-    setEditingIndex(newIndex);
-    setEditBuffer({ address: "", basisPoints: "" });
-    setEditErrors({});
   }
 
   function removeRow(i: number) {
     setCollaborators((prev) =>
       prev.filter((_: Collaborator, idx: number) => idx !== i),
     );
-    if (editingIndex === i) {
-      setEditingIndex(-1);
-      setEditBuffer({ address: "", basisPoints: "" });
-      setEditErrors({});
-    } else if (editingIndex > i) {
-      setEditingIndex(editingIndex - 1);
-    }
   }
 
   async function saveAsTemplate() {
@@ -363,13 +339,50 @@ export default function InitializeForm({
     0,
   );
 
-  const hasUnsavedEdit = editingIndex >= 0;
   const allRowsCommitted = collaborators.every(
     (c) => c.address && c.basisPoints,
   );
+  const hasEmptyFields = collaborators.some((c) => !c.address || !c.basisPoints);
+  const hasInvalidPercentages = collaborators.some((c) =>
+    Boolean(getPercentageError(c.basisPoints)),
+  );
+  const hasErrors = Object.values(errors).some((row) => row.address || row.basisPoints);
+  const previewValid =
+    !hasEmptyFields &&
+    !hasInvalidPercentages &&
+    !hasErrors &&
+    Math.round(total * 100) === 10_000;
+  const previewInvalidReason = previewValid
+    ? ""
+    : "Fix collaborator addresses and percentages before previewing payouts.";
+
+  function validateRow(i: number, field: keyof Collaborator, value: string) {
+    setErrors((prev) => {
+      const next = { ...prev };
+      const row = { ...(next[i] ?? {}) };
+      if (field === "address") {
+        row.address =
+          value && isValidStellarAccountAddress(value)
+            ? undefined
+            : "Must be a valid Stellar address (G..., 56 chars)";
+      } else {
+        row.basisPoints = getPercentageError(value) || undefined;
+      }
+      if (!row.address && !row.basisPoints) {
+        delete next[i];
+      } else {
+        next[i] = row;
+      }
+      return next;
+    });
+  }
+
+  function handleBlur(i: number, field: keyof Collaborator, value: string) {
+    validateRow(i, field, value);
+  }
 
   // Issue #694 — one summary of every active validation issue, derived from
-  // the same per-row (getPercentageError, STELLAR_ADDRESS_RE) and aggregate
+  // the same per-row (getPercentageError, shared Stellar address validation) and aggregate
   // (share total, duplicate address) checks submit() already runs, so there
   // is only one validation implementation.
   const validationIssues: ValidationSummaryIssue[] = [];
@@ -380,7 +393,7 @@ export default function InitializeForm({
         field: "address",
         message: `Collaborator ${i + 1}: wallet address is required.`,
       });
-    } else if (!STELLAR_ADDRESS_RE.test(c.address)) {
+    } else if (!isValidStellarAccountAddress(c.address)) {
       validationIssues.push({
         index: i,
         field: "address",
@@ -435,17 +448,10 @@ export default function InitializeForm({
       );
     if (!contractId) return setStatus("error", "Enter a contract ID first.");
 
-    if (hasUnsavedEdit) {
-      return setStatus(
-        "error",
-        "Please save or cancel the current edit before submitting.",
-      );
-    }
-
     const nextErrors = collaborators.reduce<
       Record<number, { address?: string; basisPoints?: string }>
     >((acc, c, i) => {
-      if (!c.address || !STELLAR_ADDRESS_RE.test(c.address)) {
+      if (!c.address || !isValidStellarAccountAddress(c.address)) {
         acc[i] = {
           ...acc[i],
           address: "Must be a valid Stellar address (G..., 56 chars)",
@@ -570,6 +576,17 @@ export default function InitializeForm({
             data-testid="draft-restore-discard"
           >
             Discard
+          </button>
+        </div>
+      )}
+
+      {(draftSaving || draftSavedAt) && (
+        <div className="status info" role="status" aria-live="polite">
+          {draftSaving
+            ? "Saving draft..."
+            : `Draft saved at ${new Date(draftSavedAt ?? "").toLocaleTimeString()}.`}{" "}
+          <button type="button" onClick={clearSavedDraft}>
+            Clear saved draft
           </button>
         </div>
       )}
@@ -748,7 +765,6 @@ export default function InitializeForm({
           onClick={submit}
           disabled={
             loading ||
-            hasUnsavedEdit ||
             !allRowsCommitted ||
             hasErrors ||
             hasEmptyFields ||

@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { sendError, sendValidationError } from "./error-response.js";
+import { isValidStellarAccountAddress } from "../../shared/stellar-address.js";
 
 export const stellarAddress = z
   .string("Validation failed: walletAddress must be a string")
-  .regex(/^G[A-Z2-7]{55}$/, "Validation failed: Invalid Stellar address");
+  .refine(isValidStellarAccountAddress, "Validation failed: Invalid Stellar address");
 
 export function isValidStellarAddress(addr) {
-  return typeof addr === "string" && /^G[A-Z2-7]{55}$/.test(addr);
+  return isValidStellarAccountAddress(addr);
 }
 
 export const contractAddress = z
@@ -287,7 +288,7 @@ export function validateContractId(contractId, res) {
  * Returns true if valid, otherwise sends a 400 and returns false.
  */
 export function validateStellarAddress(address, res) {
-  if (!address || !/^G[A-Z2-7]{55}$/.test(address)) {
+  if (!address || !isValidStellarAccountAddress(address)) {
     sendError(res, 400, "invalid_stellar_address", "Invalid Stellar address format");
     return false;
   }

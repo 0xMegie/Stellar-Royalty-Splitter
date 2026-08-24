@@ -236,6 +236,31 @@ fn test_ttl_state_writes_after_ledger_advance() {
     assert_eq!(client.get_secondary_pool(), 100);
 }
 
+#[test]
+fn test_migrate_records_versioned_state_once() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (_, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    client.initialize(
+        &vec![&env, admin, b],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    let from_version = String::from_str(&env, "0.0.1");
+    client.migrate(&from_version);
+    client.migrate(&from_version);
+
+    let migrations = client.get_applied_migrations();
+    assert_eq!(migrations.len(), 1);
+    let record = migrations.get(0).unwrap();
+    assert_eq!(record.from_version, from_version);
+    assert_eq!(record.to_version, String::from_str(&env, VERSION));
+    assert_eq!(client.get_version(), String::from_str(&env, VERSION));
+}
+
 /// Issue #291 — snapshot the exact instance storage entries written by initialize.
 #[test]
 fn test_storage_snapshot_after_initialize() {

@@ -35,7 +35,7 @@ const app = express();
 app.use(express.json());
 app.use("/api/v1", emailDigestRouter);
 
-const WALLET = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const WALLET = "GAPTAQKSMN2ILFVHXDE5V274BUPC6QCRMJZYJFNGW7ENT2X3BQOS4M3C";
 const EMAIL = "test@example.com";
 const TOKEN = "abc123def456";
 

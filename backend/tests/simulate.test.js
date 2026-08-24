@@ -1,5 +1,12 @@
 import { jest, describe, test, expect, beforeEach } from "@jest/globals";
 import request from "supertest";
+import {
+  buildDistributePayload,
+  VALID_CONTRACT_ID as CONTRACT,
+  VALID_TOKEN_ID as TOKEN,
+  VALID_WALLET_A as WALLET,
+  VALID_WALLET_C as RECIPIENT,
+} from "./test-helpers.js";
 
 const simulateTransaction = jest.fn();
 const contractCall = jest.fn((method, ...args) => ({ method, args }));
@@ -90,11 +97,7 @@ await jest.unstable_mockModule("../src/database/index.js", () => ({
 
 const { default: app } = await import("./app.js");
 
-const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const WALLET = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const TOKEN = "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-
-const validBody = { contractId: CONTRACT, walletAddress: WALLET, tokenId: TOKEN };
+const validBody = buildDistributePayload({ contractId: CONTRACT, walletAddress: WALLET, tokenId: TOKEN });
 
 describe("POST /api/v1/simulate", () => {
   beforeEach(() => {
@@ -113,7 +116,7 @@ describe("POST /api/v1/simulate", () => {
         {
           type: "contract",
           topics: ["dist"],
-          data: ["GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", 400n],
+          data: [RECIPIENT, 400n],
         },
       ],
     });
@@ -126,7 +129,7 @@ describe("POST /api/v1/simulate", () => {
       recipientAmounts: [
         { address: WALLET, amount: "600" },
         {
-          address: "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+          address: RECIPIENT,
           amount: "400",
         },
       ],

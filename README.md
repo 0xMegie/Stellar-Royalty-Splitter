@@ -283,6 +283,8 @@ The frontend proxies `/api/*` to the backend automatically via the Vite config.
 
 The backend builds unsigned transaction XDR and returns it to the frontend. **Freighter signs and submits client-side — your private key never leaves the browser.**
 
+OpenAPI documentation is served by the backend at `GET /api/v1/docs` for Swagger UI and `GET /api/v1/docs/json` for the machine-readable OpenAPI 3.0 spec. Legacy aliases remain available at `/api/docs` and `/api/docs/json`.
+
 ---
 
 ### Backend shutdown

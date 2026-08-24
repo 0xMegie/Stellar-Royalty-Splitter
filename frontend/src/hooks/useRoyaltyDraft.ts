@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isValidStellarAccountAddress } from "../../../shared/stellar-address";
 
 export const DRAFT_STORAGE_KEY = "srs_royalty_draft";
-const AUTOSAVE_DELAY_MS = 600;
-const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
+const AUTOSAVE_DELAY_MS = 5000;
 
 export interface DraftCollaborator {
   address: string;
@@ -25,7 +25,7 @@ function isValidDraft(value: unknown): value is RoyaltyDraft {
       c !== null &&
       typeof (c as Record<string, unknown>).address === "string" &&
       typeof (c as Record<string, unknown>).basisPoints === "string" &&
-      STELLAR_ADDRESS_RE.test((c as Record<string, unknown>).address as string),
+      isValidStellarAccountAddress((c as Record<string, unknown>).address),
   );
 }
 
@@ -64,6 +64,12 @@ interface UseRoyaltyDraftReturn {
   acceptDraft: () => void;
   /** Discard the pending draft and remove it from localStorage. */
   discardDraft: () => void;
+  /** Clear any saved state for the current form. */
+  clearSavedDraft: () => void;
+  /** True while the debounced localStorage save is waiting to run. */
+  saving: boolean;
+  /** Last successful localStorage save time. */
+  savedAt: string | null;
 }
 
 /**
@@ -79,6 +85,8 @@ export function useRoyaltyDraft(
   onRestore: (collaborators: DraftCollaborator[]) => void,
 ): UseRoyaltyDraftReturn {
   const [pendingDraft, setPendingDraft] = useState<RoyaltyDraft | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isFirstRender = useRef(true);
 
@@ -100,15 +108,24 @@ export function useRoyaltyDraft(
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
 
+    setSaving(true);
     saveTimerRef.current = setTimeout(() => {
       const hasContent = collaborators.some((c) => c.address || c.basisPoints);
-      if (hasContent) {
+      const isCompleteValidDraft = collaborators.every(
+        (c) =>
+          isValidStellarAccountAddress(c.address) &&
+          c.basisPoints.trim().length > 0,
+      );
+      if (hasContent && isCompleteValidDraft) {
         saveDraft(collaborators);
+        setSavedAt(new Date().toISOString());
       }
+      setSaving(false);
     }, AUTOSAVE_DELAY_MS);
 
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      setSaving(false);
     };
   }, [collaborators]);
 
@@ -138,5 +155,12 @@ export function useRoyaltyDraft(
     setPendingDraft(null);
   }, []);
 
-  return { pendingDraft, acceptDraft, discardDraft };
+  const clearSavedDraft = useCallback(() => {
+    clearDraft();
+    setPendingDraft(null);
+    setSavedAt(null);
+    setSaving(false);
+  }, []);
+
+  return { pendingDraft, acceptDraft, discardDraft, clearSavedDraft, saving, savedAt };
 }

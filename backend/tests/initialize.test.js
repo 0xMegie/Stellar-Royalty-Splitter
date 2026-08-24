@@ -6,6 +6,13 @@ import {
   INITIALIZE_PAYLOAD_LIMIT_BYTES,
 } from "../src/validation.js";
 import { notFoundHandler, errorHandler } from "../src/error-response.js";
+import {
+  buildInitializePayload,
+  VALID_CONTRACT_ID as CONTRACT,
+  VALID_WALLET_A as WALLET,
+  VALID_WALLET_B as COLLAB1,
+  VALID_WALLET_C as COLLAB2,
+} from "./test-helpers.js";
 
 // Capture mock functions at factory time so we hold the same instances the route uses
 const retryBuildTx = jest.fn();
@@ -39,17 +46,7 @@ app.use("/api/v1/initialize", initializeRouter);
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const WALLET = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const COLLAB1 = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-const COLLAB2 = "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
-
-const validBody = {
-  contractId: CONTRACT,
-  walletAddress: WALLET,
-  collaborators: [COLLAB1, COLLAB2],
-  shares: [5000, 5000],
-};
+const validBody = buildInitializePayload({ walletAddress: WALLET, collaborators: [COLLAB1, COLLAB2] });
 
 describe("POST /api/v1/initialize", () => {
   beforeEach(() => jest.clearAllMocks());

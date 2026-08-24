@@ -6,7 +6,7 @@ import { api } from "../../api";
 vi.mock("../../api");
 
 const mockApi = api as any;
-const WALLET = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+const WALLET = "GA7E6YDRQKJ2JNOG27UPSCQ3FQ6U4X3QQGJKHNGF23T7QCI2FM6E3W2P";
 
 describe("ContributorTaxInfo", () => {
   beforeEach(() => {

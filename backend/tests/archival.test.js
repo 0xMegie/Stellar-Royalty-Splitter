@@ -89,7 +89,7 @@ describe("contract event archival database strategy", () => {
           payoutCount: 1,
           payoutsJson: JSON.stringify([
             {
-              collaboratorAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+              collaboratorAddress: "GAPTAQKSMN2ILFVHXDE5V274BUPC6QCRMJZYJFNGW7ENT2X3BQOS4M3C",
               amountReceived: "100",
             },
           ]),
@@ -102,7 +102,7 @@ describe("contract event archival database strategy", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].payouts).toEqual([
       {
-        collaboratorAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        collaboratorAddress: "GAPTAQKSMN2ILFVHXDE5V274BUPC6QCRMJZYJFNGW7ENT2X3BQOS4M3C",
         amountReceived: "100",
       },
     ]);
