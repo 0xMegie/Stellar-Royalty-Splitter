@@ -143,6 +143,27 @@ const writeLimiter = rateLimit({
   },
 });
 
+// Read limiter for analytics/history endpoints (#394): tighter than the
+// general limiter to prevent large DB scans at arbitrary scale.
+// Default: 30 req / 1 min per IP (env: RATE_LIMIT_READ_MAX).
+const readLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "60000"),
+  max: parseInt(process.env.RATE_LIMIT_READ_MAX ?? "30"),
+  keyGenerator: (req) => req.headers["x-api-key"] || ipKeyGenerator(req.ip),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    logger.warn("Read rate limit exceeded", {
+      ip: req.ip,
+      path: req.originalUrl,
+      method: req.method,
+      apiKey: req.headers["x-api-key"] ? "present" : "none",
+    });
+    res.set("Retry-After", "60");
+    sendError(res, 429, "too_many_requests", "Too many requests, please try again later.");
+  },
+});
+
 app.use(generalLimiter);
 
 // #608: Track per-API-key request counts for the rate-limit dashboard.
@@ -194,6 +215,12 @@ app.use("/api/v1/distribute", writeLimiter);
 app.use("/api/v1/secondary-royalty", writeLimiter);
 app.use("/api/v1/webhooks", writeLimiter);
 app.use("/api/v1/onboarding", writeLimiter);
+
+// Apply read limiter to high-fan-out query endpoints (#394 — MEDIUM-16)
+app.use("/api/v1/analytics", readLimiter);
+app.use("/api/v1/history", readLimiter);
+app.use("/api/v1/archive", readLimiter);
+app.use("/api/v1/audit", readLimiter);
 
 // Ed25519 signature verification on all write endpoints (#392).
 // Set SIGNATURE_VERIFICATION_ENABLED=false to log-only during rollout.

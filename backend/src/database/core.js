@@ -706,4 +706,48 @@ export function getMigrationVersion() {
   return result?.version ?? 0;
 }
 
+/**
+ * Probe the database health by running a lightweight read and returning
+ * connection state, response time, and basic stats.
+ *
+ * Returns:
+ *   { connected: bool, responseTimeMs: number, version: number,
+ *     walMode: bool, tableCount: number, error?: string }
+ */
+export function checkDatabase() {
+  const start = Date.now();
+  try {
+    if (!db.open) {
+      return { connected: false, responseTimeMs: 0, error: "Database is closed" };
+    }
+
+    // Lightweight ping: read the migration version.
+    const version = getMigrationVersion();
+
+    // Journal mode (should be "wal").
+    const walRow = db.pragma("journal_mode", { simple: true });
+    const walMode = String(walRow).toLowerCase() === "wal";
+
+    // Count tables as a proxy for schema completeness.
+    const tableRow = db
+      .prepare("SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type = 'table'")
+      .get();
+    const tableCount = tableRow?.cnt ?? 0;
+
+    return {
+      connected: true,
+      responseTimeMs: Date.now() - start,
+      version,
+      walMode,
+      tableCount,
+    };
+  } catch (err) {
+    return {
+      connected: false,
+      responseTimeMs: Date.now() - start,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 export default db;

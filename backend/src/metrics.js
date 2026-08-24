@@ -7,6 +7,12 @@ const metrics = {
   // DoS protection counters (#426)
   oversizedRequestsRejectedTotal: 0,
   dosRateLimitedTotal: 0,
+  // Detailed health check component response times (#423)
+  healthCheckDatabaseResponseTimeMs: 0,
+  healthCheckHorizonResponseTimeMs: 0,
+  healthCheckSorobanResponseTimeMs: 0,
+  healthCheckCacheResponseTimeMs: 0,
+  healthCheckTotal: 0,
 };
 
 function formatMetricValue(value) {
@@ -32,6 +38,19 @@ export function recordOversizedRequest() {
 
 export function recordDoSRejection() {
   metrics.dosRateLimitedTotal += 1;
+}
+
+// Detailed health check metrics (#423)
+export function recordDetailedHealthCheck({ databaseMs, horizonMs, sorobanMs, cacheMs }) {
+  metrics.healthCheckTotal += 1;
+  if (Number.isFinite(databaseMs) && databaseMs >= 0)
+    metrics.healthCheckDatabaseResponseTimeMs = databaseMs;
+  if (Number.isFinite(horizonMs) && horizonMs >= 0)
+    metrics.healthCheckHorizonResponseTimeMs = horizonMs;
+  if (Number.isFinite(sorobanMs) && sorobanMs >= 0)
+    metrics.healthCheckSorobanResponseTimeMs = sorobanMs;
+  if (Number.isFinite(cacheMs) && cacheMs >= 0)
+    metrics.healthCheckCacheResponseTimeMs = cacheMs;
 }
 
 export function recordHorizonResponseTime(durationMs) {
@@ -79,6 +98,21 @@ export function prometheusMetrics() {
     "# HELP stellar_dos_rate_limited_total Requests rate-limited due to repeated oversized payload attacks.",
     "# TYPE stellar_dos_rate_limited_total counter",
     `stellar_dos_rate_limited_total ${snapshot.dosRateLimitedTotal}`,
+    "# HELP stellar_health_check_total Total detailed health check requests.",
+    "# TYPE stellar_health_check_total counter",
+    `stellar_health_check_total ${snapshot.healthCheckTotal}`,
+    "# HELP stellar_health_database_response_time_ms Last database health check response time in milliseconds.",
+    "# TYPE stellar_health_database_response_time_ms gauge",
+    `stellar_health_database_response_time_ms ${formatMetricValue(snapshot.healthCheckDatabaseResponseTimeMs)}`,
+    "# HELP stellar_health_horizon_response_time_ms Last Horizon health check response time in milliseconds.",
+    "# TYPE stellar_health_horizon_response_time_ms gauge",
+    `stellar_health_horizon_response_time_ms ${formatMetricValue(snapshot.healthCheckHorizonResponseTimeMs)}`,
+    "# HELP stellar_health_soroban_response_time_ms Last Soroban RPC health check response time in milliseconds.",
+    "# TYPE stellar_health_soroban_response_time_ms gauge",
+    `stellar_health_soroban_response_time_ms ${formatMetricValue(snapshot.healthCheckSorobanResponseTimeMs)}`,
+    "# HELP stellar_health_cache_response_time_ms Last cache health check response time in milliseconds.",
+    "# TYPE stellar_health_cache_response_time_ms gauge",
+    `stellar_health_cache_response_time_ms ${formatMetricValue(snapshot.healthCheckCacheResponseTimeMs)}`,
     "",
   ].join("\n");
 }
@@ -91,4 +125,9 @@ export function resetMetrics() {
   metrics.horizonResponseTimeCount = 0;
   metrics.oversizedRequestsRejectedTotal = 0;
   metrics.dosRateLimitedTotal = 0;
+  metrics.healthCheckDatabaseResponseTimeMs = 0;
+  metrics.healthCheckHorizonResponseTimeMs = 0;
+  metrics.healthCheckSorobanResponseTimeMs = 0;
+  metrics.healthCheckCacheResponseTimeMs = 0;
+  metrics.healthCheckTotal = 0;
 }
