@@ -84,7 +84,7 @@ export class BackendApiError extends Error {
   }
 }
 
-function readErrorBody(status: number, data: unknown): BackendApiError {
+export function readErrorBody(status: number, data: unknown): BackendApiError {
   const parsed = extractContractError(data ?? { error: "Request failed" });
   return new BackendApiError(
     status,
@@ -102,15 +102,27 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 async function get<T>(path: string): Promise<T> {
   return request<T>(path);
+}
+
+async function del<T>(path: string): Promise<T> {
+  return request<T>(path, { method: "DELETE" });
 }
 
 export interface TransactionRecord {
   id: number;
   txHash: string | null;
   contractId: string;
-  type: "initialize" | "distribute";
+  type: "initialize" | "distribute" | "secondary_royalty" | "secondary_distribute";
   initiatorAddress: string;
   requestedAmount: string | null;
   tokenId: string | null;
@@ -121,11 +133,40 @@ export interface TransactionRecord {
   payoutCount?: number;
 }
 
+export interface PayoutDetail {
+  collaboratorAddress: string;
+  amountReceived: string;
+  sharePercentage?: number;
+}
+
+export interface ContractEventItem {
+  id: string;
+  type: string;
+  contractId: string;
+  topics: string[];
+  data: Record<string, unknown>;
+  timestamp: string;
+}
+
 export interface TransactionDetails extends TransactionRecord {
-  payouts?: Array<{
-    collaboratorAddress: string;
-    amountReceived: string;
-  }>;
+  payouts?: PayoutDetail[];
+  totalPayout?: string;
+  auditHistory?: AuditLogEntry[];
+  contractEvents?: ContractEventItem[];
+}
+
+export interface RoyaltyTemplateAllocation {
+  address: string;
+  percentage: number;
+}
+
+export interface RoyaltyTemplate {
+  id: number;
+  walletAddress: string;
+  name: string;
+  allocations: RoyaltyTemplateAllocation[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AuditLogEntry {
@@ -172,7 +213,11 @@ export const api = {
     contractId: string;
     walletAddress: string;
     tokenId: string;
+    amount?: string | number;
   }) => post<{ xdr: string; transactionId: number }>("/distribute", body),
+
+  getContractVersion: (contractId: string) =>
+    get<{ version: string }>(`/contract/version/${contractId}`),
 
   getContractBalance: (contractId: string, tokenId: string) =>
     get<{ balance: string }>(
@@ -184,13 +229,46 @@ export const api = {
       `/collaborators/${contractId}`,
     ),
 
+  // Reusable royalty split templates (#652)
+  listTemplates: (walletAddress: string) =>
+    get<{ success: boolean; data: RoyaltyTemplate[] }>(
+      `/templates?walletAddress=${encodeURIComponent(walletAddress)}`,
+    ),
+
+  createTemplate: (body: {
+    walletAddress: string;
+    name: string;
+    allocations: RoyaltyTemplateAllocation[];
+  }) => post<{ success: boolean; data: RoyaltyTemplate }>("/templates", body),
+
+  deleteTemplate: (id: number, walletAddress: string) =>
+    del<{ success: boolean }>(
+      `/templates/${id}?walletAddress=${encodeURIComponent(walletAddress)}`,
+    ),
+
   // Transaction History & Audit Log APIs
-  getTransactionHistory: (contractId: string, limit = 50, offset = 0) =>
-    get<{
+  getTransactionHistory: (
+    contractId: string,
+    limit = 50,
+    offset = 0,
+    filters?: {
+      type?: "distribute" | "initialize";
+      recipient?: string;
+      startDate?: string;
+      endDate?: string;
+    },
+  ) => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (filters?.type) params.set("type", filters.type);
+    if (filters?.recipient) params.set("recipient", filters.recipient);
+    if (filters?.startDate) params.set("startDate", filters.startDate);
+    if (filters?.endDate) params.set("endDate", filters.endDate);
+    return get<{
       success: boolean;
       data: TransactionRecord[];
       pagination: { limit: number; offset: number; total: number };
-    }>(`/history/${contractId}?limit=${limit}&offset=${offset}`),
+    }>(`/history/${contractId}?${params.toString()}`);
+  },
 
   getTransactionDetails: (txHash: string) =>
     get<{ success: boolean; data: TransactionDetails }>(
@@ -211,20 +289,14 @@ export const api = {
       body,
     ),
 
+  // Read-only: there is no client-side write path for audit entries. Audit
+  // records are created exclusively server-side as a side effect of real
+  // configuration/administrative actions (initialize, distribute,
+  // secondary-royalty routes) — see backend/src/routes/history.js.
   getAuditLog: (contractId: string, limit = 100, offset = 0) =>
     get<{ success: boolean; data: AuditLogEntry[] }>(
       `/audit/${contractId}?limit=${limit}&offset=${offset}`,
     ),
-
-  addAuditLog: (
-    contractId: string,
-    body: {
-      action: string;
-      user?: string;
-      details?: Record<string, unknown>;
-    },
-  ) =>
-    post<{ success: boolean; message: string }>(`/audit/${contractId}`, body),
 
   // Secondary Royalty APIs
   recordSecondarySale: (body: {
@@ -321,6 +393,8 @@ export const api = {
         totalDistributed: number;
         totalTransactions: number;
         averagePayout: number;
+        primaryRoyaltiesTotal: number;
+        secondaryRoyaltiesTotal: number;
         topEarners: Array<{
           address: string;
           totalEarned: number;
@@ -342,23 +416,171 @@ export const api = {
       `/analytics/${contractId}${dateRange ? `?start=${dateRange.start}&end=${dateRange.end}` : ""}`,
     ),
 
-  // Payment Preferences (#584)
-  getPaymentPreference: (walletAddress: string) =>
+  // Contributor Onboarding APIs (#567)
+  getOnboardingStatus: (walletAddress: string) =>
+    get<OnboardingStatusResponse>(`/v1/onboarding/${walletAddress}`),
+
+  updateOnboardingStatus: (
+    walletAddress: string,
+    data: OnboardingUpdateRequest,
+  ) =>
+    patch<{
+      message: string;
+      summary: OnboardingStatusResponse;
+    }>(`/v1/onboarding/${walletAddress}`, data),
+
+  sendOnboardingReminder: (walletAddress: string, email: string) =>
+    post<OnboardingReminderResponse>(`/v1/onboarding/${walletAddress}/remind`, {
+      email,
+    }),
+
+  getEarningsHistory: (
+    walletAddress: string,
+    params?: { start?: string; end?: string; contracts?: string[] },
+  ) => {
+    const search = new URLSearchParams();
+    if (params?.start) search.set("start", params.start);
+    if (params?.end) search.set("end", params.end);
+    if (params?.contracts?.length) search.set("contracts", params.contracts.join(","));
+    const query = search.toString();
+    return get<{
+      success: boolean;
+      message?: string;
+      data: {
+        walletAddress: string;
+        snapshots: Array<{ date: string; contractId: string; amount: number }>;
+        events: Array<{
+          type: "contract_added" | "distribution_failure" | "contract_removed";
+          contractId: string;
+          date: string;
+          label: string;
+        }>;
+        contracts: string[];
+      };
+    }>(`/v1/earnings-history/${walletAddress}${query ? `?${query}` : ""}`);
+  },
+
+  getContractPerformance: (
+    dateRange?: { start: string; end: string },
+    _options?: { sortBy?: string; direction?: string; limit?: number },
+  ) =>
     get<{
       success: boolean;
-      data: { walletAddress: string; paymentMethod: string; updatedAt: string };
-    }>(`/preferences/payment?walletAddress=${encodeURIComponent(walletAddress)}`).then(
-      (res) => res.data,
+      message?: string;
+      data: {
+        contracts: Array<{
+          contractId: string;
+          revenue: number;
+          transactions: number;
+          lastActivity: string | null;
+          status: string;
+        }>;
+      };
+    }>(
+      `/analytics/performance${dateRange ? `?start=${dateRange.start}&end=${dateRange.end}` : ""}`,
     ),
 
-  savePaymentPreference: (
-    walletAddress: string,
-    paymentMethod: "direct_transfer" | "usdc" | "xlm",
-  ) =>
-    post<{
-      success: boolean;
-      data: { walletAddress: string; paymentMethod: string; updatedAt: string };
-    }>("/preferences/payment", { walletAddress, paymentMethod }).then(
-      (res) => res.data,
-    ),
+  getMultiContractEarnings: (address: string, _dateRange?: { start?: string; end?: string } | string) =>
+    get<any>(`/analytics/multi-contract?address=${address}`),
+
+  getNotifications: (walletAddress: string, _limit = 50, _offset = 0) =>
+    get<{ success: boolean; data: any[]; unreadCount: number }>(`/v1/notifications/${walletAddress}`),
+
+  getUnreadNotificationCount: (walletAddress: string) =>
+    get<{ success: boolean; count: number; unreadCount: number }>(`/v1/notifications/${walletAddress}/unread`),
+
+  markAllNotificationsRead: (walletAddress: string) =>
+    post<{ success: boolean }>(`/v1/notifications/${walletAddress}/read-all`, {}),
+
+  markNotificationRead: (id: number) =>
+    post<{ success: boolean }>(`/v1/notifications/read/${id}`, {}),
+
+  deleteNotification: (id: number) =>
+    del<{ success: boolean }>(`/v1/notifications/${id}`),
+
+  getNotificationPreferences: (walletAddress: string) =>
+    get<{ email?: any; sms?: any; inApp?: any; push?: any; [key: string]: any }>(`/v1/preferences/notifications/${walletAddress}`),
+
+  saveNotificationPreferences: (walletAddress: string, prefs: any) =>
+    post<{ success: boolean }>(`/v1/preferences/notifications/${walletAddress}`, prefs),
+
+  getHeldTransactions: (contractId: string, _status = "active", _offset = 0) =>
+    get<{ success: boolean; data: any[] }>(`/v1/payment-holds/${contractId}`),
+
+  approveHoldRelease: (holdId: number, _role?: string, _note?: string) =>
+    post<{ success: boolean }>(`/v1/payment-holds/approve/${holdId}`, {}),
+
+  releasePaymentHold: (holdId: number, _role?: string, _note?: string) =>
+    post<{ success: boolean }>(`/v1/payment-holds/release/${holdId}`, {}),
+
+  placePaymentHold: (body: any, _walletAddress?: string, _txId?: any, _reason?: string) =>
+    post<{ success: boolean }>(`/v1/payment-holds`, body),
+
+  getPaymentPreference: (walletAddress: string) =>
+    get<{ paymentMethod?: string; [key: string]: any }>(`/v1/preferences/payment/${walletAddress}`),
+
+  savePaymentPreference: (walletAddress: string, pending: string) =>
+    post<{ paymentMethod?: string; [key: string]: any }>(`/v1/preferences/payment/${walletAddress}`, { pending }),
+
+  getVerification: (walletAddress: string) => get<any>(`/verification/${walletAddress}`),
+  startVerification: (walletAddress: string, data?: any) => post<any>(`/verification/start`, { walletAddress, ...data }),
+  advanceVerification: (walletAddress: string, step?: any) => post<any>(`/verification/advance`, { walletAddress, step }),
+
+  getHealth: () => get<any>("/v1/health"),
+
+  getContractFees: (contractId: string) => get<any>(`/fees/${contractId}`),
+
+  getTaxComplianceReport: () => get<any>("/v1/contributor-tax/report"),
+
+  getContributorsMissingTaxInfo: () => get<any>("/v1/contributor-tax/missing"),
 };
+
+export interface OnboardingItem {
+  id: string;
+  label: string;
+  description: string;
+  completed: boolean;
+  required: boolean;
+  category: "setup" | "compliance" | "finance" | "milestone";
+}
+
+export interface OnboardingStatusResponse {
+  walletAddress: string;
+  email: string;
+  kycStatus: "unverified" | "pending" | "verified";
+  payoutToken: string;
+  paymentPreferencesSet: boolean;
+  taxInfoSubmitted: boolean;
+  items: OnboardingItem[];
+  completedCount: number;
+  totalCount: number;
+  completionPercentage: number;
+  requiredComplete: boolean;
+  actionsLocked: boolean;
+  nextStep: {
+    id: string;
+    label: string;
+    description: string;
+  } | null;
+}
+
+export interface OnboardingUpdateRequest {
+  email?: string;
+  kycStatus?: "unverified" | "pending" | "verified";
+  paymentPreferencesSet?: boolean;
+  payoutToken?: string;
+  taxInfoSubmitted?: boolean;
+}
+
+export interface OnboardingReminderResponse {
+  success: boolean;
+  message: string;
+  emailDetails: {
+    to: string;
+    subject: string;
+    completionPercentage: number;
+    incompleteCount: number;
+    previewText: string;
+  };
+}
+

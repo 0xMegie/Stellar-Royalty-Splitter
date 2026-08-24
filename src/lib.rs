@@ -57,6 +57,17 @@ pub enum StorageKey {
 /// Older entries are dropped when the cap is reached.
 pub const RATE_HISTORY_CAP: u32 = 20;
 
+/// Maximum number of collaborators accepted by `initialize`.
+/// Bounded by Soroban execution and storage costs.
+pub const MAX_COLLABORATORS: u32 = 10;
+
+/// Maximum number of recipients accepted by `set_recipients`, `set_default_recipients`,
+/// and `distribute_with_override`.
+pub const MAX_RECIPIENTS: u32 = 10;
+
+/// Maximum number of admins in the multi-sig admin list (`set_admins`).
+pub const MAX_ADMIN_LIST: u32 = 10;
+
 /// Backward-compatible alias for integration tests and external references.
 pub type DataKey = StorageKey;
 
@@ -78,31 +89,33 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[repr(u32)]
 pub enum ContractError {
     Underfunded = 1,
-    AlreadyInitialized,
-    EmptyCollaborators,
-    TooManyRecipients,
-    LengthMismatch,
-    InvalidShareTotal,
-    ZeroShare,
-    DuplicateRecipient,
-    InvalidBasisPoints,
-    NotInitialized,
-    NoCollaborators,
-    NoShareMap,
-    ArithmeticOverflow,
-    RoyaltyRateZero,
-    RoyaltyRateTooHigh,
-    ContractPaused,
-    AmountNotPositive,
-    InsufficientBalance,
-    EmptyRecipients,
-    AmountTooSmall,
-    PoolExceedsBalance,
-    NoSecondaryRoyalties,
-    NoSecondaryToken,
-    CollaboratorNotFound,
-    InvalidUpdatedShareTotal,
-    SalePriceNotPositive,
+    AlreadyInitialized = 2,
+    EmptyCollaborators = 3,
+    TooManyRecipients = 4,
+    LengthMismatch = 5,
+    InvalidShareTotal = 6,
+    ZeroShare = 7,
+    DuplicateRecipient = 8,
+    InvalidBasisPoints = 9,
+    NotInitialized = 10,
+    NoCollaborators = 11,
+    NoShareMap = 12,
+    ArithmeticOverflow = 13,
+    RoyaltyRateZero = 14,
+    RoyaltyRateTooHigh = 15,
+    ContractPaused = 16,
+    AmountNotPositive = 17,
+    InsufficientBalance = 18,
+    EmptyRecipients = 19,
+    AmountTooSmall = 20,
+    PoolExceedsBalance = 21,
+    NoSecondaryRoyalties = 22,
+    NoSecondaryToken = 23,
+    CollaboratorNotFound = 24,
+    InvalidUpdatedShareTotal = 25,
+    SalePriceNotPositive = 26,
+    InputTooLarge = 27,
+    NoBalance = 28,
 }
 
 #[contract]
@@ -181,7 +194,7 @@ impl RoyaltySplitter {
             Self::fail(&env, ContractError::EmptyCollaborators);
         }
 
-        if collaborators.len() > 10 {
+        if collaborators.len() > MAX_COLLABORATORS {
             Self::fail(&env, ContractError::TooManyRecipients);
         }
 
@@ -684,22 +697,12 @@ impl RoyaltySplitter {
             }
         };
 
-        if recipients_to_use.is_empty() {
-            Self::fail(&env, ContractError::EmptyRecipients);
-        }
-
-        // Validate shares sum to 10,000
-        let mut total_shares: u32 = 0;
-        for i in 0..recipients_to_use.len() {
-            total_shares = Self::checked_add_share_total(
-                &env,
-                total_shares,
-                recipients_to_use.get(i).unwrap().share,
-            );
-        }
-        if total_shares != 10_000 {
-            Self::fail(&env, ContractError::InvalidShareTotal);
-        }
+        // Reuses the same checks as set_recipients/set_default_recipients (#713):
+        // non-empty, within MAX_RECIPIENTS, no zero-share or duplicate-address
+        // entries, and shares sum to 10,000. Runs before any state mutation or
+        // token transfer below, so an invalid override_recipients list (or a
+        // corrupted stored fallback) never partially distributes funds.
+        Self::validate_recipient_list(&env, &recipients_to_use);
 
         let n = recipients_to_use.len();
 
@@ -732,8 +735,10 @@ impl RoyaltySplitter {
 
         for (addr, payout) in payouts.iter() {
             token_client.transfer(&env.current_contract_address(), &addr, &payout);
-            env.events()
-                .publish((symbol_short!("dist"),), (addr, payout));
+            env.events().publish(
+                (symbol_short!("royalty"), symbol_short!("dist")),
+                (addr, payout, token.clone(), symbol_short!("primary")),
+            );
         }
 
         env.events().publish(
@@ -929,8 +934,10 @@ impl RoyaltySplitter {
             // Execute transfers for this token
             for (addr, payout) in payouts.iter() {
                 token_client.transfer(&env.current_contract_address(), &addr, &payout);
-                env.events()
-                    .publish((symbol_short!("dist"),), (addr, payout));
+                env.events().publish(
+                    (symbol_short!("royalty"), symbol_short!("dist")),
+                    (addr, payout, token.clone(), symbol_short!("batch")),
+                );
             }
 
             // Emit distribution event for this token
@@ -1095,8 +1102,10 @@ impl RoyaltySplitter {
 
         for (addr, payout) in payouts.iter() {
             token_client.transfer(&env.current_contract_address(), &addr, &payout);
-            env.events()
-                .publish((symbol_short!("sec_dist"),), (addr, payout));
+            env.events().publish(
+                (symbol_short!("royalty"), symbol_short!("sec_pay")),
+                (addr, payout, token.clone(), symbol_short!("secondary")),
+            );
         }
 
         storage::instance_set(&env, &StorageKey::SecondaryPool, &0_i128);
@@ -1364,6 +1373,9 @@ impl RoyaltySplitter {
         if admins.is_empty() {
             panic!("admin list cannot be empty");
         }
+        if admins.len() > MAX_ADMIN_LIST {
+            Self::fail(&env, ContractError::InputTooLarge);
+        }
         if threshold < 1 {
             panic!("threshold must be at least 1");
         }
@@ -1406,7 +1418,7 @@ impl RoyaltySplitter {
             Self::fail(env, ContractError::EmptyRecipients);
         }
 
-        if recipients.len() > 10 {
+        if recipients.len() > MAX_RECIPIENTS {
             Self::fail(env, ContractError::TooManyRecipients);
         }
 

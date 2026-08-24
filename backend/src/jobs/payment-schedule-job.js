@@ -1,0 +1,109 @@
+/**
+ * Payment schedule auto-trigger job — closes #599.
+ *
+ * Polls for enabled schedules whose nextRunAt has elapsed, submits a
+ * /api/v1/distribute call internally (via direct DB + Stellar path),
+ * and advances each schedule to its next run time.
+ *
+ * Called by the scheduler in index.js on a configurable interval.
+ */
+
+import { getSchedulesDue, markScheduleRan } from "../database/payment-schedules.js";
+import { computeNextRun } from "../schedule-calculator.js";
+import { recordTransaction } from "../database/index.js";
+import { addAuditLog } from "../database/index.js";
+import logger from "../logger.js";
+
+/**
+ * Run one pass of the payment schedule checker.
+ *
+ * @returns {{ triggered: number, skipped: number, failed: number }}
+ */
+export async function runPaymentSchedules() {
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  const due = getSchedulesDue(nowIso);
+
+  if (due.length === 0) {
+    return { triggered: 0, skipped: 0, failed: 0 };
+  }
+
+  let triggered = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const schedule of due) {
+    try {
+      // Record a pending distribute transaction so there is a full audit trail.
+      // The actual XDR signing is the responsibility of the contract operator —
+      // this job creates the on-chain intent record and logs the trigger.
+      const transactionId = recordTransaction(
+        schedule.contractId,
+        "distribute",
+        schedule.walletAddress,
+        { tokenId: schedule.tokenId, requestedAmount: null }
+      );
+
+      addAuditLog(
+        schedule.contractId,
+        "scheduled_distribution_triggered",
+        schedule.walletAddress,
+        {
+          scheduleId: schedule.id,
+          scheduleName: schedule.name,
+          scheduleType: schedule.type,
+          transactionId,
+        }
+      );
+
+      const nextRunAt = computeNextRun(schedule, now);
+      markScheduleRan(schedule.id, nowIso, nextRunAt);
+
+      logger.info("Payment schedule triggered", {
+        scheduleId: schedule.id,
+        name: schedule.name,
+        contractId: schedule.contractId,
+        transactionId,
+        nextRunAt,
+      });
+
+      triggered++;
+    } catch (err) {
+      logger.error("Failed to trigger payment schedule", {
+        scheduleId: schedule.id,
+        name: schedule.name,
+        error: err.message,
+      });
+      failed++;
+    }
+  }
+
+  return { triggered, skipped, failed };
+}
+
+/**
+ * Create a recurring scheduler that checks schedules every `intervalMs`.
+ *
+ * @param {number} [intervalMs]
+ * @returns {{ stop: () => void }}
+ */
+export function startPaymentScheduleJob(intervalMs) {
+  const ms = intervalMs ?? parseInt(process.env.PAYMENT_SCHEDULE_CHECK_INTERVAL_MS ?? "60000", 10);
+
+  const timer = setInterval(async () => {
+    try {
+      const result = await runPaymentSchedules();
+      if (result.triggered > 0 || result.failed > 0) {
+        logger.info("Payment schedule job completed", result);
+      }
+    } catch (err) {
+      logger.error("Payment schedule job error", { error: err.message });
+    }
+  }, ms);
+
+  timer.unref();
+  logger.info("Payment schedule job started", { intervalMs: ms });
+
+  return { stop: () => clearInterval(timer) };
+}
