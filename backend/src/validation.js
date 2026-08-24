@@ -295,6 +295,87 @@ export function validateStellarAddress(address, res) {
 }
 
 /**
+ * Zod schema for paginated query params.
+ * limit: integer 1–100, defaults to 10.
+ * offset: non-negative integer, defaults to 0.
+ *
+ * Query strings arrive as plain strings, so coerce with z.coerce.number().
+ */
+export const paginationSchema = z.object({
+  limit: z.coerce
+    .number({ invalid_type_error: "limit must be a number" })
+    .int("limit must be an integer")
+    .min(1, "limit must be at least 1")
+    .max(100, "limit must be at most 100")
+    .default(10),
+  offset: z.coerce
+    .number({ invalid_type_error: "offset must be a number" })
+    .int("offset must be an integer")
+    .min(0, "offset must be >= 0")
+    .default(0),
+});
+
+/**
+ * Zod schema for analytics date-range query params.
+ * start / end: optional ISO 8601 date strings.
+ * topLimit: integer 1–100, defaults to 10 (caps the topEarners list).
+ */
+export const analyticsQuerySchema = z
+  .object({
+    start: z.string().optional(),
+    end: z.string().optional(),
+    topLimit: z.coerce
+      .number({ invalid_type_error: "topLimit must be a number" })
+      .int("topLimit must be an integer")
+      .min(1, "topLimit must be at least 1")
+      .max(100, "topLimit must be at most 100")
+      .default(10),
+  })
+  .superRefine((d, ctx) => {
+    if (d.start) {
+      const t = new Date(d.start).getTime();
+      if (isNaN(t)) {
+        ctx.addIssue({ code: "custom", path: ["start"], message: "Invalid start date. Use ISO 8601 format." });
+      }
+    }
+    if (d.end) {
+      const t = new Date(d.end).getTime();
+      if (isNaN(t)) {
+        ctx.addIssue({ code: "custom", path: ["end"], message: "Invalid end date. Use ISO 8601 format." });
+      }
+    }
+    if (d.start && d.end) {
+      const s = new Date(d.start).getTime();
+      const e = new Date(d.end).getTime();
+      if (!isNaN(s) && !isNaN(e) && s > e) {
+        ctx.addIssue({ code: "custom", path: ["start"], message: "start date must be before end date." });
+      }
+    }
+  });
+
+/**
+ * Express middleware that validates query params against a Zod schema.
+ * On success, req.query is replaced with the parsed (coerced + defaulted) value.
+ * On failure, responds 400 with the standard validation-error shape.
+ */
+export function validateQuery(schema) {
+  return (req, res, next) => {
+    const result = schema.safeParse(req.query);
+    if (!result.success) {
+      return sendValidationError(
+        res,
+        result.error.issues.map((e) => ({
+          field: e.path.join("."),
+          message: e.message,
+        }))
+      );
+    }
+    req.query = result.data;
+    next();
+  };
+}
+
+/**
  * Parse and validate limit/offset query params.
  * Returns { limit, offset } on success, or sends a 400 and returns null.
  * @param {object} query - req.query

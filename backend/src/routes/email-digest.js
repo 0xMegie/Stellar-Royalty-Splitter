@@ -13,6 +13,7 @@ import {
   validate,
   emailDigestSubscribeSchema,
   emailDigestPreferencesSchema,
+  parsePagination,
 } from "../validation.js";
 import logger from "../logger.js";
 
@@ -150,8 +151,11 @@ router.get("/email-digest/history/:walletAddress", (req, res) => {
       return sendError(res, 404, "not_found", "No email digest subscription found for this wallet");
     }
 
-    const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 50);
-    const history = getDigestHistory(subscriber.id, limit);
+    const pagination = parsePagination(req.query, res, 10, 100);
+    if (!pagination) return;
+    const { limit, offset } = pagination;
+
+    const history = getDigestHistory(subscriber.id, limit, offset);
 
     res.json({
       success: true,
@@ -163,6 +167,7 @@ router.get("/email-digest/history/:walletAddress", (req, res) => {
         status: h.status,
         earningsSummary: JSON.parse(h.earningsSummary),
       })),
+      pagination: { limit, offset },
     });
   } catch (error) {
     logger.error("Error fetching email digest history:", error);
