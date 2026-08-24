@@ -11,6 +11,7 @@ export {
   countWrite,
   initializeDatabase,
   getMigrationVersion,
+  checkDatabase,
 } from "./core.js";
 
 // Transaction tracking

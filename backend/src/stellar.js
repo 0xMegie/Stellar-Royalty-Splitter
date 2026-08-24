@@ -109,6 +109,43 @@ export async function checkHorizonConnectivity() {
     clearTimeout(timer);
   }
 }
+/**
+ * Probe the Soroban RPC endpoint with a lightweight getHealth call.
+ * Returns { connected, responseTimeMs, status?, error? }.
+ */
+export async function checkSorobanConnectivity() {
+  const timeoutMs = parsePositiveInt(process.env.HEALTH_CHECK_TIMEOUT_MS, 5_000);
+  const start = Date.now();
+  try {
+    const result = await withTimeout(server.getHealth(), timeoutMs, "Soroban getHealth");
+    return {
+      connected: true,
+      responseTimeMs: Date.now() - start,
+      status: result?.status ?? "healthy",
+      url: RPC_URL,
+    };
+  } catch (err) {
+    return {
+      connected: false,
+      responseTimeMs: Date.now() - start,
+      url: RPC_URL,
+      error: err?.message ?? String(err),
+    };
+  }
+}
+
+/**
+ * Report the state of the in-process fee cache used by getRecommendedFee().
+ * Returns { cached: bool, ageMs: number|null, ttlMs: number }.
+ */
+export function getCacheStatus() {
+  const ttlMs = parsePositiveInt(process.env.HORIZON_FEE_CACHE_MS, 30_000);
+  if (!feeCache) {
+    return { cached: false, ageMs: null, ttlMs };
+  }
+  const ageMs = Date.now() - feeCache.fetchedAt;
+  return { cached: ageMs < ttlMs, ageMs, ttlMs };
+}
 
 /**
  * Report whether a default contract ID is configured and reachable on Soroban RPC.

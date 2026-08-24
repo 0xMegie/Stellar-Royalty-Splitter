@@ -91,7 +91,7 @@ const generalLimiter = rateLimit({
     res.set("Retry-After", "60");
     sendError(res, 429, "too_many_requests", "Too many requests, please try again later.");
   },
-  skip: (req) => req.path === "/api/v1/health" || req.path === "/api/health",
+  skip: (req) => req.path === "/api/v1/health" || req.path === "/api/health" || req.path === "/api/v1/health/detailed",
 });
 
 // Write limiter: 10 req / 1 min per IP
@@ -108,6 +108,27 @@ const writeLimiter = rateLimit({
     });
     res.set("Retry-After", "60");
     sendError(res, 429, "too_many_requests", "Too many write requests, please slow down.");
+  },
+});
+
+// Read limiter for analytics/history endpoints (#394): tighter than the
+// general limiter to prevent large DB scans at arbitrary scale.
+// Default: 30 req / 1 min per IP (env: RATE_LIMIT_READ_MAX).
+const readLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "60000"),
+  max: parseInt(process.env.RATE_LIMIT_READ_MAX ?? "30"),
+  keyGenerator: (req) => req.headers["x-api-key"] || ipKeyGenerator(req.ip),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    logger.warn("Read rate limit exceeded", {
+      ip: req.ip,
+      path: req.originalUrl,
+      method: req.method,
+      apiKey: req.headers["x-api-key"] ? "present" : "none",
+    });
+    res.set("Retry-After", "60");
+    sendError(res, 429, "too_many_requests", "Too many requests, please try again later.");
   },
 });
 
@@ -145,6 +166,12 @@ app.use("/api/v1/initialize", writeLimiter);
 app.use("/api/v1/distribute", writeLimiter);
 app.use("/api/v1/secondary-royalty", writeLimiter);
 app.use("/api/v1/webhooks", writeLimiter);
+
+// Apply read limiter to high-fan-out query endpoints (#394 — MEDIUM-16)
+app.use("/api/v1/analytics", readLimiter);
+app.use("/api/v1/history", readLimiter);
+app.use("/api/v1/archive", readLimiter);
+app.use("/api/v1/audit", readLimiter);
 
 // Ed25519 signature verification on all write endpoints (#392).
 // Set SIGNATURE_VERIFICATION_ENABLED=false to log-only during rollout.
