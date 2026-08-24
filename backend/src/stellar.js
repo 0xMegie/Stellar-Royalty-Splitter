@@ -567,6 +567,12 @@ export function vecToScVal(items) {
   return xdr.ScVal.scvVec(items);
 }
 
+export function bytes32ToScVal(hex) {
+  const bytes = Buffer.from(hex, "hex");
+  if (bytes.length !== 32) throw new Error("Expected a 32-byte hash");
+  return nativeToScVal(bytes, { type: "bytes" });
+}
+
 /**
  * Fetch the royalty rate from the contract using a read-only simulation.
  * Returns the rate as a u32 (basis points), or 0 on error.
