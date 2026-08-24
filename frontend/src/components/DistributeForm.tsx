@@ -248,6 +248,13 @@ export default function DistributeForm({
     setDraftDecisionMade(true);
   }
 
+  function handleShortcutSubmit(event: React.KeyboardEvent<HTMLFormElement>) {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      void submit();
+    }
+  }
+
   function clearForm() {
     setTokenId("");
     setAmount("");
@@ -263,12 +270,15 @@ export default function DistributeForm({
   return (
     <form
       className="card"
+      aria-describedby="distribute-shortcut-hint"
+      onKeyDown={handleShortcutSubmit}
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
       }}
     >
       <span className="badge">Distribute</span>
+      <p className="sr-only" id="distribute-shortcut-hint">Press Control Enter or Command Enter to submit this form.</p>
 
       {draftPrompt && (
         <div className="restore-prompt" role="status">

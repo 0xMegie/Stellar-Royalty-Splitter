@@ -440,6 +440,13 @@ export default function InitializeForm({
     }
   }
 
+  function handleShortcutSubmit(event: React.KeyboardEvent<HTMLDivElement>) {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      void submit();
+    }
+  }
+
   async function submit() {
     if (networkMismatch)
       return setStatus(
@@ -550,8 +557,9 @@ export default function InitializeForm({
   }
 
   return (
-    <div className="card">
+    <div className="card" onKeyDown={handleShortcutSubmit} aria-describedby="initialize-shortcut-hint">
       <span className="badge">Initialize</span>
+      <p className="sr-only" id="initialize-shortcut-hint">Press Control Enter or Command Enter to submit this form.</p>
 
       {pendingDraft && (
         <div
