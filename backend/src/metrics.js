@@ -4,6 +4,9 @@ const metrics = {
   transactionsFailedTotal: 0,
   horizonResponseTimeMsTotal: 0,
   horizonResponseTimeCount: 0,
+  // DoS protection counters (#426)
+  oversizedRequestsRejectedTotal: 0,
+  dosRateLimitedTotal: 0,
 };
 
 function formatMetricValue(value) {
@@ -20,6 +23,15 @@ export function recordTransactionSuccess() {
 
 export function recordTransactionFailure() {
   metrics.transactionsFailedTotal += 1;
+}
+
+// DoS protection metrics (#426)
+export function recordOversizedRequest() {
+  metrics.oversizedRequestsRejectedTotal += 1;
+}
+
+export function recordDoSRejection() {
+  metrics.dosRateLimitedTotal += 1;
 }
 
 export function recordHorizonResponseTime(durationMs) {
@@ -61,6 +73,12 @@ export function prometheusMetrics() {
     "# HELP stellar_horizon_response_time_count Horizon response time observations.",
     "# TYPE stellar_horizon_response_time_count counter",
     `stellar_horizon_response_time_count ${snapshot.horizonResponseTimeCount}`,
+    "# HELP stellar_oversized_requests_rejected_total Requests rejected due to body size exceeding the limit.",
+    "# TYPE stellar_oversized_requests_rejected_total counter",
+    `stellar_oversized_requests_rejected_total ${snapshot.oversizedRequestsRejectedTotal}`,
+    "# HELP stellar_dos_rate_limited_total Requests rate-limited due to repeated oversized payload attacks.",
+    "# TYPE stellar_dos_rate_limited_total counter",
+    `stellar_dos_rate_limited_total ${snapshot.dosRateLimitedTotal}`,
     "",
   ].join("\n");
 }
@@ -71,4 +89,6 @@ export function resetMetrics() {
   metrics.transactionsFailedTotal = 0;
   metrics.horizonResponseTimeMsTotal = 0;
   metrics.horizonResponseTimeCount = 0;
+  metrics.oversizedRequestsRejectedTotal = 0;
+  metrics.dosRateLimitedTotal = 0;
 }

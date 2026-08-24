@@ -25,6 +25,7 @@ import emailDigestRouter from "./routes/email-digest.js";
 import { sendWeeklyDigests } from "./jobs/weekly-digest-job.js";
 import { isEmailConfigured } from "./email/email-service.js";
 import { startRetryScheduler } from "./jobs/retry-failed-distributions.js";
+import { createBodySizeLimiters } from "./body-size-limit.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -110,7 +111,11 @@ const writeLimiter = rateLimit({
 });
 
 app.use(generalLimiter);
-app.use(express.json({ limit: "10kb" }));
+
+// Body size limits: 10 KB JSON, 50 KB multipart — with DoS rate limiting,
+// logging, and metrics for rejected payloads (#426).
+const bodySizeLimiters = createBodySizeLimiters();
+app.use(...bodySizeLimiters);
 
 // Enforce Content-Type: application/json on POST requests
 app.use((req, res, next) => {
@@ -180,6 +185,8 @@ app.use("/api", (req, res) => {
 
 // Central error handler
 app.use((err, _req, res, _next) => {
+  // entity.too.large is normally caught by the body-size-limit middleware
+  // (#426) before reaching here, but this fallback ensures no edge case leaks.
   if (err.type === "entity.too.large") {
     return sendError(res, 413, "payload_too_large", "Payload too large");
   }
