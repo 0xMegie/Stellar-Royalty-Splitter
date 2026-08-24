@@ -742,6 +742,42 @@
   }
 }
 
+.admin-management-sections {
+  margin-top: var(--spacing-xl, 32px);
+}
+
+.admin-management-sections h2 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin: 0 0 var(--spacing-md, 16px) 0;
+  color: var(--text-primary);
+}
+
+.management-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg, 24px);
+}
+
+.management-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+}
+
+.management-card h3 {
+  margin: 0 0 4px 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.management-card > p {
+  margin: 0 0 var(--spacing-md, 16px) 0;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+
 @media (max-width: 480px) {
   .admin-dashboard {
     padding: var(--spacing-sm);

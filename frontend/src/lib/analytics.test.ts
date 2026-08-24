@@ -2,7 +2,7 @@
  * Tests for the privacy-first analytics tracker (#524).
  */
 
-import { describe, test, expect, beforeEach, jest } from "@jest/globals";
+import { describe, test, expect, beforeEach, vi } from "vitest";
 import { analytics, scrubProps, type AnalyticsEvent } from "./analytics";
 
 describe("analytics #524", () => {
@@ -117,7 +117,7 @@ describe("analytics #524", () => {
   });
 
   test("sendBeacon is called when endpoint configured", () => {
-    const beacon = jest.fn(() => true);
+    const beacon = vi.fn(() => true);
     Object.defineProperty(navigator, "sendBeacon", {
       configurable: true,
       writable: true,

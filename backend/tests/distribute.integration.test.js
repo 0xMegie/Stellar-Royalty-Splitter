@@ -30,8 +30,8 @@ const { default: app } = await import("./app.js");
 // ── Test fixtures ─────────────────────────────────────────────────────────────
 
 const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const WALLET   = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const TOKEN    = "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+const WALLET = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const TOKEN = "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 
 const validBody = { contractId: CONTRACT, walletAddress: WALLET, tokenId: TOKEN };
 
@@ -82,7 +82,7 @@ describe("POST /api/v1/distribute — integration", () => {
       .send({ contractId: CONTRACT, tokenId: TOKEN });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/validation/i);
+    expect(res.body.code).toBe("validation_failed");
   });
 
   test("400 when walletAddress is not a valid Stellar address", async () => {
@@ -92,9 +92,7 @@ describe("POST /api/v1/distribute — integration", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.details).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ field: "walletAddress" }),
-      ])
+      expect.arrayContaining([expect.objectContaining({ field: "walletAddress" })])
     );
   });
 
@@ -105,9 +103,7 @@ describe("POST /api/v1/distribute — integration", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.details).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ field: "walletAddress" }),
-      ])
+      expect.arrayContaining([expect.objectContaining({ field: "walletAddress" })])
     );
   });
 
@@ -120,9 +116,7 @@ describe("POST /api/v1/distribute — integration", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.details).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ field: "contractId" }),
-      ])
+      expect.arrayContaining([expect.objectContaining({ field: "contractId" })])
     );
   });
 
@@ -133,9 +127,7 @@ describe("POST /api/v1/distribute — integration", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.details).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ field: "tokenId" }),
-      ])
+      expect.arrayContaining([expect.objectContaining({ field: "tokenId" })])
     );
   });
 
@@ -146,9 +138,7 @@ describe("POST /api/v1/distribute — integration", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.details).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ field: "tokenId" }),
-      ])
+      expect.arrayContaining([expect.objectContaining({ field: "tokenId" })])
     );
   });
 
@@ -159,9 +149,7 @@ describe("POST /api/v1/distribute — integration", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.details).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ field: "tokenId" }),
-      ])
+      expect.arrayContaining([expect.objectContaining({ field: "tokenId" })])
     );
   });
 
@@ -172,9 +160,7 @@ describe("POST /api/v1/distribute — integration", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.details).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ field: "contractId" }),
-      ])
+      expect.arrayContaining([expect.objectContaining({ field: "contractId" })])
     );
   });
 

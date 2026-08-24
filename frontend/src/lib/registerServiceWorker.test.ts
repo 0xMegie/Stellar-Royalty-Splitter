@@ -2,7 +2,7 @@
  * Tests for service-worker registration + connectivity watcher (#522).
  */
 
-import { describe, test, expect, beforeEach, jest } from "@jest/globals";
+import { describe, test, expect, beforeEach, vi } from "vitest";
 import {
   isOnline,
   registerServiceWorker,
@@ -22,7 +22,7 @@ describe("registerServiceWorker (#522)", () => {
 
   test("calls navigator.serviceWorker.register and forwards the result", async () => {
     const fakeReg = { scope: "/" } as unknown as ServiceWorkerRegistration;
-    const register = jest.fn(async () => fakeReg);
+    const register = vi.fn(async () => fakeReg);
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
       value: { register, controller: null },
@@ -76,7 +76,7 @@ describe("watchConnectivity (#522)", () => {
   });
 
   test("posts srs-drain-queue to the SW controller on online", () => {
-    const postMessage = jest.fn();
+    const postMessage = vi.fn();
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
       value: { controller: { postMessage } },

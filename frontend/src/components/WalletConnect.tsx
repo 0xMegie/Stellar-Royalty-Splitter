@@ -1,4 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import "../lib/freighter";
+import { useNetwork } from "../context/NetworkContext";
 
 interface Props {
   walletAddress: string | null;
@@ -6,29 +8,17 @@ interface Props {
   onDisconnect?: () => void;
 }
 
-// Freighter injects window.freighter at runtime — no official type package available,
-// so we use type assertions with explicit comments rather than @ts-ignore.
-declare global {
-  interface Window {
-    freighter?: {
-      requestAccess?: () => Promise<{ address: string }>;
-      getAddress?: () => Promise<{ address: string }>;
-      getPublicKey?: () => Promise<string>;
-      signTransaction?: (
-        xdr: string,
-        options?: { network?: string },
-      ) => Promise<string>;
-      on?: (event: string, handler: (data: { address: string }) => void) => void;
-    };
-  }
-}
+const CONNECTED_FLAG_KEY = "freighter_connected";
+const LAST_ADDRESS_KEY = "lastWalletAddress";
 
 export default function WalletConnect({ walletAddress, onConnect, onDisconnect }: Props) {
+  const { refreshWalletNetwork } = useNetwork();
   const [error, setError] = useState("");
   const [freighterAvailable, setFreighterAvailable] = useState(
     () => Boolean(window.freighter),
   );
   const [copied, setCopied] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   useEffect(() => {
     function checkFreighterAvailability() {
@@ -45,13 +35,72 @@ export default function WalletConnect({ walletAddress, onConnect, onDisconnect }
     };
   }, []);
 
-  // Listen for Freighter account changes
+  const persistSession = useCallback((addr: string) => {
+    localStorage.setItem(CONNECTED_FLAG_KEY, "true");
+    localStorage.setItem(LAST_ADDRESS_KEY, addr);
+  }, []);
+
+  const clearSession = useCallback(() => {
+    localStorage.removeItem(CONNECTED_FLAG_KEY);
+    localStorage.removeItem(LAST_ADDRESS_KEY);
+  }, []);
+
+  // Listen for Freighter account changes — a new account may be on a
+  // different network, so re-check alongside the address (#663).
   useEffect(() => {
     if (!window.freighter?.on) return;
     window.freighter.on("accountChanged", ({ address: newAddr }) => {
       onConnect(newAddr);
+      persistSession(newAddr);
+      refreshWalletNetwork();
     });
-  }, [freighterAvailable, onConnect]);
+  }, [freighterAvailable, onConnect, refreshWalletNetwork, persistSession]);
+
+  // Restore a previously-authorized session after a page refresh instead of
+  // forcing the user to reconnect every time (#697). Only attempted if this
+  // browser previously completed a real connection — getAddress() resolves
+  // silently (no Freighter popup) when the site is already authorized, or
+  // rejects if that authorization no longer exists, in which case the stale
+  // flags are cleared so the UI falls back to a normal "Connect Freighter."
+  useEffect(() => {
+    if (walletAddress) return;
+    if (!freighterAvailable) return;
+    if (localStorage.getItem(CONNECTED_FLAG_KEY) !== "true") return;
+
+    let cancelled = false;
+    setRestoring(true);
+
+    (async () => {
+      try {
+        if (!window.freighter?.getAddress) {
+          throw new Error("Freighter does not support silent session restore.");
+        }
+        const { address: addr } = await window.freighter.getAddress();
+        if (!addr) throw new Error("No address returned from Freighter.");
+        if (cancelled) return;
+        onConnect(addr);
+        persistSession(addr);
+        await refreshWalletNetwork();
+      } catch {
+        if (cancelled) return;
+        // The extension no longer recognizes this site (revoked access,
+        // different browser profile, locked wallet, etc.) — clear the
+        // stale flag so we don't keep retrying a dead session on every
+        // future load.
+        clearSession();
+        setError("Your previous session expired. Reconnect below.");
+      } finally {
+        if (!cancelled) setRestoring(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // Deliberately only keyed on freighterAvailable: this should run once,
+    // right after the extension becomes available, not on every prop change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freighterAvailable]);
 
   async function connect() {
     setError("");
@@ -76,6 +125,8 @@ export default function WalletConnect({ walletAddress, onConnect, onDisconnect }
       }
 
       onConnect(addr);
+      persistSession(addr);
+      await refreshWalletNetwork();
     } catch {
       setError("Connection rejected. Please approve the request in Freighter.");
     }
@@ -84,8 +135,7 @@ export default function WalletConnect({ walletAddress, onConnect, onDisconnect }
   function disconnect() {
     setError("");
     setCopied(false);
-    localStorage.removeItem("lastWalletAddress");
-    localStorage.removeItem("freighter_connected");
+    clearSession();
     onDisconnect?.();
   }
 
@@ -118,10 +168,10 @@ export default function WalletConnect({ walletAddress, onConnect, onDisconnect }
           <button
             className="btn-primary"
             onClick={connect}
-            disabled={!freighterAvailable}
+            disabled={!freighterAvailable || restoring}
             aria-describedby={!freighterAvailable ? "freighter-install-prompt" : undefined}
           >
-            Connect Freighter
+            {restoring ? "Restoring session…" : error ? "Retry connection" : "Connect Freighter"}
           </button>
         )}
       </div>
@@ -140,7 +190,11 @@ export default function WalletConnect({ walletAddress, onConnect, onDisconnect }
         </div>
       )}
 
-      {error && <div className="status error">{error}</div>}
+      {error && (
+        <div className="status error" role="alert">
+          {error}
+        </div>
+      )}
     </div>
   );
 }

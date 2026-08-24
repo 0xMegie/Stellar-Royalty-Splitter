@@ -4,6 +4,24 @@
  */
 
 import { db, countWrite } from "./core.js";
+import { AUDIT_ACTIONS } from "../validation.js";
+
+// Field names that must never end up in an audit log's `details` blob. This
+// is a defense-in-depth guard on top of the fact that no call site in this
+// codebase ever passes secrets into addAuditLog — see routes/_shared.js and
+// routes/secondary-royalty.js, none of which forward SERVER_SECRET_KEY,
+// signed XDR, or wallet auth material into auditMetadata.
+const SENSITIVE_DETAIL_KEY_PATTERN = /secret|private[_-]?key|password|token|auth/i;
+
+function stripSensitiveDetails(details) {
+  if (!details || typeof details !== "object") return details;
+  const clean = {};
+  for (const [key, value] of Object.entries(details)) {
+    if (SENSITIVE_DETAIL_KEY_PATTERN.test(key)) continue;
+    clean[key] = value;
+  }
+  return clean;
+}
 
 export function getAuditLog(contractId, limit = 100, offset = 0, filters = {}) {
   const { action, user, startDate, endDate, search } = filters;
@@ -97,12 +115,21 @@ export function countAuditLog(contractId, filters = {}) {
 }
 
 export function addAuditLog(contractId, action, user, details) {
+  // Defense-in-depth: only the closed set of actions the app itself emits
+  // may ever be persisted, even from internal call sites. There is no public
+  // endpoint that accepts an audit entry from a client request body — see
+  // routes/history.js — so this primarily guards against future call sites
+  // accidentally passing through unvalidated input.
+  if (!AUDIT_ACTIONS.includes(action)) {
+    throw new Error(`Refusing to record unsupported audit action: ${action}`);
+  }
+
   const stmt = db.prepare(`
-    INSERT INTO audit_log 
+    INSERT INTO audit_log
     (contractId, action, user, details)
     VALUES (?, ?, ?, ?)
   `);
 
-  stmt.run(contractId, action, user, JSON.stringify(details));
+  stmt.run(contractId, action, user, JSON.stringify(stripSensitiveDetails(details)));
   countWrite();
 }

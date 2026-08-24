@@ -1,7 +1,6 @@
 import { Router } from "express";
 import {
   buildTx,
-  retryBuildTx,
   addressToScVal,
   i128ToScVal,
   u32ToScVal,
@@ -11,7 +10,6 @@ import {
 import {
   recordTransaction,
   recordSecondarySale,
-  recordSecondaryRoyaltyDistribution,
   getSecondarySales,
   getSecondaryRoyaltyDistributions,
   getRoyaltyStatistics,
@@ -24,7 +22,6 @@ import {
   recordSecondarySaleSchema,
   setRoyaltyRateSchema,
   distributeSecondarySchema,
-  validateContractId,
   validateContractIdMiddleware,
   parsePagination,
 } from "../validation.js";
@@ -36,21 +33,25 @@ export const secondaryRoyaltyRouter = Router();
  * NEW: GET /api/secondary-royalty/pool/:contractId
  * Returns the current secondary royalty pool balance for a contract
  */
-secondaryRoyaltyRouter.get("/pool/:contractId", validateContractIdMiddleware, async (req, res, next) => {
-  try {
-    const { contractId } = req.params;
+secondaryRoyaltyRouter.get(
+  "/pool/:contractId",
+  validateContractIdMiddleware,
+  async (req, res, next) => {
+    try {
+      const { contractId } = req.params;
 
-    // Call the contract method to fetch pool balance
-    const result = await server.simulateTransaction({
-      contractId,
-      function: "get_secondary_royalty_pool",
-    });
+      // Call the contract method to fetch pool balance
+      const result = await server.simulateTransaction({
+        contractId,
+        function: "get_secondary_royalty_pool",
+      });
 
-    res.json({ poolBalance: result });
-  } catch (err) {
-    next(err);
+      res.json({ poolBalance: result });
+    } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
 /**
  * POST /api/secondary-royalty
@@ -67,34 +68,8 @@ secondaryRoyaltyRouter.post("/", validate(recordSecondarySaleSchema), async (req
       newOwner,
       salePrice,
       saleToken,
-      royaltyRate,
+      _royaltyRate,
     } = req.body;
-
-    if (
-      !contractId ||
-      !walletAddress ||
-      !nftId ||
-      !previousOwner ||
-      !newOwner ||
-      salePrice == null ||
-      !saleToken ||
-      royaltyRate == null
-    ) {
-      return sendError(res, 400, "bad_request", "Missing required fields.");
-    }
-
-    if (salePrice <= 0) {
-      return sendError(res, 400, "invalid_sale_price", "Sale price must be positive.");
-    }
-
-    if (royaltyRate < 0 || royaltyRate > 10000) {
-      return sendError(
-        res,
-        400,
-        "invalid_royalty_rate",
-        "Royalty rate must be between 0 and 10000 basis points."
-      );
-    }
 
     // Fetch on-chain royalty rate
     const onChainRate = await getRoyaltyRateFromContract(contractId);
@@ -164,19 +139,6 @@ secondaryRoyaltyRouter.post("/set-rate", validate(setRoyaltyRateSchema), async (
   try {
     const { contractId, walletAddress, royaltyRate } = req.body;
 
-    if (!contractId || !walletAddress || royaltyRate == null) {
-      return sendError(res, 400, "bad_request", "Missing required fields.");
-    }
-
-    if (!Number.isInteger(royaltyRate) || royaltyRate < 0 || royaltyRate > 10000) {
-      return sendError(
-        res,
-        400,
-        "invalid_royalty_rate",
-        "Royalty rate must be between 0 and 10000 basis points."
-      );
-    }
-
     // Record transaction
     const transactionId = recordTransaction(contractId, "secondary_royalty", walletAddress, {
       royaltyRate,
@@ -202,68 +164,75 @@ secondaryRoyaltyRouter.post("/set-rate", validate(setRoyaltyRateSchema), async (
  * GET /api/secondary-royalty/rate/:contractId
  * Returns the current on-chain royalty rate for the contract.
  */
-secondaryRoyaltyRouter.get("/rate/:contractId", async (req, res, next) => {
-  try {
-    const { contractId } = req.params;
-    if (!validateContractId(contractId, res)) return;
+secondaryRoyaltyRouter.get(
+  "/rate/:contractId",
+  validateContractIdMiddleware,
+  async (req, res, next) => {
+    try {
+      const { contractId } = req.params;
 
-    const rate = await getRoyaltyRateFromContract(contractId);
-    res.json({ contractId, royaltyRate: rate });
-  } catch (err) {
-    next(err);
+      const rate = await getRoyaltyRateFromContract(contractId);
+      res.json({ contractId, royaltyRate: rate });
+    } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
 /**
  * POST /api/secondary-royalty/distribute
  * Body: { contractId, walletAddress, tokenId }
  * Returns: { xdr, transactionId } — unsigned transaction to distribute secondary royalties
  */
-secondaryRoyaltyRouter.post("/distribute", validate(distributeSecondarySchema), async (req, res, next) => {
-  try {
-    const { contractId, walletAddress, tokenId } = req.body;
+secondaryRoyaltyRouter.post(
+  "/distribute",
+  validate(distributeSecondarySchema),
+  async (req, res, next) => {
+    try {
+      const { contractId, walletAddress, tokenId } = req.body;
 
-    // Get pending (undistributed) secondary sales
-    const pendingSales = getSecondarySales(contractId, 1000, 0, null, true);
+      // Get pending (undistributed) secondary sales
+      const pendingSales = getSecondarySales(contractId, 1000, 0, null, true);
 
-    if (pendingSales.length === 0) {
-      return sendError(res, 400, "bad_request", "No pending secondary royalties to distribute.");
+      if (pendingSales.length === 0) {
+        return sendError(res, 400, "bad_request", "No pending secondary royalties to distribute.");
+      }
+
+      // Calculate total royalties
+      const totalRoyalties = pendingSales.reduce((sum, sale) => {
+        return sum + BigInt(sale.royaltyAmount);
+      }, 0n);
+
+      const transactionId = recordTransaction(contractId, "secondary_distribute", walletAddress, {
+        totalRoyalties: totalRoyalties.toString(),
+        numberOfSales: pendingSales.length,
+      });
+
+      // Build transaction to distribute secondary royalties
+      const txXdr = await buildTx(walletAddress, contractId, "distribute_secondary_royalties", [
+        addressToScVal(tokenId),
+      ]);
+
+      // Mark sales as distributed
+      markSalesDistributed(pendingSales.map((s) => s.id));
+
+      addAuditLog(contractId, "secondary_distribution_initiated", walletAddress, {
+        transactionId,
+        numberOfSales: pendingSales.length,
+        totalRoyalties: totalRoyalties.toString(),
+      });
+
+      res.json({
+        xdr: txXdr,
+        transactionId,
+        numberOfSales: pendingSales.length,
+        totalRoyalties: totalRoyalties.toString(),
+      });
+    } catch (err) {
+      next(err);
     }
-
-    // Calculate total royalties
-    const totalRoyalties = pendingSales.reduce((sum, sale) => {
-      return sum + BigInt(sale.royaltyAmount);
-    }, 0n);
-
-    const transactionId = recordTransaction(contractId, "secondary_distribute", walletAddress, {
-      totalRoyalties: totalRoyalties.toString(),
-      numberOfSales: pendingSales.length,
-    });
-
-    // Build transaction to distribute secondary royalties
-    const txXdr = await buildTx(walletAddress, contractId, "distribute_secondary_royalties", [
-      addressToScVal(tokenId),
-    ]);
-
-    // Mark sales as distributed
-    markSalesDistributed(pendingSales.map((s) => s.id));
-
-    addAuditLog(contractId, "secondary_distribution_initiated", walletAddress, {
-      transactionId,
-      numberOfSales: pendingSales.length,
-      totalRoyalties: totalRoyalties.toString(),
-    });
-
-    res.json({
-      xdr: txXdr,
-      transactionId,
-      numberOfSales: pendingSales.length,
-      totalRoyalties: totalRoyalties.toString(),
-    });
-  } catch (err) {
-    next(err);
   }
-});
+);
 
 /**
  * GET /api/secondary-royalty/stats/:contractId
@@ -296,10 +265,9 @@ secondaryRoyaltyRouter.get("/stats/:contractId", validateContractIdMiddleware, (
  * startDate and endDate are ISO 8601 strings (e.g. "2024-01-01T00:00:00Z").
  * Returns 400 if startDate > endDate.
  */
-secondaryRoyaltyRouter.get("/sales/:contractId", (req, res, next) => {
+secondaryRoyaltyRouter.get("/sales/:contractId", validateContractIdMiddleware, (req, res, next) => {
   try {
     const { contractId } = req.params;
-    if (!validateContractId(contractId, res)) return;
 
     const pagination = parsePagination(req.query, res, 50, 100);
     if (!pagination) return;
@@ -319,7 +287,12 @@ secondaryRoyaltyRouter.get("/sales/:contractId", (req, res, next) => {
         return sendError(res, 400, "invalid_query_parameter", "Invalid endDate.");
       }
       if (start && end && start > end) {
-        return sendError(res, 400, "invalid_query_parameter", "startDate must be before or equal to endDate.");
+        return sendError(
+          res,
+          400,
+          "invalid_query_parameter",
+          "startDate must be before or equal to endDate."
+        );
       }
     }
 

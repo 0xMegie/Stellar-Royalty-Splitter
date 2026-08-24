@@ -1,7 +1,15 @@
 import { jest } from "@jest/globals";
-import { createGracefulShutdownHandler } from "../src/shutdown.js";
+import {
+  createGracefulShutdownHandler,
+  shutdownMiddleware,
+  resetShutdownStateForTests,
+} from "../src/shutdown.js";
 
 describe("graceful shutdown", () => {
+  beforeEach(() => {
+    resetShutdownStateForTests();
+  });
+
   test("waits for the HTTP server to close before closing the database and exiting", () => {
     let closeCallback;
     const server = {
@@ -18,6 +26,7 @@ describe("graceful shutdown", () => {
       closeDatabase,
       logger,
       exit,
+      timeoutMs: 1000,
     });
 
     handleShutdown("SIGTERM");
@@ -81,4 +90,74 @@ describe("graceful shutdown", () => {
     );
     expect(exit).toHaveBeenCalledWith(1);
   });
+
+  test("shutdownMiddleware allows requests when not shutting down and returns 503 when shutting down", () => {
+    const req = {};
+    const res = {
+      set: jest.fn(),
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    };
+    const next = jest.fn();
+
+    // Not shutting down
+    shutdownMiddleware(req, res, next);
+    expect(next).toHaveBeenCalledTimes(1);
+
+    // Trigger shutdown
+    const server = { close: jest.fn() };
+    const handleShutdown = createGracefulShutdownHandler({
+      server,
+      closeDatabase: jest.fn(),
+      logger: { info: jest.fn(), error: jest.fn() },
+      exit: jest.fn(),
+    });
+    handleShutdown("SIGINT");
+
+    // During shutdown
+    const res503 = {
+      set: jest.fn(),
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    };
+    const next2 = jest.fn();
+    shutdownMiddleware(req, res503, next2);
+
+    expect(next2).not.toHaveBeenCalled();
+    expect(res503.set).toHaveBeenCalledWith("Connection", "close");
+    expect(res503.status).toHaveBeenCalledWith(503);
+    expect(res503.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringContaining("shutting down") })
+    );
+  });
+
+  test("forces exit with code 1 if server shutdown times out", () => {
+    jest.useFakeTimers();
+    const server = { close: jest.fn() }; // Never calls callback
+    const closeDatabase = jest.fn();
+    const logger = { info: jest.fn(), error: jest.fn() };
+    const exit = jest.fn();
+
+    const handleShutdown = createGracefulShutdownHandler({
+      server,
+      closeDatabase,
+      logger,
+      exit,
+      timeoutMs: 5000,
+    });
+
+    handleShutdown("SIGTERM");
+
+    expect(exit).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(5001);
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("Graceful shutdown timed out after 5000ms")
+    );
+    expect(closeDatabase).toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+
+    jest.useRealTimers();
+  });
 });
+

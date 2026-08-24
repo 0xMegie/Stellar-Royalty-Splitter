@@ -2,8 +2,12 @@
  * Tests for the keyboard shortcuts hook + matcher (#518).
  */
 
-import { describe, test, expect } from "@jest/globals";
-import { formatShortcut, matchesShortcut, type Shortcut } from "./useKeyboardShortcuts";
+import { describe, test, expect } from "vitest";
+import {
+  formatShortcut,
+  matchesShortcut,
+  type Shortcut,
+} from "./useKeyboardShortcuts";
 
 function evt(
   init: Partial<KeyboardEventInit & { key: string }>,
@@ -35,8 +39,12 @@ describe("matchesShortcut (#518)", () => {
   };
 
   test("matches the configured key + primary modifier", () => {
-    expect(matchesShortcut(evt({ key: "Enter", ctrlKey: true }), submit)).toBe(true);
-    expect(matchesShortcut(evt({ key: "k", ctrlKey: true }), search)).toBe(true);
+    expect(matchesShortcut(evt({ key: "Enter", ctrlKey: true }), submit)).toBe(
+      true,
+    );
+    expect(matchesShortcut(evt({ key: "k", ctrlKey: true }), search)).toBe(
+      true,
+    );
     expect(matchesShortcut(evt({ key: "s", ctrlKey: true }), save)).toBe(true);
   });
 

@@ -85,6 +85,36 @@ npm run format    # Auto-fix formatting
 npm run lint      # Check remaining issues
 ```
 
+### 3a. Run Dependency Security Audits
+
+Run these checks locally before opening a PR to catch vulnerable dependencies early.
+
+**JavaScript (backend):**
+
+```bash
+cd backend
+npm audit --audit-level=high
+```
+
+**JavaScript (frontend):**
+
+```bash
+cd frontend
+npm audit --audit-level=high
+```
+
+**Rust:**
+
+```bash
+# Install cargo-audit once
+cargo install cargo-audit --locked
+
+# Run audit (from repo root)
+cargo audit
+```
+
+The CI pipeline runs all three audits automatically on every PR and on a weekly schedule. PRs that introduce high or critical vulnerabilities will fail CI. If a finding is a false positive or cannot be remediated immediately, open a separate issue — do not disable the check in-line.
+
 ### 4. Commit Your Changes
 
 ```bash
@@ -202,6 +232,10 @@ All PRs run:
   - WASM compilation
   - Cargo tests
   - Formatting check
+- **Dependency Security Audit**:
+  - `npm audit --audit-level=high` for backend and frontend JS packages
+  - `cargo audit` for Rust crates
+  - Also runs weekly to catch newly disclosed CVEs
 
 ### CI Must Pass Before Merge
 
@@ -223,5 +257,153 @@ PRs are blocked from merging until:
 Be respectful, inclusive, and collaborative. We're all learning together.
 
 ---
+
+## Running tests with coverage
+
+CI publishes a coverage summary on every backend and frontend PR (see the "Backend CI" / "Frontend CI"
+job summaries in the Actions tab). Coverage there is **informational, not a hard gate** — it exists to
+support review, not to block valid changes because a generated or low-value file dragged the percentage
+down. To reproduce the same numbers locally:
+
+### Backend coverage
+
+```bash
+cd backend
+npm run test:coverage
+```
+
+Uses Jest's built-in V8 coverage collector (no extra dependency). Writes an HTML report and `lcov.info`
+to `backend/coverage/`; open `backend/coverage/lcov-report/index.html` in a browser for a file-by-file
+breakdown. `src/database/index.js` (a pure re-export barrel) and `src/database.js` (an unused legacy
+duplicate of `src/database/`, pre-existing on `main`) are excluded from collection since neither
+contains logic that a percentage should reflect.
+
+### Frontend coverage
+
+```bash
+cd frontend
+npm run test:coverage
+```
+
+Uses Vitest with `@vitest/coverage-v8`. Writes an HTML report and `lcov.info` to `frontend/coverage/`.
+Test files themselves, `src/main.tsx` (entrypoint), and config files are excluded from collection.
+
+Frontend unit/component tests run with [Vitest](https://vitest.dev/) + [React Testing
+Library](https://testing-library.com/react) — see `frontend/vitest.config.ts` and
+`frontend/src/test/setup.ts`. This is separate from the Playwright end-to-end suite under
+`frontend/e2e/` (`npm run test:e2e`), which is not coverage-instrumented.
+
+### Contract coverage
+
+Contract coverage is intentionally **not wired into CI** for now. `cargo-llvm-cov` requires a working
+`cargo test` build first, and as of this writing `cargo test --lib --features testutils` fails to
+compile on a fresh toolchain due to a transitive dependency skew: the resolved `derive_arbitrary`
+version generates code calling `Arbitrary::try_size_hint`, a method not present on the resolved
+`arbitrary` version pulled in by `soroban-env-common`/`stellar-xdr`. This reproduces with plain `cargo
+test`, independent of any coverage tooling, so it isn't something coverage instrumentation caused or can
+route around — see the pinned dependency versions with `cargo tree -p arbitrary` if you want to
+investigate a fix (likely a `Cargo.lock` pin or a `soroban-sdk` version bump, both larger changes than
+adding coverage tooling should make on their own). If your local toolchain doesn't hit this, you can
+still try it manually:
+
+```bash
+cargo install cargo-llvm-cov   # one-time
+cargo llvm-cov --lib --features testutils --html
+```
+
+Once the underlying build issue is resolved, wiring this into CI is a small addition (a `contract-ci.yml`
+job running the same command with `--summary-only` piped into `$GITHUB_STEP_SUMMARY`, mirroring the
+backend/frontend workflows).
+
+---
+
+## Branch naming
+
+| Type     | Pattern                     | Example                        |
+| -------- | --------------------------- | ------------------------------ |
+| Feature  | `feat/<short-description>`  | `feat/governance-royalty-rate` |
+| Bug fix  | `fix/<short-description>`   | `fix/secondary-sale-dedup`     |
+| Tests    | `test/<short-description>`  | `test/royalty-error-cases`     |
+| Docs     | `docs/<short-description>`  | `docs/contributing-guide`      |
+| Chore    | `chore/<short-description>` | `chore/update-dependencies`    |
+
+Keep branch names lowercase and hyphen-separated. Avoid slashes beyond the type prefix.
+
+---
+
+## Commit message standards
+
+Follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
+
+```
+<type>: <short description>
+
+[optional body — explain the why, not the what]
+
+[optional footer — issue references, breaking change notes]
+```
+
+### Types
+
+| Type       | When to use                                          |
+| ---------- | ---------------------------------------------------- |
+| `feat`     | New feature or user-facing enhancement               |
+| `fix`      | Bug fix                                              |
+| `docs`     | Documentation only                                   |
+| `test`     | Adding or updating tests                             |
+| `chore`    | Maintenance — deps, config, tooling                  |
+| `refactor` | Code restructuring with no behavior change           |
+| `perf`     | Performance improvement                              |
+| `style`    | Formatting, whitespace — no logic change             |
+
+### Closing issues
+
+Add a `Closes` footer to automatically close the linked issue when the PR merges:
+
+```
+fix: validate distribute amount against contract balance
+
+Fetch contract balance before building the distribute tx so the
+frontend can reject amounts that exceed what the contract holds.
+
+Closes #78245
+```
+
+---
+
+## PR guidelines
+
+Before opening a PR:
+
+- [ ] `cargo test` passes with no failures
+- [ ] No new compiler warnings (`cargo build` is clean)
+- [ ] Frontend and backend start without console errors
+- [ ] New public contract functions have rustdoc comments (params, errors, auth)
+- [ ] New tests are included for any changed behavior
+- [ ] The PR description references the related issue number(s) with `Closes #N`
+- [ ] Branch is up to date with `main` (`git rebase origin/main`)
+
+Keep PRs focused. One issue per PR is preferred. If a fix naturally touches multiple related issues, bundle them and close all in the description.
+
+---
+
+## Windows auth guard caveat
+
+Some tests in the test suite use `require_auth()` checks that behave differently on Windows due to how the Soroban test environment handles mock authorizations.
+
+In `tests/integration_test.rs` you may see tests annotated with:
+
+```rust
+#[cfg(not(target_os = "windows"))]
+```
+
+These tests verify that unauthorized callers are correctly rejected. On Windows, the mock auth infrastructure in `soroban-sdk` can produce different panic behavior, causing the test to fail for the wrong reason or not panic at all.
+
+**If you are on Windows and a `#[should_panic]` auth test fails unexpectedly:**
+
+- This is a known tooling limitation, not a contract bug.
+- Run the full suite on Linux or macOS (or via WSL) to confirm correctness.
+- Do not remove the `#[cfg(not(target_os = "windows"))]` guard — it is intentional.
+- If you are adding a new auth rejection test, add the same cfg guard if you observe the same behavior.
 
 **Happy contributing!**
