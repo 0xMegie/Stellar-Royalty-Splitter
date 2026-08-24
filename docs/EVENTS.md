@@ -31,6 +31,8 @@ instead of polling storage (#661).
 | `("share", "updated")` | `update_share` | `(Address collaborator, u32 new_share)` | One collaborator's basis-point share changed. |
 | `("royalty", "adms_set")` | `set_admins` | `(u32 admin_count, u32 threshold)` | Multi-sig admin list and signing threshold configured. |
 | `("royalty", "admin_xfr")` | `admin_transfer` | `(Address previous_admin, Address new_admin)` | Single-step admin transfer completed (non-multisig only). |
+| `("royalty", "paused")` | `pause` | `Address admin` | Contract was paused by the current admin. |
+| `("royalty", "unpaused")` | `unpause` | `Address admin` | Contract was unpaused by the current admin. |
 | `("royalty", "adm_prop")` | `propose_admin_transfer` | `Address new_admin` | First step of the two-step admin transfer — nominates a pending admin. |
 | `("royalty", "adm_acc")` | `accept_admin` | `(Address previous_admin, Address new_admin)` | Second step — the pending admin accepted and is now current admin. |
 | `("royalty", "withdraw")` | `withdraw` | `(Address token, i128 amount)` | Admin recovered stuck token balance to their own address. |

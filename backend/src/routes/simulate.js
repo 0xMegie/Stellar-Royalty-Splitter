@@ -73,6 +73,20 @@ function readContractError(sim) {
   return nativeToString(error) ?? "Simulation failed";
 }
 
+function readResourceSummary(sim) {
+  const authEntries = sim.result?.auth ?? sim.auth ?? [];
+  return {
+    minResourceFee: readSimulationFee(sim),
+    latestLedger: sim.latestLedger ?? null,
+    authEntries: Array.isArray(authEntries) ? authEntries.length : 0,
+    hasTransactionData: Boolean(sim.transactionData),
+  };
+}
+
+function isDistributionTopic(topicValues) {
+  return topicValues.includes("dist") || topicValues.includes("sec_pay");
+}
+
 function readRecipientAmounts(events = []) {
   const recipientAmounts = [];
 
@@ -83,7 +97,7 @@ function readRecipientAmounts(events = []) {
     const topicValues = Array.from(topics).map(scValToString);
 
     if (typeof type === "string" && type !== "contract") continue;
-    if (topicValues[0] !== "dist") continue;
+    if (!isDistributionTopic(topicValues)) continue;
 
     const data = readEventField(payload, "data");
     const [address, amount] = scValTupleToNative(data);
@@ -122,6 +136,7 @@ simulateRouter.post("/", validate(distributeSchema), async (req, res, next) => {
       return res.status(200).json({
         fee: readSimulationFee(sim),
         recipientAmounts: [],
+        resourceSummary: readResourceSummary(sim),
         contractError: readContractError(sim),
       });
     }
@@ -129,6 +144,7 @@ simulateRouter.post("/", validate(distributeSchema), async (req, res, next) => {
     res.json({
       fee: readSimulationFee(sim),
       recipientAmounts: readRecipientAmounts(sim.events),
+      resourceSummary: readResourceSummary(sim),
       contractError: null,
     });
   } catch (err) {

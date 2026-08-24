@@ -92,6 +92,9 @@ app.use(
 
 const RATE_LIMIT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "60000");
 const RATE_LIMIT_WRITE_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WRITE_WINDOW_MS ?? "60000");
+const RATE_LIMIT_SIMULATE_WINDOW_MS = parseInt(
+  process.env.RATE_LIMIT_SIMULATE_WINDOW_MS ?? process.env.RATE_LIMIT_WINDOW_MS ?? "60000"
+);
 
 // Public rate limiter: 100 req / 1 min per IP (skips /api/health)
 // Authenticated rate limiter: 1000 req / 1 min per API key
@@ -165,6 +168,26 @@ const readLimiter = rateLimit({
   },
 });
 
+// Simulation calls hit Soroban RPC and can be expensive even though they do not
+// submit a transaction, so tune them independently from ordinary reads/writes.
+const simulateLimiter = rateLimit({
+  windowMs: RATE_LIMIT_SIMULATE_WINDOW_MS,
+  max: parseInt(process.env.RATE_LIMIT_SIMULATE_MAX ?? "20"),
+  keyGenerator: (req) => req.headers["x-api-key"] || ipKeyGenerator(req.ip),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    logger.warn("Simulation rate limit exceeded", {
+      ip: req.ip,
+      path: req.originalUrl,
+      method: req.method,
+      apiKey: req.headers["x-api-key"] ? "present" : "none",
+    });
+    res.set("Retry-After", String(Math.ceil(RATE_LIMIT_SIMULATE_WINDOW_MS / 1000)));
+    sendError(res, 429, "too_many_requests", "Too many simulation requests, please slow down.");
+  },
+});
+
 app.use(generalLimiter);
 
 // #608: Track per-API-key request counts for the rate-limit dashboard.
@@ -216,6 +239,7 @@ app.use("/api/v1/distribute", writeLimiter);
 app.use("/api/v1/secondary-royalty", writeLimiter);
 app.use("/api/v1/webhooks", writeLimiter);
 app.use("/api/v1/onboarding", writeLimiter);
+app.use("/api/v1/simulate", simulateLimiter);
 
 // Apply read limiter to high-fan-out query endpoints (#394 — MEDIUM-16)
 app.use("/api/v1/analytics", readLimiter);

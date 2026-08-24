@@ -505,6 +505,11 @@ impl RoyaltySplitter {
 
         Self::check_admin_auth(&env, auth::msg::PAUSE_ADMIN);
         storage::instance_set(&env, &StorageKey::Paused, &true);
+        let admin = Self::require_admin_address(&env);
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("paused")),
+            admin,
+        );
     }
 
     /// Transfer admin rights to a new address (single-admin mode only).
@@ -616,6 +621,11 @@ impl RoyaltySplitter {
 
         Self::check_admin_auth(&env, auth::msg::UNPAUSE_ADMIN);
         storage::instance_set(&env, &StorageKey::Paused, &false);
+        let admin = Self::require_admin_address(&env);
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("unpaused")),
+            admin,
+        );
     }
 
     /// Replace the contract's executable WASM while preserving instance storage.
