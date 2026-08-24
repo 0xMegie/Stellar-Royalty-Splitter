@@ -28,6 +28,8 @@ interface DashboardStats {
   totalDistributed: number;
   totalTransactions: number;
   averagePayout: number;
+  primaryRoyaltiesTotal: number;
+  secondaryRoyaltiesTotal: number;
   topEarners: Array<{ address: string; totalEarned: number; payouts: number }>;
   distributionTrends: Array<{ date: string; amount: number; count: number }>;
   collaboratorStats: Array<{
@@ -356,6 +358,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ contractId }) => {
                 {formatNumber(stats.collaboratorStats.length)}
               </div>
               <div className="kpi-unit">unique addresses</div>
+            </div>
+
+            <div className="kpi-card kpi-primary">
+              <div className="kpi-label">Primary Royalties</div>
+              <div className="kpi-value">
+                {formatCurrency(stats.primaryRoyaltiesTotal ?? 0, settings.displayCurrency)}
+              </div>
+              <div className="kpi-unit">from distributions</div>
+            </div>
+
+            <div className="kpi-card kpi-secondary">
+              <div className="kpi-label">Secondary Royalties</div>
+              <div className="kpi-value">
+                {formatCurrency(stats.secondaryRoyaltiesTotal ?? 0, settings.displayCurrency)}
+              </div>
+              <div className="kpi-unit">from resales</div>
             </div>
           </div>
 

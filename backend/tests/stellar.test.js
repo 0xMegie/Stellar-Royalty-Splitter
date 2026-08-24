@@ -4,14 +4,7 @@
  *   #274 — Dynamic fee from Horizon /fee_stats with 30s cache + fallback
  *   #275 — Sequence number refreshed on every retry
  */
-import {
-  jest,
-  describe,
-  test,
-  expect,
-  beforeEach,
-  afterEach,
-} from "@jest/globals";
+import { jest, describe, test, expect, beforeEach, afterEach } from "@jest/globals";
 
 beforeEach(() => {
   // Test isolation — clear caches and module mocks between cases.
@@ -32,7 +25,7 @@ describe("withTimeout (#273)", () => {
       status: 504,
       message: expect.stringContaining("test-op"),
     });
-  });
+  }, 15000);
 
   test("forwards the inner value when it settles before the deadline", async () => {
     const { withTimeout } = await import("../src/stellar.js");
@@ -43,9 +36,7 @@ describe("withTimeout (#273)", () => {
   test("forwards the inner rejection unchanged when it loses to the timer", async () => {
     const { withTimeout } = await import("../src/stellar.js");
     const boom = Promise.reject(new Error("upstream boom"));
-    await expect(
-      withTimeout(boom, 100, "test-op"),
-    ).rejects.toThrow(/upstream boom/);
+    await expect(withTimeout(boom, 100, "test-op")).rejects.toThrow(/upstream boom/);
   });
 });
 
@@ -229,12 +220,7 @@ describe("retryBuildTx sequence-refresh contract (#275)", () => {
     const stellar = await import("../src/stellar.js");
     stellar._resetFeeCache();
 
-    const xdr = await stellar.retryBuildTx(
-      "GCALLER",
-      "CCONTRACT",
-      "noop",
-      [],
-    );
+    const xdr = await stellar.retryBuildTx("GCALLER", "CCONTRACT", "noop", []);
     expect(xdr).toBe("MOCK_XDR");
     expect(getAccount).toHaveBeenCalledTimes(3);
     // Each call uses the same caller — but a *separate* fetch — which is

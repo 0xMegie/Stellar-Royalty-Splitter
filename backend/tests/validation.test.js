@@ -6,7 +6,13 @@
  * cases near the boundary.
  */
 import { describe, test, expect } from "@jest/globals";
-import { initializeSchema } from "../src/validation.js";
+import {
+  initializeSchema,
+  distributeSchema,
+  amountSchema,
+  recordSecondarySaleSchema,
+  distributeSecondarySchema,
+} from "../src/validation.js";
 
 const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const WALLET   = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -103,5 +109,80 @@ describe("initializeSchema — shares sum validation (issue #356)", () => {
       shares: [3333, 3333, 3334],
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("distributeSchema & amount validation (issue #650)", () => {
+
+  test("rejects invalid Stellar address format", () => {
+    const result = distributeSchema.safeParse({
+      contractId: CONTRACT,
+      walletAddress: "INVALID_ADDRESS",
+      tokenId: CONTRACT,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects invalid Contract address format", () => {
+    const result = distributeSchema.safeParse({
+      contractId: "INVALID_CONTRACT",
+      walletAddress: WALLET,
+      tokenId: CONTRACT,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("accepts valid distribute payload without amount", () => {
+    const result = distributeSchema.safeParse({
+      contractId: CONTRACT,
+      walletAddress: WALLET,
+      tokenId: CONTRACT,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("accepts positive number or string amount", () => {
+    expect(amountSchema.safeParse(100).success).toBe(true);
+    expect(amountSchema.safeParse("5000").success).toBe(true);
+  });
+
+  test("rejects non-positive or invalid amounts", () => {
+    expect(amountSchema.safeParse(0).success).toBe(false);
+    expect(amountSchema.safeParse(-50).success).toBe(false);
+    expect(amountSchema.safeParse("0").success).toBe(false);
+    expect(amountSchema.safeParse("-100").success).toBe(false);
+    expect(amountSchema.safeParse("invalid").success).toBe(false);
+  });
+
+  test("distributeSecondarySchema validates optional positive amount", () => {
+    const valid = distributeSecondarySchema.safeParse({
+      contractId: CONTRACT,
+      walletAddress: WALLET,
+      tokenId: CONTRACT,
+      amount: 500,
+    });
+    expect(valid.success).toBe(true);
+
+    const invalid = distributeSecondarySchema.safeParse({
+      contractId: CONTRACT,
+      walletAddress: WALLET,
+      tokenId: CONTRACT,
+      amount: -100,
+    });
+    expect(invalid.success).toBe(false);
+  });
+
+  test("recordSecondarySaleSchema rejects non-positive salePrice", () => {
+    const invalid = recordSecondarySaleSchema.safeParse({
+      contractId: CONTRACT,
+      walletAddress: WALLET,
+      nftId: "nft-1",
+      previousOwner: COLLAB1,
+      newOwner: COLLAB2,
+      salePrice: -50,
+      saleToken: CONTRACT,
+      royaltyRate: 500,
+    });
+    expect(invalid.success).toBe(false);
   });
 });

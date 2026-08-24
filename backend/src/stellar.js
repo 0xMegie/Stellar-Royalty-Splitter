@@ -3,7 +3,7 @@
  * Real transactions are assembled here and returned as XDR so the
  * frontend can sign them with Freighter before submission.
  *
- * Operational hardening (#273, #274, #275):
+ * Operational hardening (#273, #274, #275, #XXX):
  *   - Every RPC call goes through `withTimeout()` so the backend never
  *     hangs on a slow upstream. Configurable via SOROBAN_RPC_TIMEOUT_MS
  *     (default 10s) and HORIZON_TIMEOUT_MS (default 10s).
@@ -14,11 +14,14 @@
  *     rebuilt transaction carries a freshly refetched sequence number.
  *   - Per-address build locks (#294) serialize concurrent `buildTx` calls for
  *     the same wallet so two simultaneous requests never reuse one sequence.
+ *   - Centralized retry strategy (rpc-retry.js) handles transient RPC failures
+ *     with exponential backoff, excluding permanent errors and submission retries.
  */
 import StellarSdk from "@stellar/stellar-sdk";
 import logger from "./logger.js";
 import { recordHorizonResponseTime } from "./metrics.js";
 import { sleep, parsePositiveInt } from "./utils.js";
+import { withRetry } from "./rpc-retry.js";
 
 const {
   Contract,
@@ -278,6 +281,8 @@ export function _resetFeeCache() {
  * cached for HORIZON_FEE_CACHE_MS (default 30s). Falls back to `BASE_FEE` on
  * any error so transaction submission keeps working even when fee stats are
  * unavailable.
+ *
+ * Uses centralized retry logic to handle transient failures.
  */
 export async function getRecommendedFee() {
   const now = Date.now();
@@ -290,22 +295,31 @@ export async function getRecommendedFee() {
   const timer = setTimeout(() => controller.abort(), HORIZON_TIMEOUT_MS);
 
   try {
-    const requestStart = Date.now();
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: { Accept: "application/json" },
-    });
-    recordHorizonResponseTime(Date.now() - requestStart);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json();
-    // Prefer `p50_accepted_fee` (median accepted), fall back to
-    // `last_ledger_base_fee`, then BASE_FEE.
-    const candidate = data?.fee_charged?.p50 ?? data?.last_ledger_base_fee ?? BASE_FEE;
-    const fee = String(candidate);
+    const fee = await withRetry(
+      async () => {
+        const requestStart = Date.now();
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
+        recordHorizonResponseTime(Date.now() - requestStart);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        // Prefer `p50_accepted_fee` (median accepted), fall back to
+        // `last_ledger_base_fee`, then BASE_FEE.
+        const candidate = data?.fee_charged?.p50 ?? data?.last_ledger_base_fee ?? BASE_FEE;
+        return String(candidate);
+      },
+      {
+        operationType: "getFeeStats",
+        maxRetries: 2, // Fewer retries for fee fetching (not critical)
+      }
+    );
+
     feeCache = { fee, fetchedAt: now };
     return fee;
   } catch (error) {
-    logger.warn?.("Horizon fee fetch failed; falling back to BASE_FEE", {
+    logger.warn?.("Horizon fee fetch failed after retries; falling back to BASE_FEE", {
       error: error instanceof Error ? error.message : String(error),
     });
     return BASE_FEE;
@@ -357,12 +371,17 @@ export function _resetAccountBuildLocks() {
  * Fetch a fresh account record (including the current sequence number) for
  * `callerAddress`. Each `retryBuildTx` attempt funnels through here, which
  * is what guarantees retries don't reuse a stale sequence (#275).
+ *
+ * Uses centralized retry logic to handle transient RPC failures with backoff.
  */
 export async function getFreshAccount(callerAddress) {
-  return withTimeout(
-    server.getAccount(callerAddress),
-    SOROBAN_RPC_TIMEOUT_MS,
-    "Soroban getAccount"
+  return withRetry(
+    async () =>
+      withTimeout(server.getAccount(callerAddress), SOROBAN_RPC_TIMEOUT_MS, "Soroban getAccount"),
+    {
+      operationType: "getAccount",
+      details: { address: callerAddress.substring(0, 8) + "..." },
+    }
   );
 }
 
@@ -583,6 +602,12 @@ export function i128ToScVal(n) {
 
 export function vecToScVal(items) {
   return xdr.ScVal.scvVec(items);
+}
+
+export function bytes32ToScVal(hex) {
+  const bytes = Buffer.from(hex, "hex");
+  if (bytes.length !== 32) throw new Error("Expected a 32-byte hash");
+  return nativeToScVal(bytes, { type: "bytes" });
 }
 
 /**

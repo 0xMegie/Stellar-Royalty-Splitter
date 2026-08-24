@@ -1,4 +1,4 @@
-import { describe, expect, test } from "@jest/globals";
+import { describe, expect, test } from "vitest";
 import { buildContractPerformanceSummary } from "./contractPerformance";
 
 describe("contract performance summaries", () => {
@@ -46,6 +46,8 @@ describe("contract performance summaries", () => {
 
     expect(summary.contracts).toHaveLength(100);
     expect(summary.contracts[0].contractId).toBe("C120");
-    expect(summary.contracts[summary.contracts.length - 1].contractId).toBe("C21");
+    expect(summary.contracts[summary.contracts.length - 1].contractId).toBe(
+      "C21",
+    );
   });
 });

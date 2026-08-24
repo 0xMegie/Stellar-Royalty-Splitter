@@ -5,7 +5,6 @@ import {
   getTransactionDetails,
   getTransactionById,
   getAuditLog,
-  addAuditLog,
   countAuditLog,
   updateTransactionStatus,
   updateTransactionHash,
@@ -24,13 +23,16 @@ import { sendError } from "../error-response.js";
 import { pollHorizonTransaction } from "../stellar.js";
 import { deliverDistributeWebhooks } from "../webhook-delivery.js";
 import logger from "../logger.js";
+import { cacheSet, cacheKey, TTL } from "../cache.js";
 
 const router = express.Router();
 
+const VALID_HISTORY_TYPES = ["distribute", "initialize"];
+
 /**
  * GET /api/history/:contractId
- * Get transaction history for a contract
- * Query params: limit (default 50), offset (default 0)
+ * Get transaction history for a contract.
+ * Query params: limit (default 50, max 100), offset (default 0), type (distribute|initialize)
  */
 router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
   try {
@@ -41,17 +43,67 @@ router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
     if (!pagination) return;
     const { limit, offset } = pagination;
 
-    const history = getTransactionHistory(contractId, limit, offset);
-    const total = getTransactionCount(contractId);
+    const { type, recipient, startDate, endDate } = req.query;
 
-    res.json({
+    if (type !== undefined && !VALID_HISTORY_TYPES.includes(type)) {
+      return sendError(
+        res,
+        400,
+        "invalid_query_parameter",
+        `type must be one of: ${VALID_HISTORY_TYPES.join(", ")}`
+      );
+    }
+
+    if (startDate !== undefined && isNaN(new Date(startDate).getTime())) {
+      return sendError(
+        res,
+        400,
+        "invalid_query_parameter",
+        "Invalid startDate. Use ISO 8601 or YYYY-MM-DD format."
+      );
+    }
+
+    if (endDate !== undefined && isNaN(new Date(endDate).getTime())) {
+      return sendError(
+        res,
+        400,
+        "invalid_query_parameter",
+        "Invalid endDate. Use ISO 8601 or YYYY-MM-DD format."
+      );
+    }
+
+    const filters = {};
+    if (type) filters.type = type;
+    if (recipient) filters.recipient = recipient;
+    if (startDate) filters.startDate = startDate;
+    if (endDate) filters.endDate = endDate;
+
+    const history = getTransactionHistory(contractId, limit, offset, filters);
+    const total = getTransactionCount(contractId, filters);
+
+    const body = {
       success: true,
       data: history,
-      pagination: { limit, offset, total },
-    });
+      pagination: {
+        limit,
+        offset,
+        total,
+        hasNextPage: offset + limit < total,
+        hasPrevPage: offset > 0,
+      },
+    };
+
+    const key = cacheKey("history", contractId, limit, offset, JSON.stringify(filters));
+    cacheSet(key, body, TTL.history);
+    res.json(body);
   } catch (error) {
     logger.error("Error fetching transaction history:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to fetch transaction history");
+    sendError(
+      res,
+      500,
+      "internal_server_error",
+      error.message ?? "Failed to fetch transaction history"
+    );
   }
 });
 
@@ -96,7 +148,12 @@ router.post("/archive/policy", (req, res) => {
     });
   } catch (error) {
     logger.error("Error updating archive policy:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to update archive policy");
+    sendError(
+      res,
+      500,
+      "internal_server_error",
+      error.message ?? "Failed to update archive policy"
+    );
   }
 });
 
@@ -119,7 +176,12 @@ router.post("/archive/run", (req, res) => {
     });
   } catch (error) {
     logger.error("Error archiving contract events:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to archive contract events");
+    sendError(
+      res,
+      500,
+      "internal_server_error",
+      error.message ?? "Failed to archive contract events"
+    );
   }
 });
 
@@ -147,7 +209,12 @@ router.get("/archive/:contractId", validateContractIdMiddleware, (req, res) => {
     });
   } catch (error) {
     logger.error("Error fetching archived contract events:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to fetch archived events");
+    sendError(
+      res,
+      500,
+      "internal_server_error",
+      error.message ?? "Failed to fetch archived events"
+    );
   }
 });
 
@@ -171,7 +238,12 @@ router.get("/transaction/:txHash", (req, res) => {
     });
   } catch (error) {
     logger.error("Error fetching transaction details:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to fetch transaction details");
+    sendError(
+      res,
+      500,
+      "internal_server_error",
+      error.message ?? "Failed to fetch transaction details"
+    );
   }
 });
 
@@ -234,14 +306,19 @@ router.post("/transaction/confirm/:txHash", async (req, res) => {
       pollResult = await pollHorizonTransaction(txHash);
     } catch (error) {
       const status = error?.status ?? 504;
-      return sendError(res, status, undefined, error?.message ?? "Failed to confirm transaction on Horizon");
+      return sendError(
+        res,
+        status,
+        undefined,
+        error?.message ?? "Failed to confirm transaction on Horizon"
+      );
     }
 
     updateTransactionStatus(
       txHash,
       pollResult.status,
       blockTime ?? pollResult.createdAt ?? null,
-      errorMessage ?? null,
+      errorMessage ?? null
     );
 
     const confirmed = getTransactionDetails(txHash);
@@ -258,7 +335,12 @@ router.post("/transaction/confirm/:txHash", async (req, res) => {
     });
   } catch (error) {
     logger.error("Error updating transaction status:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to update transaction status");
+    sendError(
+      res,
+      500,
+      "internal_server_error",
+      error.message ?? "Failed to update transaction status"
+    );
   }
 });
 
@@ -299,29 +381,13 @@ router.get("/audit/:contractId", validateContractIdMiddleware, (req, res) => {
   }
 });
 
-/**
- * POST /api/audit/:contractId
- * Add audit log entry
- */
-router.post("/audit/:contractId", validateContractIdMiddleware, (req, res) => {
-  try {
-    const { contractId } = req.params;
-    const { action, user, details } = req.body;
-
-    if (!action) {
-      return sendError(res, 400, "bad_request", "Action is required");
-    }
-
-    addAuditLog(contractId, action, user || "unknown", details || {});
-
-    res.json({
-      success: true,
-      message: "Audit log entry created",
-    });
-  } catch (error) {
-    logger.error("Error creating audit log entry:", error);
-    sendError(res, 500, "internal_server_error", error.message ?? "Failed to create audit log entry");
-  }
-});
+// NOTE: There is intentionally no public POST /api/audit/:contractId route.
+// Audit entries must only ever be written server-side as a side effect of a
+// real configuration/administrative action (see buildAndRecordTransaction in
+// ./_shared.js and the addAuditLog(...) calls in initialize.js, distribute.js,
+// and secondary-royalty.js). Accepting an audit entry directly from a client
+// request body — as a prior version of this endpoint did — would let anyone
+// forge arbitrary history against a contract. The GET route below remains the
+// only public audit surface, and it is read-only.
 
 export default router;

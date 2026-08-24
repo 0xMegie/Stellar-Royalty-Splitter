@@ -5,6 +5,10 @@ export const stellarAddress = z
   .string("Validation failed: walletAddress must be a string")
   .regex(/^G[A-Z2-7]{55}$/, "Validation failed: Invalid Stellar address");
 
+export function isValidStellarAddress(addr) {
+  return typeof addr === "string" && /^G[A-Z2-7]{55}$/.test(addr);
+}
+
 export const contractAddress = z
   .string("Validation failed: contractId must be a string")
   .regex(/^C[A-Z2-7]{55}$/, "Validation failed: Invalid contract address");
@@ -35,10 +39,20 @@ export const initializeSchema = z
 export const INITIALIZE_PAYLOAD_LIMIT_BYTES = 10 * 1024;
 export const INITIALIZE_COLLABORATORS_PAYLOAD_LIMIT_BYTES = 8 * 1024;
 
+// Named size limits — kept in sync with on-chain MAX_COLLABORATORS / MAX_RECIPIENTS constants.
+export const MAX_COLLABORATORS_BACKEND = 20;
+export const MAX_NFT_ID_LENGTH = 256;
+
+export const amountSchema = z.union([
+  z.number().positive("Distribution amount must be positive"),
+  z.string().regex(/^[1-9]\d*$/, "Distribution amount must be a positive integer"),
+]);
+
 export const distributeSchema = z.object({
   contractId: contractAddress,
   walletAddress: stellarAddress,
   tokenId: contractAddress,
+  amount: amountSchema.optional(),
 });
 
 export const setRoyaltyRateSchema = z.object({
@@ -50,10 +64,13 @@ export const setRoyaltyRateSchema = z.object({
 export const recordSecondarySaleSchema = z.object({
   contractId: contractAddress,
   walletAddress: stellarAddress,
-  nftId: z.string().min(1),
+  nftId: z
+    .string()
+    .min(1, "nftId must not be empty")
+    .max(MAX_NFT_ID_LENGTH, `nftId must not exceed ${MAX_NFT_ID_LENGTH} characters`),
   previousOwner: stellarAddress,
   newOwner: stellarAddress,
-  salePrice: z.number().int().positive(),
+  salePrice: z.number().positive("Sale price must be positive"),
   saleToken: contractAddress,
   royaltyRate: basisPoints,
 });
@@ -62,6 +79,7 @@ export const distributeSecondarySchema = z.object({
   contractId: contractAddress,
   walletAddress: stellarAddress,
   tokenId: contractAddress,
+  amount: amountSchema.optional(),
 });
 
 export const emailDigestSubscribeSchema = z.object({
@@ -96,6 +114,111 @@ export const transactionConfirmSchema = z.object({
   status: z.enum(["pending", "confirmed", "failed"]).optional(),
 });
 
+// ─── Dispute / ticket schemas (#607) ──────────────────────────────────────────
+
+export const DISPUTE_CATEGORIES = ["wrong_amount", "missing_payment", "other"];
+export const DISPUTE_STATUSES = ["open", "under_review", "resolved", "closed"];
+
+/** Submitted by a contributor to open a new dispute ticket. */
+export const disputeSubmitSchema = z.object({
+  walletAddress: stellarAddress,
+  contractId: contractAddress.optional(),
+  category: z.enum(["wrong_amount", "missing_payment", "other"], {
+    errorMap: () => ({
+      message: `category must be one of: ${DISPUTE_CATEGORIES.join(", ")}`,
+    }),
+  }),
+  description: z
+    .string()
+    .min(10, "description must be at least 10 characters")
+    .max(2000, "description must not exceed 2000 characters"),
+});
+
+/** Submitted by a contributor to append a comment to their own ticket. */
+export const disputeContributorCommentSchema = z.object({
+  walletAddress: stellarAddress,
+  message: z
+    .string()
+    .min(1, "message must not be empty")
+    .max(2000, "message must not exceed 2000 characters"),
+});
+
+/** Admin: update the status of a dispute, with an optional note. */
+export const disputeAdminReviewSchema = z.object({
+  status: z.enum(["open", "under_review", "resolved", "closed"], {
+    errorMap: () => ({
+      message: `status must be one of: ${DISPUTE_STATUSES.join(", ")}`,
+    }),
+  }),
+  adminNote: z.string().max(2000, "adminNote must not exceed 2000 characters").optional(),
+});
+
+/** Admin: post a comment on any dispute. */
+export const disputeAdminCommentSchema = z.object({
+  message: z
+    .string()
+    .min(1, "message must not be empty")
+    .max(2000, "message must not exceed 2000 characters"),
+});
+
+// ─── Referral schemas (#603) ───────────────────────────────────────────────────
+
+/**
+ * Referral code format: "REF-" followed by 12 uppercase hex characters.
+ * e.g. "REF-3A9F21B04C7E"
+ */
+export const referralCode = z
+  .string()
+  .regex(/^REF-[0-9A-F]{12}$/, "Invalid referral code format");
+
+/** Generate (or retrieve) a referral link for a wallet. */
+export const referralGenerateLinkSchema = z.object({
+  walletAddress: stellarAddress,
+});
+
+/** Register a new contributor via a referral code. */
+export const referralRegisterSchema = z.object({
+  referralCode,
+  referredAddress: stellarAddress,
+});
+
+/** Activate a referral and award a bonus once the referred contributor qualifies. */
+export const referralActivateSchema = z.object({
+  referredAddress: stellarAddress,
+  bonusAmountStroops: z
+    .number()
+    .int()
+    .positive("bonusAmountStroops must be a positive integer")
+    .optional(),
+  reason: z.string().min(1).max(500).optional(),
+});
+
+/** Admin: manually award an additional bonus to a referrer. */
+export const referralAwardBonusSchema = z.object({
+  referralId: z.number().int().positive(),
+  referrerAddress: stellarAddress,
+  bonusAmountStroops: z.number().int().positive("bonusAmountStroops must be a positive integer"),
+  reason: z
+    .string()
+    .min(1, "reason must not be empty")
+    .max(500, "reason must not exceed 500 characters"),
+});
+
+/**
+ * The complete, closed set of audit actions the app itself ever emits via
+ * addAuditLog(). Keep in sync with the auditAction/action values passed at
+ * each call site (routes/initialize.js, routes/distribute.js,
+ * routes/secondary-royalty.js). Used to reject forged/unknown audit entries
+ * on the public read-only-adjacent surface.
+ */
+export const AUDIT_ACTIONS = [
+  "contract_initialized",
+  "distribution_initiated",
+  "secondary_sale_recorded",
+  "royalty_rate_set",
+  "secondary_distribution_initiated",
+];
+
 export function validate(schema) {
   return (req, res, next) => {
     const result = schema.safeParse(req.body);
@@ -121,14 +244,14 @@ export function validateInitializePayloadSize(req, res, next) {
   const totalBodyBytes = getJsonByteLength(req.body);
 
   if (totalBodyBytes > INITIALIZE_PAYLOAD_LIMIT_BYTES) {
-    return res.status(413).json({ error: "Payload too large" });
+    return sendError(res, 413, "payload_too_large", "Payload too large");
   }
 
   if (Array.isArray(req.body?.collaborators)) {
     const collaboratorsBytes = getJsonByteLength(req.body.collaborators);
 
     if (collaboratorsBytes > INITIALIZE_COLLABORATORS_PAYLOAD_LIMIT_BYTES) {
-      return res.status(413).json({ error: "Collaborators payload too large" });
+      return sendError(res, 413, "payload_too_large", "Collaborators payload too large");
     }
   }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect } from "vitest";
 
 describe("Earnings Forecast Calculator", () => {
   describe("Earning Rate Calculation", () => {

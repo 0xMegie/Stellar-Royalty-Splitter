@@ -51,11 +51,26 @@ pub enum StorageKey {
     ShareMap,
     DefaultRecipients,
     RoyaltyRateHistory,
+    InitializeCollaboratorsHash,
+    InitializeSharesHash,
+    InitializeCommitLedger,
+    InitializeNonce,
 }
 
 /// Maximum number of rate-change entries kept in history.
 /// Older entries are dropped when the cap is reached.
 pub const RATE_HISTORY_CAP: u32 = 20;
+
+/// Maximum number of collaborators accepted by `initialize`.
+/// Bounded by Soroban execution and storage costs.
+pub const MAX_COLLABORATORS: u32 = 10;
+
+/// Maximum number of recipients accepted by `set_recipients`, `set_default_recipients`,
+/// and `distribute_with_override`.
+pub const MAX_RECIPIENTS: u32 = 10;
+
+/// Maximum number of admins in the multi-sig admin list (`set_admins`).
+pub const MAX_ADMIN_LIST: u32 = 10;
 
 /// Backward-compatible alias for integration tests and external references.
 pub type DataKey = StorageKey;
@@ -78,31 +93,36 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[repr(u32)]
 pub enum ContractError {
     Underfunded = 1,
-    AlreadyInitialized,
-    EmptyCollaborators,
-    TooManyRecipients,
-    LengthMismatch,
-    InvalidShareTotal,
-    ZeroShare,
-    DuplicateRecipient,
-    InvalidBasisPoints,
-    NotInitialized,
-    NoCollaborators,
-    NoShareMap,
-    ArithmeticOverflow,
-    RoyaltyRateZero,
-    RoyaltyRateTooHigh,
-    ContractPaused,
-    AmountNotPositive,
-    InsufficientBalance,
-    EmptyRecipients,
-    AmountTooSmall,
-    PoolExceedsBalance,
-    NoSecondaryRoyalties,
-    NoSecondaryToken,
-    CollaboratorNotFound,
-    InvalidUpdatedShareTotal,
-    SalePriceNotPositive,
+    AlreadyInitialized = 2,
+    EmptyCollaborators = 3,
+    TooManyRecipients = 4,
+    LengthMismatch = 5,
+    InvalidShareTotal = 6,
+    ZeroShare = 7,
+    DuplicateRecipient = 8,
+    InvalidBasisPoints = 9,
+    NotInitialized = 10,
+    NoCollaborators = 11,
+    NoShareMap = 12,
+    ArithmeticOverflow = 13,
+    RoyaltyRateZero = 14,
+    RoyaltyRateTooHigh = 15,
+    ContractPaused = 16,
+    AmountNotPositive = 17,
+    InsufficientBalance = 18,
+    EmptyRecipients = 19,
+    AmountTooSmall = 20,
+    PoolExceedsBalance = 21,
+    NoSecondaryRoyalties = 22,
+    NoSecondaryToken = 23,
+    CollaboratorNotFound = 24,
+    InvalidUpdatedShareTotal = 25,
+    SalePriceNotPositive = 26,
+    InputTooLarge = 27,
+    NoBalance = 28,
+    NoInitializationCommitment = 29,
+    InitializationRevealTooEarly = 30,
+    InitializationCommitmentMismatch = 31,
 }
 
 #[contract]
@@ -156,6 +176,63 @@ impl RoyaltySplitter {
         result as i128
     }
 
+    fn initialize_validated(
+        env: &Env,
+        collaborators: Vec<Address>,
+        shares: Vec<u32>,
+    ) {
+        if collaborators.is_empty() {
+            Self::fail(env, ContractError::EmptyCollaborators);
+        }
+
+        if collaborators.len() > MAX_COLLABORATORS {
+            Self::fail(env, ContractError::TooManyRecipients);
+        }
+
+        if collaborators.len() != shares.len() {
+            Self::fail(env, ContractError::LengthMismatch);
+        }
+
+        let mut total: u32 = 0;
+        for share in shares.iter() {
+            total = Self::checked_add_share_total(env, total, share);
+        }
+
+        if total != 10_000 {
+            Self::fail(env, ContractError::InvalidShareTotal);
+        }
+
+        let mut share_map: Map<Address, u32> = Map::new(env);
+
+        for i in 0..collaborators.len() {
+            let addr = collaborators.get(i).unwrap();
+            let share = shares.get(i).unwrap();
+
+            if share == 0 {
+                Self::fail(env, ContractError::ZeroShare);
+            }
+
+            if share_map.contains_key(addr.clone()) {
+                Self::fail(env, ContractError::DuplicateRecipient);
+            }
+
+            share_map.set(addr, share);
+        }
+
+        let admin = collaborators.get(0).unwrap();
+        storage::instance_set(env, &StorageKey::Admin, &admin);
+        storage::persistent_set(env, &StorageKey::Collaborators, &collaborators);
+        storage::persistent_set(env, &StorageKey::ShareMap, &share_map);
+
+        let version = String::from_str(env, VERSION);
+        storage::instance_set(env, &StorageKey::ContractVersion, &version);
+
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("init")),
+            (collaborators, shares),
+        );
+    }
+
     /// Initialize the contract with collaborators and their revenue shares.
     ///
     /// Can only be called once. The first address in `collaborators` becomes
@@ -181,7 +258,7 @@ impl RoyaltySplitter {
             Self::fail(&env, ContractError::EmptyCollaborators);
         }
 
-        if collaborators.len() > 10 {
+        if collaborators.len() > MAX_COLLABORATORS {
             Self::fail(&env, ContractError::TooManyRecipients);
         }
 
@@ -193,50 +270,79 @@ impl RoyaltySplitter {
             auth::msg::INITIALIZE_ADMIN,
         );
 
-        if collaborators.len() != shares.len() {
-            Self::fail(&env, ContractError::LengthMismatch);
+        Self::initialize_validated(&env, collaborators, shares);
+    }
+
+    /// Store hashes for a hidden initialization payload. The commitment is
+    /// intentionally permissionless because the admin address is part of the
+    /// hidden collaborator list and cannot be authenticated until reveal.
+    pub fn commit_initialize(env: Env, collaborators_hash: BytesN<32>, shares_hash: BytesN<32>) {
+        storage::extend_instance_ttl(&env);
+
+        if env.storage().instance().has(&StorageKey::Admin) {
+            Self::fail(&env, ContractError::AlreadyInitialized);
         }
 
-        let mut total: u32 = 0;
-        for share in shares.iter() {
-            total = Self::checked_add_share_total(&env, total, share);
-        }
+        let nonce: u32 = env
+            .storage()
+            .instance()
+            .get(&StorageKey::InitializeNonce)
+            .unwrap_or(0)
+            .checked_add(1)
+            .unwrap_or_else(|| Self::fail(&env, ContractError::ArithmeticOverflow));
 
-        if total != 10_000 {
-            Self::fail(&env, ContractError::InvalidShareTotal);
-        }
-
-        let mut share_map: Map<Address, u32> = Map::new(&env);
-
-        for i in 0..collaborators.len() {
-            let addr = collaborators.get(i).unwrap();
-            let share = shares.get(i).unwrap();
-
-            if share == 0 {
-                Self::fail(&env, ContractError::ZeroShare);
-            }
-
-            if share_map.contains_key(addr.clone()) {
-                Self::fail(&env, ContractError::DuplicateRecipient);
-            }
-
-            share_map.set(addr, share);
-        }
-
-        let admin = collaborators.get(0).unwrap();
-
-        storage::instance_set(&env, &StorageKey::Admin, &admin);
-        // Collaborators and ShareMap go to persistent storage (#322)
-        storage::persistent_set(&env, &StorageKey::Collaborators, &collaborators);
-        storage::persistent_set(&env, &StorageKey::ShareMap, &share_map);
-
-        let version = String::from_str(&env, VERSION);
-        storage::instance_set(&env, &StorageKey::ContractVersion, &version);
+        storage::instance_set(&env, &StorageKey::InitializeCollaboratorsHash, &collaborators_hash);
+        storage::instance_set(&env, &StorageKey::InitializeSharesHash, &shares_hash);
+        storage::instance_set(&env, &StorageKey::InitializeCommitLedger, &env.ledger().sequence());
+        storage::instance_set(&env, &StorageKey::InitializeNonce, &nonce);
 
         env.events().publish(
-            (symbol_short!("royalty"), symbol_short!("init")),
-            (collaborators, shares),
+            (symbol_short!("royalty"), symbol_short!("init_commit")),
+            (collaborators_hash, shares_hash, nonce),
         );
+    }
+
+    /// Reveal and consume a prior initialization commitment after one ledger.
+    pub fn reveal_initialize(env: Env, collaborators: Vec<Address>, shares: Vec<u32>) {
+        storage::extend_instance_ttl(&env);
+
+        if env.storage().instance().has(&StorageKey::Admin) {
+            Self::fail(&env, ContractError::AlreadyInitialized);
+        }
+
+        let committed_collaborators: BytesN<32> = env
+            .storage()
+            .instance()
+            .get(&StorageKey::InitializeCollaboratorsHash)
+            .unwrap_or_else(|| Self::fail(&env, ContractError::NoInitializationCommitment));
+        let committed_shares: BytesN<32> = env
+            .storage()
+            .instance()
+            .get(&StorageKey::InitializeSharesHash)
+            .unwrap_or_else(|| Self::fail(&env, ContractError::NoInitializationCommitment));
+        let commit_ledger: u32 = env
+            .storage()
+            .instance()
+            .get(&StorageKey::InitializeCommitLedger)
+            .unwrap_or_else(|| Self::fail(&env, ContractError::NoInitializationCommitment));
+
+        if env.ledger().sequence() <= commit_ledger {
+            Self::fail(&env, ContractError::InitializationRevealTooEarly);
+        }
+
+        let collaborators_hash = env.crypto().sha256(&env.serialize(&collaborators));
+        let shares_hash = env.crypto().sha256(&env.serialize(&shares));
+        if collaborators_hash != committed_collaborators || shares_hash != committed_shares {
+            Self::fail(&env, ContractError::InitializationCommitmentMismatch);
+        }
+
+        let admin = collaborators.get(0).unwrap_or_else(|| Self::fail(&env, ContractError::EmptyCollaborators));
+        auth::require_admin(&env, &admin, auth::msg::INITIALIZE_ADMIN);
+        Self::initialize_validated(&env, collaborators, shares);
+
+        env.storage().instance().remove(&StorageKey::InitializeCollaboratorsHash);
+        env.storage().instance().remove(&StorageKey::InitializeSharesHash);
+        env.storage().instance().remove(&StorageKey::InitializeCommitLedger);
     }
 
     /// Set the secondary royalty rate for resales.
@@ -684,22 +790,12 @@ impl RoyaltySplitter {
             }
         };
 
-        if recipients_to_use.is_empty() {
-            Self::fail(&env, ContractError::EmptyRecipients);
-        }
-
-        // Validate shares sum to 10,000
-        let mut total_shares: u32 = 0;
-        for i in 0..recipients_to_use.len() {
-            total_shares = Self::checked_add_share_total(
-                &env,
-                total_shares,
-                recipients_to_use.get(i).unwrap().share,
-            );
-        }
-        if total_shares != 10_000 {
-            Self::fail(&env, ContractError::InvalidShareTotal);
-        }
+        // Reuses the same checks as set_recipients/set_default_recipients (#713):
+        // non-empty, within MAX_RECIPIENTS, no zero-share or duplicate-address
+        // entries, and shares sum to 10,000. Runs before any state mutation or
+        // token transfer below, so an invalid override_recipients list (or a
+        // corrupted stored fallback) never partially distributes funds.
+        Self::validate_recipient_list(&env, &recipients_to_use);
 
         let n = recipients_to_use.len();
 
@@ -732,8 +828,10 @@ impl RoyaltySplitter {
 
         for (addr, payout) in payouts.iter() {
             token_client.transfer(&env.current_contract_address(), &addr, &payout);
-            env.events()
-                .publish((symbol_short!("dist"),), (addr, payout));
+            env.events().publish(
+                (symbol_short!("royalty"), symbol_short!("dist")),
+                (addr, payout, token.clone(), symbol_short!("primary")),
+            );
         }
 
         env.events().publish(
@@ -929,8 +1027,10 @@ impl RoyaltySplitter {
             // Execute transfers for this token
             for (addr, payout) in payouts.iter() {
                 token_client.transfer(&env.current_contract_address(), &addr, &payout);
-                env.events()
-                    .publish((symbol_short!("dist"),), (addr, payout));
+                env.events().publish(
+                    (symbol_short!("royalty"), symbol_short!("dist")),
+                    (addr, payout, token.clone(), symbol_short!("batch")),
+                );
             }
 
             // Emit distribution event for this token
@@ -1095,8 +1195,10 @@ impl RoyaltySplitter {
 
         for (addr, payout) in payouts.iter() {
             token_client.transfer(&env.current_contract_address(), &addr, &payout);
-            env.events()
-                .publish((symbol_short!("sec_dist"),), (addr, payout));
+            env.events().publish(
+                (symbol_short!("royalty"), symbol_short!("sec_pay")),
+                (addr, payout, token.clone(), symbol_short!("secondary")),
+            );
         }
 
         storage::instance_set(&env, &StorageKey::SecondaryPool, &0_i128);
@@ -1364,6 +1466,9 @@ impl RoyaltySplitter {
         if admins.is_empty() {
             panic!("admin list cannot be empty");
         }
+        if admins.len() > MAX_ADMIN_LIST {
+            Self::fail(&env, ContractError::InputTooLarge);
+        }
         if threshold < 1 {
             panic!("threshold must be at least 1");
         }
@@ -1406,7 +1511,7 @@ impl RoyaltySplitter {
             Self::fail(env, ContractError::EmptyRecipients);
         }
 
-        if recipients.len() > 10 {
+        if recipients.len() > MAX_RECIPIENTS {
             Self::fail(env, ContractError::TooManyRecipients);
         }
 

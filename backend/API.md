@@ -5,11 +5,98 @@ Base URL: `http://localhost:3001` (default)
 All JSON POST bodies must use `Content-Type: application/json`.
 JSON request bodies are limited to `10kb`; oversized requests return `413 Payload Too Large`.
 
+## Error responses
+
+Every error response — validation failures, contract/RPC errors, rate limiting,
+and internal errors — uses the same JSON shape and is built by
+`backend/src/error-response.js`:
+
+```json
+{
+  "status": 400,
+  "code": "validation_failed",
+  "message": "Collaborators array must be non-empty",
+  "error": "Collaborators array must be non-empty",
+  "details": [{ "field": "collaborators", "message": "Collaborators array must be non-empty" }]
+}
+```
+
+| Field | Description |
+| ----- | ----------- |
+| `status` | HTTP status code, duplicated in the body for clients that only inspect JSON |
+| `code` | Stable, machine-readable error code — safe to branch on in frontend/integration code. Never changes across releases for the same failure class. |
+| `message` | Human-readable message. Safe to display to end users. |
+| `error` | Same value as `message` — kept for backward compatibility with older clients that read `.error` |
+| `details` | Present only on validation errors; an array of `{ field, message }` issues |
+
+Stack traces and other internal details are never included in a response —
+they're written to the server-side logger (`backend/src/logger.js`) instead,
+keyed by request path/method so they can be correlated with the request log
+line.
+
+**Stable error codes**
+
+| Code | Typical status | Meaning |
+| ---- | ---- | ---- |
+| `validation_failed` | 400 | Request body/query failed schema or manual validation |
+| `bad_request` | 400 | Generic malformed request (fallback for unlisted 400s) |
+| `invalid_contract_id` | 400 | `contractId` is not a valid `C...` Soroban contract address |
+| `invalid_stellar_address` | 400 | A wallet address is not a valid `G...` Stellar address |
+| `invalid_query_parameter` | 400 | A query param (e.g. `limit`/`offset`) failed validation |
+| `unauthorized` | 401 | Missing or invalid authentication |
+| `forbidden` | 403 | Authenticated but not permitted (RBAC) |
+| `not_found` | 404 | Resource does not exist |
+| `already_initialized` | 409 | `initialize` called on a contract that's already initialized |
+| `conflict` | 409 | Generic conflict (fallback for unlisted 409s) |
+| `payload_too_large` | 413 | Request body (or a specific field) exceeds its size limit |
+| `unsupported_media_type` | 415 | POST without `Content-Type: application/json` |
+| `contract_simulation_failed` | 400 | Soroban simulation of a contract read/call failed |
+| `too_many_requests` | 429 | Rate limit exceeded (general, write, or admin limiter) |
+| `internal_server_error` | 500 | Unexpected server-side failure |
+| `service_unavailable` / `request_timeout` | 503 | Downstream (RPC) unavailable, or the request exceeded `REQUEST_TIMEOUT_MS` |
+
+Any status without a listed code above falls back to `error` via
+`normalizeErrorCode()` (`backend/src/error-response.js`) — this only happens
+for statuses not yet given a specific code and should be treated as a gap to
+fill, not a stable code to depend on.
+
 ## Health
+
+### `GET /health`
+
+Liveness probe — confirms the API process is running. Does not touch the
+database or Horizon, so it's safe to poll frequently (deployment platforms,
+uptime monitors). Always returns `200` if the process can respond at all.
+
+**Response**
+
+```json
+{ "status": "ok", "network": "Testnet", "uptime": 1234.5 }
+```
+
+### `GET /ready`
+
+Readiness probe — confirms the dependencies required to serve traffic
+(local SQLite database, Stellar Horizon) are reachable. Returns `503` when
+any dependency is down so orchestrators can hold traffic until the service
+recovers. Never runs contract transactions or expensive RPC calls.
+
+**Response**
+
+```json
+{
+  "status": "ready",
+  "dependencies": { "database": true, "horizon": true }
+}
+```
+
+`status` is `"not_ready"` and the HTTP status is `503` when any dependency
+in `dependencies` is `false`.
 
 ### `GET /api/v1/health`
 
-Operator health check for the backend and Stellar connectivity.
+Operator health check for the backend and Stellar connectivity — richer
+than `/health`, includes contract deployment status and DB metrics.
 
 **Response**
 
@@ -61,6 +148,9 @@ Initialize requests are rejected before contract processing when the request bod
 
 ```json
 {
+  "status": 413,
+  "code": "payload_too_large",
+  "message": "Payload too large",
   "error": "Payload too large"
 }
 ```
@@ -69,6 +159,9 @@ Collaborator-specific payload limit responses use:
 
 ```json
 {
+  "status": 413,
+  "code": "payload_too_large",
+  "message": "Collaborators payload too large",
   "error": "Collaborators payload too large"
 }
 ```
