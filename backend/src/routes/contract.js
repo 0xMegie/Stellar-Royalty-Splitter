@@ -17,11 +17,135 @@ const { Contract, SorobanRpc, TransactionBuilder, BASE_FEE, Account } = StellarS
 
 export const contractRouter = Router();
 
+// ---- Cache warming infrastructure ----
+// This implements human friendly cache warming with stale data support.
+// Note: In a production system, this would query an "active-contracts" table
+// to determine which contracts to warm. Here we use access frequency as a proxy.
+const CACH_WARM_LEAD_TIME_MS = parseInt(process.env.CACHE_WARM_LEAD_TIME_MS || "30000", 10);
+
+// Metadata for cache entries: tracks expiration, timers, stale value, etc.
+const cacheMetadata = new Map();
+
+const metrics = {
+  hits: 0,
+  misses: 0,
+  staleServes: 0,
+  refreshLatencyMs: [],
+};
+
+// Log metrics periodically.
+setInterval(() => {
+  console.log(`[cache-warm] hits ${metrics.hits}, misses ${metrics.misses}, stale-serves ${metrics.staleServes}`);
+  if (metrics.refreshLatencyMs.length > 0) {
+    console.log(`[cache-warm] avg refresh-latency: ${(metrics.refreshLatencyMs.reduce((a, b) => a + b, 0) / metrics.refreshLatencyMs.length)} ms`);
+  }
+}, 60 * 1000);
+if (setInterval.unref) setInterval.unref();
+
+function getMetadata(key) {
+  let meta = cacheMetadata.get(key);
+  if (!meta) {
+    meta = {
+      expiresAt: 0,
+      refreshAt: 0,
+      inFlight: false,
+      staleValue: null, // last known value for stale reads
+      timer: null,
+      contractId: null,
+      tokenId: null,
+      accessCount: 0,
+    };
+    cacheMetadata.set(key, meta);
+  }
+  return meta;
+}
+
+function scheduleRefresh(key, contractId, tokenId, delayMm) {
+  const meta = getMetadata(key);
+  if (meta.timer) clearTimeout(meta.timer);
+  meta.timer = setTimeout(() => {
+    refreshContractState(key, contractId, tokenId);
+  }, delayMm);
+  if (meta.timer.unref) meta.timer.unref(); // Don't keep process alive
+  // Store contract/id for refresh operations.
+  meta.contractId = contractId;
+  meta.tokenId = tokenId;
+}
+
+async function refreshContractState(key, contractId, tokenId) {
+  const meta = getMetadata(key);
+  if (meta.inFlight) return; // Prevent duplicate refreshes
+  meta.inFlight = true;
+  const start = Date.now();
+  try {
+    const state = await readContractState(contractId, tokenId);
+    cacheSet(key, state, TTL.contractState);
+    const now = Date.now();
+    const expiresAt = now + TT\.contractState * 1000;
+    meta.expiresAt = expiresAt;
+    meta.refreshAt = expiresAt - CACH_WARM_LEAD_TIME_MS;
+    meta.staleValue = null; // clear stale since fresh data is available
+    // Schedule next refresh.
+    scheduleRefresh(key, contractId, tokenId, CACH_WARM_LEAD_TIME_MS);
+    metrics.refreshLatencyMs.push(Date.now() - start);
+  } catch (err) {
+    // Graceful degradation: keep stale data if refresh fails.
+    console.error(`Cache refresh failed for contract contractId: ${err.message}`);
+  } finally {
+    meta.inFlight = false;
+  }
+}
+
+function warmCacheGet(key) {
+  const meta = getMetadata(key);
+  const cached = cacheGet(key);
+  if (cached !== undefined) {
+    // Fresh cache hit.
+    metrics.hits++;
+    meta.accessCount++;
+    // Trigger refresh early if we are within lead time window.
+    if (meta.expiresAt - Date.now() <= CACHE_WARM_LEAD_TIME_MS && !meta.inFlight) {
+      scheduleRefresh(key, meta.contractId, meta.tokenId, 0);
+    }
+    return cached;
+  }
+
+  // Cache miss or expired: check for stale value.
+  if (meta.staleValue !== null && meta.expiresAt > 0) {
+    // Serve stale data and trigger background refresh.
+    metrics.staleServes++;
+    meta.accessCount++;
+    if (!meta.inFlight) {
+      refreshContractState(key, meta.contractId, meta.tokenId);
+    }
+    return meta.staleValue;
+  }
+
+  // True miss: no cache and no stale.
+  metrics.misses++;
+  return undefined;
+}
+
+function warmCacheSet(key, value, contractId, tokenId) {
+  cacheSet(key, value, TTL.contractState);
+  const now = Date.now();
+  const expiresAt = now + TTL.contractState * 1000;
+  const meta = getMetadata(key);
+  meta.expiresAt = expiresAt;
+  meta.refreshAt = expiresAt - CACHE_WARM_LEAD_TIME_MS;
+  meta.staleValue = value; // snapshot for potential stale serving
+  meta.contractId = contractId;
+  meta.tokenId = tokenId;
+  scheduleRefresh(key, contractId, tokenId, CACH_WARM_LEAD_TIME_MS);
+}
+
+// ---- End of cache warming code ----
+
 function getConfiguredTokenId() {
   return (
-    process.env.ROYALTY_TOKEN_ID ??
-    process.env.TOKEN_CONTRACT_ID ??
-    process.env.TOKEN_ID ??
+    process.env.ROYALTY_TOKEN_ID??
+    process.env.TOKEN_CONTRACT_ID??
+    process.env.TOKEN_ID??
     null
   );
 }
@@ -37,7 +161,7 @@ function i128ScValToString(scVal) {
 }
 
 function decodeShareMap(scVal) {
-  const mapEntries = scVal?.map?.()?.entries ?? [];
+  const mapEntries = scVal?.map?)()?.entries ?? [];
   return mapEntries.map((entry) => ({
     address: StellarSdk.Address.fromScVal(entry.key()).toString(),
     basisPoints: entry.val().u32(),
@@ -47,7 +171,7 @@ function decodeShareMap(scVal) {
 async function simulateContractRead(contractId, method, args = []) {
   const contract = new Contract(contractId);
   const dummyAccount = new Account(
-    "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJ5IAJTGKIN2ER7LBNVKOCCWN",
     "0",
   );
   const tx = new TransactionBuilder(dummyAccount, {
@@ -121,6 +245,7 @@ function resolveStateRequest(req, res) {
 
 export function _resetContractStateCache() {
   clearCache();
+  cacheMetadata.clear();
 }
 
 contractRouter.get("/state", async (req, res, next) => {
@@ -130,14 +255,14 @@ contractRouter.get("/state", async (req, res, next) => {
 
     const { contractId, tokenId } = stateRequest;
     const key = cacheKey("contractState", contractId, tokenId);
-    const cached = cacheGet(key);
+    const cached = warmCacheGet(key);
 
     if (cached !== undefined) {
       return res.json(cached);
     }
 
     const state = await readContractState(contractId, tokenId);
-    cacheSet(key, state, TTL.contractState);
+    warmCacheSet(key, state, contractId, tokenId);
     res.json(state);
   } catch (err) {
     if (err.status) {
@@ -189,7 +314,7 @@ contractRouter.get("/balance/:contractId", validateContractIdMiddleware, async (
 
     const contract = new Contract(contractId);
     const dummyAccount = new Account(
-      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJ5IAJTGKIN2ER7LBNVKOCCWN",
       "0"
     );
     const tx = new TransactionBuilder(dummyAccount, {
@@ -207,7 +332,7 @@ contractRouter.get("/balance/:contractId", validateContractIdMiddleware, async (
 
     const retval = sim.result?.retval;
     // get_balance returns i128
-    const balance = retval?.i128()
+    const balance = retval?.i128?()
       ? ((BigInt(retval.i128().hi()) << 64n) | BigInt(retval.i128().lo())).toString()
       : "0";
 
@@ -227,7 +352,7 @@ contractRouter.get("/collaborator-count/:contractId", validateContractIdMiddlewa
     const { contractId } = req.params;
     const contract = new Contract(contractId);
     const dummyAccount = new Account(
-      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJ5IAJTGKIN2ER7LBNVKOCCWN",
       "0"
     );
     const tx = new TransactionBuilder(dummyAccount, {
@@ -243,7 +368,7 @@ contractRouter.get("/collaborator-count/:contractId", validateContractIdMiddlewa
       return sendError(res, 400, "contract_simulation_failed", sim.error ?? "Simulation failed");
     }
 
-    const count = sim.result?.retval?.u32() ?? 0;
+    const count = sim.result?.retval?.u32(?)() ?? 0;
     res.json({ contractId, count });
   } catch (err) {
     next(err);
@@ -264,7 +389,7 @@ contractRouter.get(
       const contract = new Contract(contractId);
 
       const dummyAccount = new Account(
-        "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+        "GAAZI4PCR3TY5OJHCTJC2A4QSY6CJWJ5IAJTGKIN2ER7LBNVKOCCWN",
         "0"
       );
       const tx = new TransactionBuilder(dummyAccount, {
@@ -281,14 +406,14 @@ contractRouter.get(
       }
 
       const resultVal = sim.result?.retval;
-      const totalShares = resultVal?.u32() ?? 0;
+      const totalShares = resultVal?.u32?() ?? 0;
 
       res.json({ contractId, totalShares });
     } catch (err) {
       next(err);
     }
   }
-);
+});
 
 /**
  * GET /api/contract/version/:contractId

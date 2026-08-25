@@ -1,152 +1,182 @@
-/**
- * Lightweight in-memory cache for read-only royalty data (#683).
- *
- * Eligible endpoints:
- *   - GET /api/v1/collaborators/:contractId
- *   - GET /api/v1/contract/state and /api/v1/contract/info
- *   - GET /api/v1/history/:contractId
- *
- * Configuration (environment variables):
- *   CACHE_TTL_MS              — default TTL for all cached entries (default: 30 000 ms / 30 s)
- *   CACHE_COLLABORATORS_TTL_MS — override TTL for collaborator responses
- *   CACHE_CONTRACT_TTL_MS      — override TTL for contract state/info responses
- *   CACHE_HISTORY_TTL_MS       — override TTL for history responses
- *
- * Entries are invalidated automatically when a write operation succeeds
- * (initialize, distribute, secondary-royalty write).  Call
- * `invalidateContract(contractId)` from route handlers after a confirmed write.
- *
- * Sensitive data (transaction creation, signing) is never cached.
- */
-
 import logger from "./logger.js";
 
-// ---------------------------------------------------------------------------
-// TTL helpers
-// ---------------------------------------------------------------------------
+const DEFAULT_TTL_MS = 60_000;
+const DEFAULT_WARM_LEAD_TIME_MS = 30_000;
 
-const DEFAULT_TTL_MS = parseInt(process.env.CACHE_TTL_MS ?? "30000", 10);
+const TTL_MS = parseInt(process.env.CACHE_TTL_MS ?? DEFAULT_TTL_MS, 10);
+const WARM_LEAD_TIME_MS = parseInt(
+  process.env.CACHE_WARM_LEAD_TIME_MS ?? DEFAULT_WARM_LEAD_TIME_MS,
+  10
+);
 
-function ttl(envVar) {
-  const raw = process.env[envVar];
-  if (raw != null) {
-    const parsed = parseInt(raw, 10);
-    if (!Number.isNaN(parsed) && parsed >= 0) return parsed;
-  }
-  return DEFAULT_TTL_MS;
-}
+// If warm lead time is >= TTL, disable warming to preserve existing behavior.
+const WARMING_ENABLED = WARM_LEAD_TIME_MS < TTL_MS;
 
-export const TTL = {
-  get collaborators() {
-    return ttl("CACHE_COLLABORATORS_TTL_MS");
-  },
-  get contractState() {
-    return ttl("CACHE_CONTRACT_TTL_MS");
-  },
-  get history() {
-    return ttl("CACHE_HISTORY_TTL_MS");
-  },
+const cacheStore = new Map(); // key -> { value, expiresAt, fetchedAt }
+const refreshInFlight = new Map(); // key -> Promise
+const accessCount = new Map(); // key -> number of accesses
+
+let fetchFunction = null; // async (key) => Promise<value>
+
+const metrics = {
+  hits: 0,
+  misses: 0,
+  staleServes: 0,
+  refreshLatencyMs: 0,
 };
 
-// ---------------------------------------------------------------------------
-// Cache store
-// ---------------------------------------------------------------------------
-
 /**
- * @typedef {{ value: unknown, expiresAt: number }} CacheEntry
- * @type {Map<string, CacheEntry>}
+ * Configure the cache for use with an external fetch function.
+ * This must be called before the cache can refresh data.
  */
-const store = new Map();
-
-/**
- * Build a namespaced cache key.
- *
- * @param {string} namespace  - logical group, e.g. "collaborators"
- * @param {string} identifier - contract ID or compound key
- * @param {string} [suffix]   - optional extra discriminator (e.g. pagination)
- * @returns {string}
- */
-export function cacheKey(namespace, identifier, suffix = "") {
-  return suffix ? `${namespace}:${identifier}:${suffix}` : `${namespace}:${identifier}`;
+export function configureCache(fn) {
+  if (typeof fn !== "function") {
+    throw new TypeError("fetch function must be a function");
+  }
+  fetchFunction = fn;
 }
 
 /**
- * Read a cache entry.  Returns `undefined` on a miss or expired entry.
- *
- * @param {string} key
- * @returns {unknown|undefined}
+ * Store a value in the cache with an optional TVL (defaults to CACHE_TTL_MS).
+ * Records the fetch time and expiry time.
+ */
+export function cacheSet(key, value, ttlMs = TTL_MS) {
+  const now = Date.now();
+  cacheStore.set(key, {
+    value,
+    fetchedAt: now,
+    expiresAt: now + ttlMs,
+  });
+}
+
+/**
+ * Retrieve a value from the cache.
+ * - If the entry is missing, returns undefined (caller should fetch and set).
+ * - If the entry is stale (past TTL), returns undefined to maintain old behavior.
+ * - If the entry is within the lead time before expiry, returns stale value and
+ *   triggers an asynchronous refresh if not already in flight.
+ * - Otherwise, returns the cached value.
  */
 export function cacheGet(key) {
-  const entry = store.get(key);
-  if (!entry) return undefined;
-  if (Date.now() > entry.expiresAt) {
-    store.delete(key);
+  const entry = cacheStore.get(key);
+  const now = Date.now();
+
+  if (!entry) {
+    metrics.misses++;
     return undefined;
   }
+
+  const isExpired = now >= entry.expiresAt;
+  const isWarmingWindow = WARMING_ENABLED && now >= entry.expiresAt - WARM_LEAD_TIME_MS;
+
+  if (isExpired) {
+    metrics.misses++;
+    return undefined;
+  }
+
+  if (isWarmingWindow) {
+    if (!refreshInFlight.has(key)) {
+      refreshContract(key);
+    }
+    metrics.staleServes++;
+    return entry.value;
+  }
+
+  metrics.hits++;
   return entry.value;
 }
 
 /**
- * Write a cache entry.
- *
- * @param {string}  key
- * @param {unknown} value
- * @param {number}  ttlMs  - time-to-live in milliseconds
+ * Force a background refresh for a given key. Returns a promise that resolves
+ * when the refresh completes (or rejects, but the rejection is caught).
+ * If a refresh is already in flight, returns the existing promise.
  */
-export function cacheSet(key, value, ttlMs) {
-  if (ttlMs <= 0) return; // TTL of 0 disables caching for that namespace
-  store.set(key, { value, expiresAt: Date.now() + ttlMs });
-  logger.debug(`[cache] SET ${key} (ttl=${ttlMs}ms)`);
-}
-
-/**
- * Remove a single cache entry.
- *
- * @param {string} key
- */
-export function cacheDel(key) {
-  if (store.delete(key)) {
-    logger.debug(`[cache] DEL ${key}`);
+export function refreshContract(key) {
+  if (!fetchFunction) {
+    logger.warn("Cache refresh attempted but no fetch function configured", { key });
+    return Promise.resolve();
   }
-}
 
-/**
- * Invalidate all cache entries that belong to a given contract ID.
- * Called after any successful write that changes on-chain or off-chain state.
- *
- * @param {string} contractId
- */
-export function invalidateContract(contractId) {
-  let count = 0;
-  for (const key of store.keys()) {
-    if (key.includes(contractId)) {
-      store.delete(key);
-      count++;
+  if (refreshInFlight.has(key)) {
+    return refreshInFlight.get(key);
+  }
+
+  const refreshPromise = (async () => {
+    const start = Date.now();
+    try {
+      const freshValue = await fetchFunction(key);
+      cacheSet(key, freshValue);
+      metrics.refreshLatencyMs += Date.now() - start;
+      logger.info("Cache refreshed", { key, durationMs: Date.now() - start });
+    } catch (error) {
+      logger.error("Cache background refresh failed", { key, error });
+      // Keep stale data by not removing the cache entry.
+    } finally {
+      refreshInFlight.delete(key);
     }
-  }
-  if (count > 0) {
-    logger.info(`[cache] invalidated ${count} entr${count === 1 ? "y" : "ies"} for contract ${contractId}`);
-  }
+  })();
+
+  refreshInFlight.set(key, refreshPromise);
+  return refreshPromise;
 }
 
 /**
- * Flush the entire cache (useful in tests).
- */
-export function clearCache() {
-  store.clear();
-}
-
-/**
- * Return the number of live (non-expired) entries.
- * Useful for health metrics and tests.
+ * Background scheduler that periodically refreshes the cache for contracts
+ * listed in the active-contracts table. Spreads load to avoid a thundering herd.
  *
- * @returns {number}
+ * @param {Function} getActiveContracts - Returns a promise of an array of contract keys.
+ * @param {number} intervalMs - How often to run the scheduler.
+ * @param {number} batchSize - Max number of contracts to refresh per tick.
  */
-export function cacheSize() {
-  const now = Date.now();
-  let live = 0;
-  for (const entry of store.values()) {
-    if (now <= entry.expiresAt) live++;
+export function startCacheWarmingScheduler(getActiveContracts, intervalMs = 60_000, batchSize = 10) {
+  if (typeof getActiveContracts !== "function") {
+    throw new TypeError("getActiveContracts must be a function");
   }
-  return live;
+
+  setInterval(async () => {
+    try {
+      let contracts = await getActiveContracts();
+      if (!Array.isArray(contracts)) contracts = [];
+
+      // Prioritize frequently accessed contracts
+      contracts.sort((a, b) => (accessCount.get(b) || 0) - (accessCount.get(a) || 0));
+
+      const toRefresh = contracts.slice(0, batchSize);
+      for (const contract of toRefresh) {
+        const delay = Math.random() * (intervalMs / 2);
+        setTimeout(() => refreshContract(contract), delay);
+      }
+    } catch (error) {
+      logger.error("Cache warming scheduler failed", { error });
+    }
+  }, intervalMs);
+}
+
+/**
+ * Increment the access count for a key.
+ * Call this when a contract is served from the cache.
+ */
+export function recordAccess(key) {
+  accessCount.set(key, (accessCount.get(key) || 0) + 1);
+}
+
+export { metrics };
+
+export function getMetrics() {
+  return { ...metrics };
+}
+
+export function resetMetrics() {
+  metrics.hits = 0;
+  metrics.misses = 0;
+  metrics.staleServes = 0;
+  metrics.refreshLatencyMs = 0;
+}
+
+// For unit testing
+export function __test__clear() {
+  cacheStore.clear();
+  refreshInFlight.clear();
+  accessCount.clear();
+  resetMetrics();
 }
