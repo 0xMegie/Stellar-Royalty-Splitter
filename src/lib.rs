@@ -98,6 +98,23 @@ pub const MAX_RECIPIENTS: u32 = 10;
 /// Maximum number of admins in the multi-sig admin list (`set_admins`).
 pub const MAX_ADMIN_LIST: u32 = 10;
 
+/// Maximum number of tokens accepted per `batch_distribute` call.
+///
+/// `batch_distribute` loops over every token in `tokens` within a single
+/// contract invocation, doing a `balance` read plus up to `n` collaborator
+/// `transfer`s per token — unbounded `tokens.len()` means unbounded work in
+/// one call, risking Soroban's per-invocation CPU instruction budget. 50 is
+/// a conservative cap (each token can fan out into up to `MAX_COLLABORATORS`
+/// transfers, so a full batch is at most 500 transfers) well under the
+/// budget while leaving room for realistic multi-token distributions.
+///
+/// Not the same axis as the backend's `MAX_BATCH_OPERATIONS` (see
+/// `backend/src/validation.js`), which bounds how many *separate*
+/// single-token `distribute` calls (potentially against different
+/// contracts) the backend groups into one RPC round trip — that's an
+/// off-chain batching optimization, unrelated to this on-chain loop bound.
+pub const MAX_BATCH_TOKENS: u32 = 50;
+
 /// Backward-compatible alias for integration tests and external references.
 pub type DataKey = StorageKey;
 
@@ -149,6 +166,8 @@ pub enum ContractError {
     NoInitializationCommitment = 29,
     InitializationRevealTooEarly = 30,
     InitializationCommitmentMismatch = 31,
+    TooManyBatchTokens = 32,
+    RoyaltyAmountNotPositive = 33,
 }
 
 #[contract]
@@ -284,6 +303,12 @@ impl RoyaltySplitter {
             Self::fail(&env, ContractError::EmptyCollaborators);
         }
 
+        // #744: the len bound is also enforced inside initialize_validated
+        // below (which reveal_initialize relies on exclusively); kept here
+        // too only because collaborators.get(0) on the next line needs a
+        // non-empty, non-oversized list to safely identify the admin before
+        // authorization runs. Both checks must stay in sync with
+        // initialize_validated's — see that function's own bound check.
         if collaborators.len() > MAX_COLLABORATORS {
             Self::fail(&env, ContractError::TooManyRecipients);
         }
@@ -1112,6 +1137,15 @@ impl RoyaltySplitter {
         // Check admin auth once for the entire batch
         Self::check_admin_auth(&env, auth::msg::BATCH_DISTRIBUTE_ADMIN);
 
+        // #744: bound the number of tokens processed per call — see
+        // MAX_BATCH_TOKENS doc comment for why. Checked before the
+        // (already-existing) paused check so an oversized batch fails fast
+        // with a specific error rather than getting past the paused gate
+        // and only then hitting resource limits mid-loop.
+        if tokens.len() > MAX_BATCH_TOKENS {
+            Self::fail(&env, ContractError::TooManyBatchTokens);
+        }
+
         // Check paused state once for the entire batch
         if env
             .storage()
@@ -1264,6 +1298,17 @@ impl RoyaltySplitter {
         storage::extend_instance_ttl(&env);
         auth::require_payer(&env, &from, auth::msg::RECORD_SECONDARY_PAYER);
 
+        // #744: reject non-positive amounts before any transfer or state
+        // change. A zero amount would be a wasted no-op transfer; a negative
+        // amount would silently shrink the tracked secondary pool without
+        // moving any tokens (the token contract's own transfer_from would
+        // likely reject a negative amount too, but that's not guaranteed
+        // for every token implementation, and this check fails fast with a
+        // clear, contract-specific error either way).
+        if royalty_amount <= 0 {
+            Self::fail(&env, ContractError::RoyaltyAmountNotPositive);
+        }
+
         let token_client = token::Client::new(&env, &token);
 
         token_client.transfer_from(
@@ -1279,11 +1324,11 @@ impl RoyaltySplitter {
             .get(&StorageKey::SecondaryPool)
             .unwrap_or(0);
 
-        storage::instance_set(
-            &env,
-            &StorageKey::SecondaryPool,
-            &(current_pool + royalty_amount),
-        );
+        let new_pool = current_pool
+            .checked_add(royalty_amount)
+            .unwrap_or_else(|| Self::fail(&env, ContractError::ArithmeticOverflow));
+
+        storage::instance_set(&env, &StorageKey::SecondaryPool, &new_pool);
 
         storage::instance_set(&env, &StorageKey::SecondaryToken, &token);
     }

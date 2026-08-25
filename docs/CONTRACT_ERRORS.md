@@ -39,6 +39,8 @@ The frontend utility at [`frontend/src/lib/contract-errors.ts`](../frontend/src/
 | 25 | `InvalidUpdatedShareTotal` | `update_share` called with a new share value that would cause the total to differ from 10,000. | Adjust other collaborators' shares to maintain a total of exactly 10,000 before updating. |
 | 26 | `SalePriceNotPositive` | `record_secondary_sale` called with `sale_price ≤ 0`. | Provide a positive sale price. |
 | 27 | `InputTooLarge` | `set_admins` called with more than `MAX_ADMIN_LIST` (10) addresses. | Reduce the admin list to 10 entries or fewer. |
+| 32 | `TooManyBatchTokens` | `batch_distribute` called with more than `MAX_BATCH_TOKENS` (50) token addresses. | Split the token list into multiple `batch_distribute` calls of 50 tokens or fewer. |
+| 33 | `RoyaltyAmountNotPositive` | `record_secondary_royalty` called with `royalty_amount ≤ 0`. | Provide a positive royalty amount. |
 
 ---
 
