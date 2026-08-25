@@ -17,11 +17,22 @@ vi.mock("../api", () => ({
 import { api } from "../api";
 
 vi.mock("../context/SettingsContext", () => ({
-  useSettings: () => ({
-    settings: { displayCurrency: "XLM" },
+  useSettings: vi.fn(() => ({
+    settings: { displayCurrency: "XLM", trackedContracts: [] },
     updateSettings: vi.fn(),
-  }),
+  })),
 }));
+
+import { useSettings } from "../context/SettingsContext";
+
+const mockUseSettings = useSettings as Mock;
+
+function setTrackedContracts(contracts: string[]) {
+  mockUseSettings.mockReturnValue({
+    settings: { displayCurrency: "XLM", trackedContracts: contracts },
+    updateSettings: vi.fn(),
+  });
+}
 
 const mockGetAnalytics = api.getAnalytics as Mock;
 const mockGetCollaborators = api.getCollaborators as Mock;
@@ -80,6 +91,7 @@ const mockSecondarySales = {
 describe("EarningsDashboard Component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setTrackedContracts([]);
   });
 
   it("renders empty state when contractId is not provided", () => {
@@ -176,5 +188,95 @@ describe("EarningsDashboard Component", () => {
     });
 
     expect(screen.getByText(/Error Loading Dashboard/i)).toBeInTheDocument();
+  });
+
+  describe("multi-contract selector", () => {
+    const CONTRACT_B = "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+
+    function mockApisFor(contractTotals: Record<string, number>) {
+      mockGetAnalytics.mockImplementation((id: string) =>
+        Promise.resolve({
+          success: true,
+          data: {
+            totalDistributed: contractTotals[id] ?? 0,
+            primaryRoyaltiesTotal: contractTotals[id] ?? 0,
+            secondaryRoyaltiesTotal: 0,
+            collaboratorStats: [],
+          },
+        }),
+      );
+      mockGetCollaborators.mockResolvedValue(mockCollaborators);
+      mockGetRoyaltyStats.mockResolvedValue({});
+      mockGetTransactionHistory.mockResolvedValue({ data: [] });
+      mockGetSecondarySales.mockResolvedValue({ sales: [] });
+    }
+
+    it("renders the contract selector with tracked contracts", async () => {
+      setTrackedContracts([MOCK_CONTRACT, CONTRACT_B]);
+      mockApisFor({ [MOCK_CONTRACT]: 1000, [CONTRACT_B]: 500 });
+
+      render(<EarningsDashboard contractId={MOCK_CONTRACT} />);
+
+      const selector = await screen.findByTestId("contract-selector");
+      expect(selector).toBeInTheDocument();
+
+      const options = screen.getAllByRole("option");
+      // Two contracts + "All Contracts" aggregate option
+      expect(options).toHaveLength(3);
+      expect(
+        screen.getByRole("option", { name: /All Contracts/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("switches to the selected contract and refetches its earnings", async () => {
+      setTrackedContracts([MOCK_CONTRACT, CONTRACT_B]);
+      mockApisFor({ [MOCK_CONTRACT]: 1000, [CONTRACT_B]: 500 });
+
+      render(<EarningsDashboard contractId={MOCK_CONTRACT} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("earnings-dashboard")).toBeInTheDocument();
+      });
+      await screen.findByTestId("contract-selector");
+      // Total Distributed and Primary Royalties both equal 1,000
+      expect(screen.getAllByText("1,000 XLM").length).toBeGreaterThan(0);
+
+      fireEvent.change(screen.getByLabelText(/Contract/i), {
+        target: { value: CONTRACT_B },
+      });
+
+      await waitFor(() => {
+        expect(mockGetAnalytics).toHaveBeenCalledWith(CONTRACT_B);
+      });
+      await waitFor(() => {
+        expect(screen.getAllByText("500 XLM").length).toBeGreaterThan(0);
+      });
+    });
+
+    it("shows the aggregated comparison view when All Contracts is selected", async () => {
+      setTrackedContracts([MOCK_CONTRACT, CONTRACT_B]);
+      mockApisFor({ [MOCK_CONTRACT]: 1000, [CONTRACT_B]: 500 });
+
+      render(<EarningsDashboard contractId={MOCK_CONTRACT} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("earnings-dashboard")).toBeInTheDocument();
+      });
+      await screen.findByTestId("contract-selector");
+
+      fireEvent.change(screen.getByLabelText(/Contract/i), {
+        target: { value: "__all__" },
+      });
+
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("multi-contract-comparison"),
+        ).toBeInTheDocument();
+      });
+      // Aggregated total = 1000 + 500
+      expect(screen.getByTestId("total-all-distributed")).toHaveTextContent(
+        "1,500",
+      );
+    });
   });
 });

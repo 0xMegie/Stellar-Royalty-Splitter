@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { useTheme } from "../context/ThemeContext";
-import { useSettings, SettingsType } from "../context/SettingsContext";
+import {
+  useSettings,
+  SettingsType,
+  isValidContractId,
+} from "../context/SettingsContext";
 
 import { CopyButton } from "./CopyButton";
 import { PaymentPreferences } from "./PaymentPreferences";
@@ -19,10 +23,13 @@ export const Settings: React.FC<SettingsProps> = ({
   onClearContract,
 }) => {
   const { isDark, toggleTheme } = useTheme();
-  const { settings, updateSettings } = useSettings();
+  const { settings, updateSettings, addTrackedContract, removeTrackedContract } =
+    useSettings();
   const [localSettings, setLocalSettings] = useState(() => ({ ...settings }));
 
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [newContractId, setNewContractId] = useState("");
+  const [contractError, setContractError] = useState<string | null>(null);
 
   const handleToggle = (key: keyof typeof localSettings) => {
     const newValue = !localSettings[key];
@@ -53,11 +60,40 @@ export const Settings: React.FC<SettingsProps> = ({
         displayCurrency: "XLM",
         maxPayoutsPerTransaction: 10,
         minPayoutAmount: 0.1,
+        trackedContracts: [],
       };
       setLocalSettings(defaults);
       updateSettings(defaults);
       showSaveStatus("✓ Settings reset to defaults!");
     }
+  };
+
+  const handleAddContract = () => {
+    const trimmed = newContractId.trim();
+    if (!isValidContractId(trimmed)) {
+      setContractError("Contract ID must start with C and be 56 characters");
+      return;
+    }
+    if (!addTrackedContract(trimmed)) {
+      setContractError("This contract is already being tracked");
+      return;
+    }
+    setLocalSettings((s) => ({
+      ...s,
+      trackedContracts: Array.from(new Set([...s.trackedContracts, trimmed])),
+    }));
+    setNewContractId("");
+    setContractError(null);
+    showSaveStatus("✓ Contract added to tracked list!");
+  };
+
+  const handleRemoveContract = (id: string) => {
+    removeTrackedContract(id);
+    setLocalSettings((s) => ({
+      ...s,
+      trackedContracts: s.trackedContracts.filter((c) => c !== id),
+    }));
+    showSaveStatus("✓ Contract removed from tracked list!");
   };
 
   const showSaveStatus = (message: string) => {
@@ -118,6 +154,75 @@ export const Settings: React.FC<SettingsProps> = ({
               {isDark ? "ON" : "OFF"}
             </button>
           </div>
+        </section>
+
+        {/* Tracked Contracts */}
+        <section className="settings-section">
+          <h2 className="section-title">Tracked Contracts</h2>
+          <p className="setting-description">
+            Add contract IDs to compare and aggregate earnings across multiple
+            projects on the earnings dashboard.
+          </p>
+
+          <div className="setting-item">
+            <div className="setting-label">
+              <label htmlFor="newContractId">Add Contract ID</label>
+            </div>
+            <div style={{ display: "flex", gap: "0.5rem", width: "100%" }}>
+              <input
+                id="newContractId"
+                type="text"
+                placeholder="C..."
+                value={newContractId}
+                onChange={(e) => {
+                  setNewContractId(e.target.value);
+                  setContractError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAddContract();
+                }}
+                className="setting-input"
+              />
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleAddContract}
+              >
+                Add
+              </button>
+            </div>
+          </div>
+          {contractError && (
+            <p role="alert" className="contract-input-error">
+              {contractError}
+            </p>
+          )}
+
+          {settings.trackedContracts.length === 0 ? (
+            <p className="setting-description">
+              No contracts tracked yet. Add one above to enable the
+              multi-contract earnings comparison view.
+            </p>
+          ) : (
+            <ul className="tracked-contracts-list" aria-label="Tracked contracts">
+              {settings.trackedContracts.map((id) => (
+                <li key={id} className="tracked-contract-item">
+                  <span title={id}>{id}</span>
+                  {id === contractId && (
+                    <span className="you-badge">Active</span>
+                  )}
+                  <CopyButton value={id} label="contract ID" size="sm" />
+                  <button
+                    type="button"
+                    aria-label={`Remove contract ${id}`}
+                    onClick={() => handleRemoveContract(id)}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         {/* Distribution Settings */}

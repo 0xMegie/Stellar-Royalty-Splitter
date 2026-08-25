@@ -6,11 +6,14 @@ export interface SettingsType {
   displayCurrency: "XLM" | "USD" | "EUR";
   maxPayoutsPerTransaction: number;
   minPayoutAmount: number;
+  trackedContracts: string[];
 }
 
 interface SettingsContextType {
   settings: SettingsType;
   updateSettings: (patch: Partial<SettingsType>) => void;
+  addTrackedContract: (contractId: string) => boolean;
+  removeTrackedContract: (contractId: string) => void;
 }
 
 const DEFAULTS: SettingsType = {
@@ -19,7 +22,17 @@ const DEFAULTS: SettingsType = {
   displayCurrency: "XLM",
   maxPayoutsPerTransaction: 10,
   minPayoutAmount: 0.1,
+  trackedContracts: [],
 };
+
+// A contract ID on Stellar starts with "C" and is 56 characters long.
+export function isValidContractId(id: string): boolean {
+  return id.startsWith("C") && id.length === 56;
+}
+
+export function normalizeContractList(contracts: string[]): string[] {
+  return Array.from(new Set(contracts.map((c) => c.trim()).filter(isValidContractId)));
+}
 
 const SettingsContext = createContext<SettingsContextType | undefined>(
   undefined,
@@ -46,8 +59,28 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({
   const updateSettings = (patch: Partial<SettingsType>) =>
     setSettings((s) => ({ ...s, ...patch }));
 
+  const addTrackedContract = (contractId: string): boolean => {
+    const trimmed = contractId.trim();
+    if (!isValidContractId(trimmed)) return false;
+    if (settings.trackedContracts.includes(trimmed)) return false;
+    setSettings((s) =>
+      s.trackedContracts.includes(trimmed)
+        ? s
+        : { ...s, trackedContracts: [...s.trackedContracts, trimmed] },
+    );
+    return true;
+  };
+
+  const removeTrackedContract = (contractId: string) =>
+    setSettings((s) => ({
+      ...s,
+      trackedContracts: s.trackedContracts.filter((c) => c !== contractId),
+    }));
+
   return (
-    <SettingsContext.Provider value={{ settings, updateSettings }}>
+    <SettingsContext.Provider
+      value={{ settings, updateSettings, addTrackedContract, removeTrackedContract }}
+    >
       {children}
     </SettingsContext.Provider>
   );

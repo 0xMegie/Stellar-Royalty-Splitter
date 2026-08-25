@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { api, type TransactionRecord, type SecondarySale } from "../api";
 import { useSettings } from "../context/SettingsContext";
 import { formatCurrency, formatNumber } from "../utils/format";
 import { CopyButton } from "./CopyButton";
 import { Skeleton } from "./Skeleton";
+import MultiContractComparison from "./MultiContractComparison";
 import "./EarningsDashboard.css";
 
 interface CollaboratorEarning {
@@ -34,6 +35,40 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
   walletAddress,
 }) => {
   const { settings } = useSettings();
+
+  // Multi-contract support (#multi-contract-earnings): users can track
+  // several contract IDs in Settings. The selector below switches between
+  // a single contract's dashboard and an aggregated comparison view.
+  const trackedContracts = useMemo(
+    () => settings.trackedContracts ?? [],
+    [settings.trackedContracts],
+  );
+  const selectableContracts = useMemo(
+    () =>
+      Array.from(
+        new Set([...trackedContracts, ...(contractId ? [contractId] : [])]),
+      ).filter(Boolean),
+    [trackedContracts, contractId],
+  );
+  const ALL_CONTRACTS = "__all__";
+  const [selectedContract, setSelectedContract] = useState<string>(
+    () => contractId ?? "",
+  );
+
+  // Follow the active contract chosen elsewhere in the app unless the user
+  // is already viewing the aggregated view.
+  useEffect(() => {
+    if (contractId) {
+      setSelectedContract((current) =>
+        current === ALL_CONTRACTS ? current : contractId,
+      );
+    }
+  }, [contractId]);
+
+  const activeContract =
+    selectedContract === ALL_CONTRACTS ? "" : selectedContract;
+  const showComparison = selectedContract === ALL_CONTRACTS;
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [totalDistributed, setTotalDistributed] = useState<number>(0);
@@ -45,7 +80,7 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
 
   const loadDashboardData = useCallback(async () => {
-    if (!contractId) {
+    if (!activeContract) {
       setLoading(false);
       return;
     }
@@ -56,11 +91,11 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
     try {
       // Fetch analytics, collaborator shares, royalty stats, and transaction history in parallel
       const [analyticsRes, collabRes, statsRes, historyRes, salesRes] = await Promise.allSettled([
-        api.getAnalytics(contractId),
-        api.getCollaborators(contractId),
-        api.getRoyaltyStats(contractId),
-        api.getTransactionHistory(contractId, 20, 0),
-        api.getSecondarySales(contractId, 20, 0),
+        api.getAnalytics(activeContract),
+        api.getCollaborators(activeContract),
+        api.getRoyaltyStats(activeContract),
+        api.getTransactionHistory(activeContract, 20, 0),
+        api.getSecondarySales(activeContract, 20, 0),
       ]);
 
       if (analyticsRes.status === "rejected" && collabRes.status === "rejected") {
@@ -168,13 +203,53 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [contractId]);
+  }, [activeContract]);
 
   useEffect(() => {
     void loadDashboardData();
   }, [loadDashboardData]);
 
-  if (!contractId) {
+  const contractSelector = selectableContracts.length > 0 && (
+    <div className="contract-selector" data-testid="contract-selector">
+      <label htmlFor="earnings-contract-select">Contract</label>
+      <select
+        id="earnings-contract-select"
+        value={selectedContract}
+        onChange={(e) => setSelectedContract(e.target.value)}
+      >
+        {selectableContracts.map((id) => (
+          <option key={id} value={id}>
+            {`${id.slice(0, 8)}…${id.slice(-6)}`}
+          </option>
+        ))}
+        {selectableContracts.length > 1 && (
+          <option value={ALL_CONTRACTS}>
+            All Contracts — Total &amp; Compare
+          </option>
+        )}
+      </select>
+    </div>
+  );
+
+  if (showComparison) {
+    return (
+      <div className="earnings-dashboard" data-testid="earnings-dashboard-comparison">
+        <header className="earnings-header">
+          <div className="earnings-header-info">
+            <h1>Collaborator Earnings Dashboard</h1>
+            <p className="subtitle">
+              Aggregated earnings across all tracked contracts, with
+              side-by-side comparison.
+            </p>
+          </div>
+          {contractSelector}
+        </header>
+        <MultiContractComparison contractIds={selectableContracts} />
+      </div>
+    );
+  }
+
+  if (!activeContract && !showComparison) {
     return (
       <div className="earnings-dashboard-empty" data-testid="earnings-dashboard-empty">
         <div className="empty-card">
@@ -238,6 +313,7 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
             Comprehensive overview of primary distributions, secondary resale royalties, and collaborator payouts.
           </p>
         </div>
+        {contractSelector}
         <button
           type="button"
           className="refresh-dashboard-btn"
