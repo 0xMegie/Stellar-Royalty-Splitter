@@ -105,6 +105,75 @@ describe("Contributor Tax - Reports", () => {
   });
 });
 
+describe("Contributor Tax - CSV Export (#741)", () => {
+  test("GET /export returns CSV with headers and escaped rows", async () => {
+    mockGetTaxComplianceReport.mockReturnValue([
+      {
+        walletAddress: WALLET,
+        tax_status: "completed",
+        tax_id: '12-3456789, "Inc."',
+        compliance_status: "compliant",
+        w9_file_name: "w9.pdf",
+        updated_at: "2026-01-15T00:00:00.000Z",
+      },
+    ]);
+
+    const res = await request(app).get("/api/v1/contributor-tax/export");
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/csv/);
+    expect(res.headers["content-disposition"]).toMatch(/attachment/);
+    expect(res.headers["content-disposition"]).toMatch(/contributor-tax-export\.csv/);
+
+    const lines = res.text.trim().split("\n");
+    expect(lines[0]).toBe(
+      '"Wallet Address","Tax Status","Tax ID","Compliance Status","W9 File Name","Updated At"',
+    );
+    // Embedded quotes and commas in tax_id are escaped/quoted correctly.
+    expect(lines[1]).toContain('"12-3456789, ""Inc."""');
+    expect(lines[1]).toContain(`"${WALLET}"`);
+  });
+
+  test("GET /export returns header row only when there are no records", async () => {
+    mockGetTaxComplianceReport.mockReturnValue([]);
+
+    const res = await request(app).get("/api/v1/contributor-tax/export");
+
+    expect(res.status).toBe(200);
+    const lines = res.text.trim().split("\n");
+    expect(lines.length).toBe(1);
+  });
+
+  test("GET /export renders null fields as empty quoted strings without throwing", async () => {
+    mockGetTaxComplianceReport.mockReturnValue([
+      {
+        walletAddress: WALLET,
+        tax_status: null,
+        tax_id: null,
+        compliance_status: "missing",
+        w9_file_name: null,
+        updated_at: null,
+      },
+    ]);
+
+    const res = await request(app).get("/api/v1/contributor-tax/export");
+
+    expect(res.status).toBe(200);
+    const lines = res.text.trim().split("\n");
+    expect(lines[1]).toBe(`"${WALLET}","","","missing","",""`);
+  });
+
+  test("GET /export returns 500 with the standard error shape when the report query throws", async () => {
+    mockGetTaxComplianceReport.mockImplementation(() => {
+      throw new Error("db unavailable");
+    });
+
+    const res = await request(app).get("/api/v1/contributor-tax/export");
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBeDefined();
+  });
+});
+
 describe("Contributor Tax - Data Validation", () => {
   test("valid tax_status values are accepted", async () => {
     const statuses = ["not_collected", "pending", "completed", "exempt"];

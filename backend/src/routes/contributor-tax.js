@@ -43,6 +43,56 @@ const upload = multer({
 
 export const contributorTaxRouter = Router();
 
+/**
+ * GET /api/v1/contributor-tax/export
+ * CSV export of contributor payout/tax records for tax reporting (#741).
+ * Admin only — this covers all contributors, not a single wallet's own data.
+ *
+ * Registered before the `/:walletAddress` route below so the literal
+ * `/export` path isn't swallowed by that param route.
+ */
+function escapeCSVField(value) {
+  if (value === null || value === undefined) return '""';
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+contributorTaxRouter.get("/export", requireRole("admin"), (_req, res) => {
+  try {
+    const report = getTaxComplianceReport();
+
+    const headers = [
+      "Wallet Address",
+      "Tax Status",
+      "Tax ID",
+      "Compliance Status",
+      "W9 File Name",
+      "Updated At",
+    ];
+    const rows = [headers.map(escapeCSVField).join(",")];
+
+    for (const row of report) {
+      rows.push(
+        [
+          escapeCSVField(row.walletAddress),
+          escapeCSVField(row.tax_status),
+          escapeCSVField(row.tax_id),
+          escapeCSVField(row.compliance_status),
+          escapeCSVField(row.w9_file_name),
+          escapeCSVField(row.updated_at),
+        ].join(","),
+      );
+    }
+
+    const csvContent = rows.join("\n");
+
+    res.set("Content-Type", "text/csv; charset=utf-8");
+    res.set("Content-Disposition", `attachment; filename="contributor-tax-export.csv"`);
+    return res.status(200).send(csvContent);
+  } catch (err) {
+    sendError(res, 500, "export_generation_failed", "Failed to generate contributor tax export");
+  }
+});
+
 contributorTaxRouter.get("/:walletAddress", (req, res) => {
   try {
     const taxInfo = getContributorTax(req.params.walletAddress);
