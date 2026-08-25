@@ -162,6 +162,10 @@ Returns all registered collaborator addresses.
 
 Returns the basis-point share for a given collaborator address.
 
+### `is_collaborator(addr: Address) → bool`
+
+Returns `true` if `addr` is a registered collaborator, `false` otherwise. Unlike `get_share`/`get_collaborators`, this is safe to call before `initialize` — it returns `false` rather than panicking, so callers can use it as a quick existence check without a preceding `is_initialized` call.
+
 ### `update_wasm(wasm_hash: BytesN<32>)`
 
 Replaces the contract's executable WASM while preserving all instance storage (admin, collaborators, shares, balances, etc.). Requires admin authorization. The replacement Wasm must be uploaded to the network first via `stellar contract upload`; use the returned hash as `wasm_hash`.
@@ -205,6 +209,17 @@ stellar contract invoke \
   --network testnet \
   -- get_share \
   --collaborator GARTIST...
+```
+
+### Check whether an address is a registered collaborator
+
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --source anyone \
+  --network testnet \
+  -- is_collaborator \
+  --addr GARTIST...
 ```
 
 ### Upgrade contract WASM (admin only)

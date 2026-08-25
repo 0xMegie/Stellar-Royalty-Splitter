@@ -693,6 +693,55 @@ fn test_collaborator_count() {
     assert_eq!(client.collaborator_count(), 3);
 }
 
+/// Issue #746 — is_collaborator returns true for a registered collaborator
+/// and false for any address that was never registered.
+#[test]
+fn test_is_collaborator_known_and_unknown() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (_, client) = setup(&env);
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    client.initialize(&vec![&env, a.clone(), b.clone()], &vec![&env, 6000_u32, 4000_u32]);
+
+    assert!(client.is_collaborator(&a));
+    assert!(client.is_collaborator(&b));
+    assert!(!client.is_collaborator(&stranger));
+}
+
+/// Issue #746 — is_collaborator is safe to call before initialize: it
+/// returns false rather than panicking, unlike get_share/get_collaborators
+/// which expect the contract to already be initialized.
+#[test]
+fn test_is_collaborator_false_before_initialize() {
+    let env = Env::default();
+    let (_, client) = setup(&env);
+    let addr = Address::generate(&env);
+
+    assert!(!client.is_collaborator(&addr));
+}
+
+/// Issue #746 — after update_share swaps out a collaborator's role (share
+/// changes but identity doesn't), is_collaborator still reports the
+/// existing collaborator set correctly and does not report a share amount
+/// as if it were an address.
+#[test]
+fn test_is_collaborator_reflects_current_registration_only() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (_, client) = setup(&env);
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    client.initialize(&vec![&env, a.clone(), b.clone()], &vec![&env, 6000_u32, 4000_u32]);
+
+    client.update_share(&a, &7000_u32);
+    client.update_share(&b, &3000_u32);
+
+    assert!(client.is_collaborator(&a));
+    assert!(client.is_collaborator(&b));
+}
+
 #[test]
 #[should_panic]
 fn test_unauthorized_init_rejected() {
