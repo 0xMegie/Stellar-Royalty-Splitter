@@ -146,6 +146,29 @@ button:disabled {
 .status.error .freighter-link:hover {
   color: var(--text-primary);
 }
+/* Only applies when a retry button is actually present (#747) — scoped to
+   :has() so plain `.status.error` messages elsewhere are unaffected. */
+.status.error:has(.retry-btn) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.status.error .retry-btn {
+  flex-shrink: 0;
+  background: var(--error-dark);
+  color: #ffffff;
+  border: none;
+  padding: 0.35rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.status.error .retry-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .status.info {
   background: var(--accent-primary-light);
   color: var(--info);

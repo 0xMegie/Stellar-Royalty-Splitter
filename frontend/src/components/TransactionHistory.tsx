@@ -535,7 +535,19 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
         </div>
       )}
 
-      {error && <div className="error-message">{error}</div>}
+      {error && (
+        <div className="error-message" role="alert" data-testid="history-error">
+          <p>{error}</p>
+          <button
+            type="button"
+            className="retry-btn"
+            onClick={() => void fetchHistory(filters)}
+            disabled={loading}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {transactions.length === 0 && loading && (
         <>

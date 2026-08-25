@@ -1,22 +1,33 @@
 /**
  * Tests for TransactionHistory loading states (#714), transaction
- * lifecycle status display / refresh (#712), and filtering/search (#754).
+ * lifecycle status display / refresh (#712), filtering/search (#754), and
+ * the error retry action (#747).
  *
- * Note: `npm test` in this package currently points at a stale `react-scripts`
- * script left over from before the frontend moved to Vite; there is no
- * vitest/jest runner wired up yet, so this suite (like the other *.test.tsx
- * files here) cannot be executed as-is. Verified by manual trace against
- * TransactionHistory.tsx instead — see PR description for details.
+ * Run with `npx vitest run src/components/TransactionHistory.test.tsx` from
+ * frontend/ — this repo's other *.test.tsx files run the same way via Vitest.
  */
 
+import type { ComponentProps } from "react";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { describe, beforeEach, test, expect, vi } from "vitest";
 import { TransactionHistory } from "./TransactionHistory";
+import { NetworkProvider } from "../context/NetworkContext";
 
 vi.mock("../api");
 
 import { api } from "../api";
+
+// TransactionHistory reads network state via useNetwork(), so every render
+// needs a NetworkProvider ancestor (jsdom has no window.freighter, so
+// NetworkProvider's Freighter polling is a harmless no-op here).
+function renderHistory(props: ComponentProps<typeof TransactionHistory>) {
+  return render(
+    <NetworkProvider>
+      <TransactionHistory {...props} />
+    </NetworkProvider>,
+  );
+}
 
 const mockGetTransactionHistory = api.getTransactionHistory as any;
 const mockConfirmTransaction = api.confirmTransaction as any;
@@ -40,7 +51,44 @@ const mockTransactions = [
 ];
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
+});
+
+describe("TransactionHistory error retry (#747)", () => {
+  test("shows an error message with a Retry button when the fetch fails", async () => {
+    mockGetTransactionHistory.mockRejectedValueOnce(new Error("Network error"));
+    renderHistory({ contractId: MOCK_CONTRACT });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-error")).toBeTruthy();
+    });
+    expect(screen.getByText("Network error")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeTruthy();
+    // The skeleton isn't shown alongside the error state.
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  test("re-fetches and clears the error when Retry is clicked", async () => {
+    mockGetTransactionHistory.mockRejectedValueOnce(new Error("Network error"));
+    renderHistory({ contractId: MOCK_CONTRACT });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-error")).toBeTruthy();
+    });
+
+    mockGetTransactionHistory.mockResolvedValueOnce({
+      success: true,
+      data: mockTransactions,
+      pagination: { limit: 50, offset: 0, total: 1 },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("history-error")).toBeNull();
+      expect(screen.getByText(/Showing/i)).toBeTruthy();
+    });
+    expect(mockGetTransactionHistory).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("TransactionHistory loading states", () => {
@@ -50,9 +98,7 @@ describe("TransactionHistory loading states", () => {
         /* never resolves */
       }),
     );
-    const { container } = render(
-      <TransactionHistory contractId={MOCK_CONTRACT} />,
-    );
+    const { container } = renderHistory({ contractId: MOCK_CONTRACT });
 
     expect(container.querySelectorAll(".list-skeleton-item").length).toBe(5);
     expect(screen.getByRole("status")).toBeTruthy();
@@ -65,7 +111,7 @@ describe("TransactionHistory loading states", () => {
       pagination: { limit: 50, offset: 0, total: 1 },
     });
 
-    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+    renderHistory({ contractId: MOCK_CONTRACT });
 
     expect(screen.getByRole("status")).toBeTruthy();
 
@@ -83,7 +129,7 @@ describe("TransactionHistory loading states", () => {
       pagination: { limit: 50, offset: 0, total: 0 },
     });
 
-    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+    renderHistory({ contractId: MOCK_CONTRACT });
 
     await waitFor(() => {
       expect(screen.getByTestId("history-empty-state")).toBeTruthy();
@@ -99,7 +145,7 @@ describe("TransactionHistory loading states", () => {
       pagination: { limit: 50, offset: 0, total: 1 },
     });
 
-    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+    renderHistory({ contractId: MOCK_CONTRACT });
 
     await waitFor(() => {
       expect(screen.getByText(/Showing/i)).toBeTruthy();
@@ -161,7 +207,7 @@ describe("TransactionHistory filtering and search (#754)", () => {
   });
 
   it("filters displayed rows by searching a transaction ID", async () => {
-    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+    renderHistory({ contractId: MOCK_CONTRACT });
 
     await waitFor(() => expect(screen.getByText(/Showing/i)).toBeTruthy());
 
@@ -178,7 +224,7 @@ describe("TransactionHistory filtering and search (#754)", () => {
   });
 
   it("filters displayed rows by collaborator address search", async () => {
-    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+    renderHistory({ contractId: MOCK_CONTRACT });
 
     await waitFor(() => expect(screen.getByText(/Showing/i)).toBeTruthy());
 
@@ -195,7 +241,7 @@ describe("TransactionHistory filtering and search (#754)", () => {
   });
 
   it("resets search, token, category and sort state on 'Reset all filters'", async () => {
-    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+    renderHistory({ contractId: MOCK_CONTRACT });
 
     await waitFor(() => expect(screen.getByText(/Showing/i)).toBeTruthy());
 
@@ -245,7 +291,7 @@ describe("TransactionHistory lifecycle status (#712)", () => {
       pagination: { limit: 50, offset: 0, total: 1 },
     });
 
-    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+    renderHistory({ contractId: MOCK_CONTRACT });
 
     await waitFor(() => {
       expect(screen.getByText("Delayed")).toBeTruthy();
@@ -259,7 +305,7 @@ describe("TransactionHistory lifecycle status (#712)", () => {
       pagination: { limit: 50, offset: 0, total: 1 },
     });
 
-    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+    renderHistory({ contractId: MOCK_CONTRACT });
 
     await waitFor(() => {
       expect(screen.getByText("pending")).toBeTruthy();
@@ -278,7 +324,7 @@ describe("TransactionHistory lifecycle status (#712)", () => {
       pagination: { limit: 50, offset: 0, total: 1 },
     });
 
-    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+    renderHistory({ contractId: MOCK_CONTRACT });
 
     await waitFor(() => {
       expect(screen.getByText("Unknown")).toBeTruthy();
@@ -292,7 +338,7 @@ describe("TransactionHistory lifecycle status (#712)", () => {
       pagination: { limit: 50, offset: 0, total: 2 },
     });
 
-    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+    renderHistory({ contractId: MOCK_CONTRACT });
 
     await waitFor(() => {
       expect(screen.getByText(/Showing/i)).toBeTruthy();
@@ -322,7 +368,7 @@ describe("TransactionHistory lifecycle status (#712)", () => {
       message: "Transaction def456... marked as confirmed",
     });
 
-    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+    renderHistory({ contractId: MOCK_CONTRACT });
 
     await waitFor(() => {
       expect(screen.getByText(/Showing/i)).toBeTruthy();
@@ -358,7 +404,7 @@ describe("TransactionHistory lifecycle status (#712)", () => {
       new Error("Transaction not confirmed within 60000ms"),
     );
 
-    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+    renderHistory({ contractId: MOCK_CONTRACT });
 
     await waitFor(() => {
       expect(screen.getByText(/Showing/i)).toBeTruthy();

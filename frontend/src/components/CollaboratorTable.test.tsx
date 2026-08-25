@@ -134,6 +134,27 @@ describe("CollaboratorTable", () => {
     });
   });
 
+  it("shows a Retry button on error and re-fetches when clicked (#747)", async () => {
+    mockGetCollaborators.mockRejectedValueOnce(new Error("Network error"));
+    render(<CollaboratorTable contractId={MOCK_CONTRACT} refreshKey={0} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Network error")).toBeTruthy();
+    });
+
+    const retryButton = screen.getByRole("button", { name: /retry/i });
+    expect(retryButton).toBeTruthy();
+
+    mockGetCollaborators.mockResolvedValueOnce(mockCollaborators);
+    fireEvent.click(retryButton);
+
+    await waitFor(() => {
+      expect(screen.queryByText("Network error")).toBeNull();
+      expect(screen.getByText("Collaborators")).toBeTruthy();
+    });
+    expect(mockGetCollaborators).toHaveBeenCalledTimes(2);
+  });
+
   it("shows empty message when no collaborators exist", async () => {
     mockGetCollaborators.mockResolvedValue([]);
     render(

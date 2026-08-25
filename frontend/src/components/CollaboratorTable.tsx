@@ -96,6 +96,9 @@ export default function CollaboratorTable({ contractId, refreshKey }: Props) {
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // Bumped by the error state's Retry button to re-run the fetch effect
+  // below without requiring the parent to change `refreshKey` (#747).
+  const [retryCount, setRetryCount] = useState(0);
   const [sort, setSort] = useState<SortKey>("share");
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -166,7 +169,7 @@ export default function CollaboratorTable({ contractId, refreshKey }: Props) {
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [contractId, refreshKey]);
+  }, [contractId, refreshKey, retryCount]);
 
   /* ── Debounced search ────────────────────────────────────────────────── */
   useEffect(() => {
@@ -241,7 +244,19 @@ export default function CollaboratorTable({ contractId, refreshKey }: Props) {
         <TableSkeleton rows={5} columns={3} label="Loading collaborators…" />
       </div>
     );
-  if (error) return <div className="card status error">{error}</div>;
+  if (error)
+    return (
+      <div className="card status error" role="alert" data-testid="collaborators-error">
+        <p>{error}</p>
+        <button
+          type="button"
+          className="retry-btn"
+          onClick={() => setRetryCount((n) => n + 1)}
+        >
+          Retry
+        </button>
+      </div>
+    );
   if (!collaborators.length)
     return (
       <div className="card">
