@@ -166,6 +166,21 @@ pm2 logs royalty-api | grep "duration"
 sqlite3 /var/data/audit.db "VACUUM;"
 ```
 
+### Debugging with Correlation IDs
+
+The API generates a unique Correlation ID for every request to trace it across the system. This ID is included in:
+1. The HTTP response headers (`X-Correlation-ID`)
+2. All backend logs associated with that request
+3. Frontend error messages
+
+When a user reports an issue, ask them for the Correlation ID displayed in the error message (or network tab). You can then trace the exact request flow in the logs:
+
+```bash
+# Search logs for a specific request
+pm2 logs royalty-api | grep "<correlation-id>"
+# For JSON logs, search for the correlationId field
+```
+
 ### Snapshot Job Failures
 
 ```bash

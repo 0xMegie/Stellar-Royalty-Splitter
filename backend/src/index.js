@@ -2,7 +2,8 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
-import logger from "./logger.js";
+import logger, { asyncLocalStorage } from "./logger.js";
+import crypto from "crypto";
 import { resolveCorsOrigin } from "./cors-config.js";
 import { initializeRouter } from "./routes/initialize.js";
 import { distributeRouter } from "./routes/distribute.js";
@@ -55,23 +56,29 @@ initializeSigningKey();
 
 const app = express();
 
+// Request correlation ID and logging middleware
+app.use((req, res, next) => {
+  const correlationId = req.headers["x-correlation-id"] || crypto.randomUUID();
+  res.setHeader("X-Correlation-ID", correlationId);
+  req.correlationId = correlationId;
+
+  asyncLocalStorage.run({ correlationId }, () => {
+    const start = Date.now();
+    res.on("finish", () => {
+      const duration = Date.now() - start;
+      logger.info(`${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`, {
+        method: req.method,
+        path: req.originalUrl,
+        status: res.statusCode,
+        duration,
+      });
+    });
+    next();
+  });
+});
+
 // Reject new incoming requests during graceful shutdown (#701)
 app.use(shutdownMiddleware);
-
-// Request logging middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    logger.info(`${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`, {
-      method: req.method,
-      path: req.originalUrl,
-      status: res.statusCode,
-      duration,
-    });
-  });
-  next();
-});
 
 // Security headers
 app.use(helmet());

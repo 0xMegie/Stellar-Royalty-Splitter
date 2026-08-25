@@ -32,17 +32,22 @@ async function readJson(res: Response): Promise<unknown> {
   }
 }
 
-function getErrorMessage(data: unknown, status: number) {
+function getErrorMessage(data: unknown, status: number, correlationId?: string | null) {
+  let msg = `Request failed (${status})`;
   if (
     data &&
     typeof data === "object" &&
     "error" in data &&
     typeof data.error === "string"
   ) {
-    return data.error;
+    msg = data.error;
   }
 
-  return `Request failed (${status})`;
+  if (correlationId) {
+    msg += ` (Correlation ID: ${correlationId})`;
+  }
+
+  return msg;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -59,7 +64,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return data as T;
   }
 
-  throw new Error(getErrorMessage(data, res.status));
+  const correlationId = res.headers.get("x-correlation-id");
+  throw new Error(getErrorMessage(data, res.status, correlationId));
 }
 
 // #279: surface a structured `code + message + details` shape from
@@ -72,27 +78,35 @@ export class BackendApiError extends Error {
   code: string | number | null;
   details?: string;
   status: number;
+  correlationId?: string | null;
   constructor(
     status: number,
     code: string | number | null,
     message: string,
     details?: string,
+    correlationId?: string | null,
   ) {
     super(message);
     this.name = "BackendApiError";
     this.status = status;
     this.code = code;
     this.details = details;
+    this.correlationId = correlationId;
   }
 }
 
-export function readErrorBody(status: number, data: unknown): BackendApiError {
+export function readErrorBody(status: number, data: unknown, correlationId?: string | null): BackendApiError {
   const parsed = extractContractError(data ?? { error: "Request failed" });
+  let msg = parsed.message;
+  if (correlationId) {
+    msg += ` (Correlation ID: ${correlationId})`;
+  }
   return new BackendApiError(
     status,
     parsed.code,
-    parsed.message,
+    msg,
     parsed.details,
+    correlationId,
   );
 }
 
