@@ -6,7 +6,8 @@ use soroban_sdk::{
     vec, Address, BytesN, Env, IntoVal, Map, String, TryFromVal, Val, Vec as SorobanVec,
 };
 use stellar_royalty_splitter::{
-    auth, ContractError, DataKey, Recipient, RoyaltySplitterClient, StorageKey, MIN_TTL, VERSION,
+    auth, ContractError, DataKey, OperationType, Recipient, RoyaltySplitterClient, StorageKey,
+    MIN_TTL, VERSION,
 };
 
 fn setup(env: &Env) -> (Address, RoyaltySplitterClient) {
@@ -5758,4 +5759,176 @@ fn test_invariant_shares_unchanged_after_distribution() {
             "share total diverged from 10 000 after distribution (shares {shares:?})"
         );
     }
+}
+
+// ─── Operation-level pause (#749) ──────────────────────────────────────────
+
+/// Pausing only PrimaryDistribution blocks distribute() but leaves
+/// distribute_secondary_royalties() working.
+#[test]
+fn test_pause_primary_only_blocks_primary_distribution() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+    mint(&env, &token, &contract_id, 1000);
+
+    // Record secondary royalties so the secondary path has something to pay out.
+    let pool_amount: i128 = 500;
+    mint(&env, &token, &admin, pool_amount);
+    client.record_secondary_royalty(&token, &admin, &pool_amount);
+
+    client.pause_operation(&OperationType::PrimaryDistribution);
+    assert!(client.is_operation_paused(&OperationType::PrimaryDistribution));
+    assert!(!client.is_operation_paused(&OperationType::SecondaryDistribution));
+    assert!(!client.is_paused(), "global pause flag must be untouched");
+
+    // Primary distribution is blocked.
+    let result = client.try_distribute(&token);
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+
+    // Secondary distribution still works.
+    client.distribute_secondary_royalties();
+    assert_eq!(TokenClient::new(&env, &token).balance(&admin), 250);
+    assert_eq!(TokenClient::new(&env, &token).balance(&b), 250);
+}
+
+/// Pausing only SecondaryDistribution blocks distribute_secondary_royalties()
+/// but leaves distribute() working.
+#[test]
+fn test_pause_secondary_only_blocks_secondary_distribution() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+    mint(&env, &token, &contract_id, 1000);
+
+    let pool_amount: i128 = 500;
+    mint(&env, &token, &admin, pool_amount);
+    client.record_secondary_royalty(&token, &admin, &pool_amount);
+
+    client.pause_operation(&OperationType::SecondaryDistribution);
+    assert!(client.is_operation_paused(&OperationType::SecondaryDistribution));
+    assert!(!client.is_operation_paused(&OperationType::PrimaryDistribution));
+    assert!(!client.is_paused(), "global pause flag must be untouched");
+
+    // Secondary distribution is blocked.
+    let result = client.try_distribute_secondary_royalties();
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+
+    // Primary distribution still works.
+    client.distribute(&token);
+    assert_eq!(TokenClient::new(&env, &token).balance(&admin), 500);
+    assert_eq!(TokenClient::new(&env, &token).balance(&b), 500);
+}
+
+/// unpause_operation re-enables a specific operation after pause_operation.
+#[test]
+fn test_unpause_operation_reenables_distribution() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+    mint(&env, &token, &contract_id, 1000);
+
+    client.pause_operation(&OperationType::PrimaryDistribution);
+    let blocked = client.try_distribute(&token);
+    assert_eq!(blocked, Err(Ok(ContractError::ContractPaused)));
+
+    client.unpause_operation(&OperationType::PrimaryDistribution);
+    assert!(!client.is_operation_paused(&OperationType::PrimaryDistribution));
+
+    client.distribute(&token);
+    assert_eq!(TokenClient::new(&env, &token).balance(&admin), 500);
+    assert_eq!(TokenClient::new(&env, &token).balance(&b), 500);
+}
+
+/// Backward compatibility: the existing global pause() still blocks BOTH
+/// operations even when neither per-operation pause is set.
+#[test]
+fn test_global_pause_still_blocks_both_operations() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+    mint(&env, &token, &contract_id, 1000);
+
+    let pool_amount: i128 = 500;
+    mint(&env, &token, &admin, pool_amount);
+    client.record_secondary_royalty(&token, &admin, &pool_amount);
+
+    // Neither per-operation pause is set...
+    assert!(!client.is_operation_paused(&OperationType::PrimaryDistribution));
+    assert!(!client.is_operation_paused(&OperationType::SecondaryDistribution));
+
+    // ...but the global pause still blocks both, unchanged from prior behavior.
+    client.pause();
+
+    let primary_result = client.try_distribute(&token);
+    assert_eq!(primary_result, Err(Ok(ContractError::ContractPaused)));
+
+    let secondary_result = client.try_distribute_secondary_royalties();
+    assert_eq!(secondary_result, Err(Ok(ContractError::ContractPaused)));
+
+    client.unpause();
+    client.distribute(&token);
+    client.distribute_secondary_royalties();
+}
+
+/// pause_operation/unpause_operation require admin authorization, matching
+/// the existing pause()/unpause() auth rules.
+#[test]
+#[should_panic]
+fn test_pause_operation_requires_admin_auth() {
+    let env = Env::default();
+    // No mock_all_auths — require_auth() must reject non-admin callers.
+    let (_, client) = setup(&env);
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    env.mock_all_auths_allowing_non_root_auth();
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    // Clear auths so the next call has no authorization
+    env.mock_auths(&[]);
+    client.pause_operation(&OperationType::PrimaryDistribution);
 }
