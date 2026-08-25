@@ -9,6 +9,9 @@
 // once on boot) so a typo can't silence the whole app.
 
 import winston from "winston";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+export const asyncLocalStorage = new AsyncLocalStorage();
 
 const VALID_LEVELS = ["error", "warn", "info", "debug"];
 const DEFAULT_LEVEL = "info";
@@ -22,9 +25,18 @@ export function resolveLevel(rawLevel = process.env.LOG_LEVEL) {
 
 const resolvedLevel = resolveLevel();
 
+const correlationIdFormat = winston.format((info) => {
+  const store = asyncLocalStorage.getStore();
+  if (store && store.correlationId) {
+    info.correlationId = store.correlationId;
+  }
+  return info;
+});
+
 const logger = winston.createLogger({
   level: resolvedLevel,
   format: winston.format.combine(
+    correlationIdFormat(),
     winston.format.timestamp(),
     winston.format.errors({ stack: true }),
     winston.format.json(),
