@@ -1,6 +1,6 @@
 /**
- * Tests for TransactionHistory loading states (#714) and transaction
- * lifecycle status display / refresh (#712).
+ * Tests for TransactionHistory loading states (#714), transaction
+ * lifecycle status display / refresh (#712), and filtering/search (#754).
  *
  * Note: `npm test` in this package currently points at a stale `react-scripts`
  * script left over from before the frontend moved to Vite; there is no
@@ -121,6 +121,100 @@ describe("TransactionHistory loading states", () => {
     // The already-loaded table stays put; no skeleton replaces it.
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.getByText(/Showing/i)).toBeTruthy();
+  });
+});
+
+describe("TransactionHistory filtering and search (#754)", () => {
+  const txA = {
+    id: 10,
+    txHash: "txhashaaa",
+    contractId: MOCK_CONTRACT,
+    type: "distribute" as const,
+    initiatorAddress: "GALICE0000000000000000000000000000000000000000",
+    requestedAmount: "1000",
+    tokenId: "native",
+    timestamp: new Date("2026-01-01T00:00:00Z").toISOString(),
+    blockTime: new Date("2026-01-01T00:00:00Z").toISOString(),
+    status: "confirmed" as const,
+    errorMessage: null,
+  };
+  const txB = {
+    id: 11,
+    txHash: "txhashbbb",
+    contractId: MOCK_CONTRACT,
+    type: "secondary_distribute" as const,
+    initiatorAddress: "GBOB0000000000000000000000000000000000000000000",
+    requestedAmount: "5000",
+    tokenId: "USDC",
+    timestamp: new Date("2026-02-01T00:00:00Z").toISOString(),
+    blockTime: new Date("2026-02-01T00:00:00Z").toISOString(),
+    status: "confirmed" as const,
+    errorMessage: null,
+  };
+
+  beforeEach(() => {
+    mockGetTransactionHistory.mockResolvedValue({
+      success: true,
+      data: [txA, txB],
+      pagination: { limit: 10, offset: 0, total: 2 },
+    });
+  });
+
+  it("filters displayed rows by searching a transaction ID", async () => {
+    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+
+    await waitFor(() => expect(screen.getByText(/Showing/i)).toBeTruthy());
+
+    fireEvent.click(screen.getByText("Filters"));
+    const searchInput = screen.getByLabelText(
+      "Search by transaction ID or collaborator address",
+    );
+    fireEvent.change(searchInput, { target: { value: "txhashaaa" } });
+
+    await waitFor(() => {
+      expect(screen.getByText("txhashaaa".slice(0, 6), { exact: false })).toBeTruthy();
+    });
+    expect(screen.queryByText("txhashbbb".slice(0, 6), { exact: false })).toBeNull();
+  });
+
+  it("filters displayed rows by collaborator address search", async () => {
+    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+
+    await waitFor(() => expect(screen.getByText(/Showing/i)).toBeTruthy());
+
+    fireEvent.click(screen.getByText("Filters"));
+    const searchInput = screen.getByLabelText(
+      "Search by transaction ID or collaborator address",
+    );
+    fireEvent.change(searchInput, { target: { value: "GBOB" } });
+
+    await waitFor(() => {
+      expect(screen.getByTitle(txB.initiatorAddress)).toBeTruthy();
+    });
+    expect(screen.queryByTitle(txA.initiatorAddress)).toBeNull();
+  });
+
+  it("resets search, token, category and sort state on 'Reset all filters'", async () => {
+    render(<TransactionHistory contractId={MOCK_CONTRACT} />);
+
+    await waitFor(() => expect(screen.getByText(/Showing/i)).toBeTruthy());
+
+    fireEvent.click(screen.getByText("Filters"));
+    const searchInput = screen.getByLabelText(
+      "Search by transaction ID or collaborator address",
+    );
+    fireEvent.change(searchInput, { target: { value: "GBOB" } });
+
+    await waitFor(() => {
+      expect(screen.queryByTitle(txA.initiatorAddress)).toBeNull();
+    });
+
+    fireEvent.click(screen.getByText("Reset all filters"));
+
+    await waitFor(() => {
+      expect(screen.getByTitle(txA.initiatorAddress)).toBeTruthy();
+      expect(screen.getByTitle(txB.initiatorAddress)).toBeTruthy();
+    });
   });
 });
 

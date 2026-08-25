@@ -586,6 +586,108 @@ export async function retryBuildTx(callerAddress, contractId, method, args = [])
   }
 }
 
+// ── Batch transaction builder (#759) ───────────────────────────────────────
+
+/**
+ * Collects multiple contract-invocation operations for a single caller and
+ * builds them into an array of unsigned transaction XDRs, fetching the
+ * caller's account/sequence number and the recommended fee only once for
+ * the whole batch instead of once per operation.
+ *
+ * This does NOT combine operations into one multi-operation transaction —
+ * each Soroban contract call still needs its own transaction to simulate and
+ * submit independently, and a failure in one must not block the others. The
+ * win is collapsing the N sequential `getAccount` / fee-estimation RPC round
+ * trips of `buildTx` into one round trip for the whole group, then assigning
+ * consecutive sequence numbers locally.
+ *
+ * Respects the same per-address build lock as `buildTx` (#294): the entire
+ * batch runs under one lock acquisition so a concurrent single `distribute`
+ * call for the same wallet can't interleave and reuse a sequence number.
+ *
+ * Batch size is capped by the caller via the `batchDistributeSchema` Zod
+ * schema (MAX_BATCH_OPERATIONS = 50) — the class itself does not enforce a
+ * limit, it only builds what it's given.
+ */
+export class BatchTransactionBuilder {
+  constructor(callerAddress) {
+    this.callerAddress = callerAddress;
+    this.operations = [];
+  }
+
+  /**
+   * Queue one contract invocation. `method` and `args` follow the same
+   * shape as `buildTx`/`retryBuildTx`.
+   */
+  add({ contractId, method, args = [] }) {
+    this.operations.push({ contractId, method, args });
+    return this;
+  }
+
+  /**
+   * Build unsigned XDRs for every queued operation.
+   *
+   * Returns an array aligned index-for-index with the operations added via
+   * `.add()`. Each entry is either `{ ok: true, xdr }` on success or
+   * `{ ok: false, error }` on failure — one bad operation (e.g. a contract
+   * that fails simulation) does not abort the rest of the batch, so callers
+   * get partial results rather than losing already-valid XDRs.
+   */
+  async build() {
+    if (this.operations.length === 0) {
+      return [];
+    }
+
+    return withAccountBuildLock(this.callerAddress, async () => {
+      // Fetched once for the whole batch — the core savings over calling
+      // buildTx() per operation, which each re-fetch the account.
+      const baseAccount = await getFreshAccount(this.callerAddress);
+      const fee = await getRecommendedFee();
+
+      const results = [];
+      let sequenceOffset = 0;
+
+      for (const op of this.operations) {
+        try {
+          // Assign each transaction the next sequence number locally rather
+          // than re-fetching from the network, since these transactions are
+          // built (not yet submitted) in the same batch.
+          const account = new Account(
+            baseAccount.accountId(),
+            (BigInt(baseAccount.sequenceNumber()) + BigInt(sequenceOffset)).toString()
+          );
+          sequenceOffset += 1;
+
+          const contract = new Contract(op.contractId);
+          const tx = new TransactionBuilder(account, {
+            fee,
+            networkPassphrase,
+          })
+            .addOperation(contract.call(op.method, ...op.args))
+            .setTimeout(30)
+            .build();
+
+          const prepared = await withTimeout(
+            server.prepareTransaction(tx),
+            SOROBAN_RPC_TIMEOUT_MS,
+            "Soroban prepareTransaction"
+          );
+
+          results.push({ ok: true, xdr: prepared.toXDR() });
+        } catch (error) {
+          const parsed = parseSorobanError(error);
+          results.push({
+            ok: false,
+            error: parsed ?? { status: 500, message: error.message ?? "Unknown batch build error" },
+          });
+        }
+      }
+
+      return results;
+    });
+  }
+}
+
 // ── ScVal helpers ────────────────────────────────────────────────────────
 
 export function addressToScVal(addr) {
