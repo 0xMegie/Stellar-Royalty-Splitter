@@ -48,6 +48,28 @@
   }
 }
 
+.contract-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.contract-selector label {
+  font-size: 0.85rem;
+  color: var(--muted-text-color, #718096);
+  font-weight: 500;
+}
+
+.contract-selector select {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #cbd5e0);
+  background: var(--card-bg, #fff);
+  color: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
 .refresh-dashboard-btn {
   background: var(--button-secondary-bg, #edf2f7);
   color: var(--button-secondary-text, #2d3748);
