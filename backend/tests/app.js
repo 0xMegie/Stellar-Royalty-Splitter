@@ -3,6 +3,7 @@ import express from "express";
 import { createBodySizeLimiters } from "../src/body-size-limit.js";
 import { initializeRouter } from "../src/routes/initialize.js";
 import { distributeRouter } from "../src/routes/distribute.js";
+import { batchDistributeRouter } from "../src/routes/batch-distribute.js";
 import { collaboratorsRouter } from "../src/routes/collaborators.js";
 import { simulateRouter } from "../src/routes/simulate.js";
 import { metricsRouter } from "../src/routes/metrics.js";
@@ -15,6 +16,7 @@ app.use(...createBodySizeLimiters());
 
 app.use("/api/v1/initialize", initializeRouter);
 app.use("/api/v1/distribute", distributeRouter);
+app.use("/api/v1/batch-distribute", batchDistributeRouter);
 app.use("/api/v1/collaborators", collaboratorsRouter);
 app.use("/api/v1/simulate", simulateRouter);
 app.use("/metrics", metricsRouter);

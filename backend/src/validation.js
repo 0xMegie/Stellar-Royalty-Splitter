@@ -56,6 +56,28 @@ export const distributeSchema = z.object({
   amount: amountSchema.optional(),
 });
 
+// Soroban simulation footprint limits the practical size of a single ledger
+// entry write set — 50 operations per batch keeps each request well within
+// that limit (#759).
+export const MAX_BATCH_OPERATIONS = 50;
+
+export const batchDistributeSchema = z.object({
+  walletAddress: stellarAddress,
+  operations: z
+    .array(
+      z.object({
+        contractId: contractAddress,
+        tokenId: contractAddress,
+        amount: amountSchema.optional(),
+      })
+    )
+    .min(1, "operations array must be non-empty")
+    .max(
+      MAX_BATCH_OPERATIONS,
+      `operations array must not exceed ${MAX_BATCH_OPERATIONS} entries`
+    ),
+});
+
 export const setRoyaltyRateSchema = z.object({
   contractId: contractAddress,
   walletAddress: stellarAddress,

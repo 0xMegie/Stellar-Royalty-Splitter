@@ -6,6 +6,7 @@ import logger from "./logger.js";
 import { resolveCorsOrigin } from "./cors-config.js";
 import { initializeRouter } from "./routes/initialize.js";
 import { distributeRouter } from "./routes/distribute.js";
+import { batchDistributeRouter } from "./routes/batch-distribute.js";
 import { collaboratorsRouter } from "./routes/collaborators.js";
 import { secondaryRoyaltyRouter } from "./routes/secondary-royalty.js";
 import { simulateRouter } from "./routes/simulate.js";
@@ -237,6 +238,7 @@ app.use((req, res, next) => {
 // Apply write limiter to mutating endpoints
 app.use("/api/v1/initialize", writeLimiter);
 app.use("/api/v1/distribute", writeLimiter);
+app.use("/api/v1/batch-distribute", writeLimiter);
 app.use("/api/v1/secondary-royalty", writeLimiter);
 app.use("/api/v1/webhooks", writeLimiter);
 app.use("/api/v1/onboarding", writeLimiter);
@@ -252,10 +254,12 @@ app.use("/api/v1/audit", readLimiter);
 // Set SIGNATURE_VERIFICATION_ENABLED=false to log-only during rollout.
 app.use("/api/v1/initialize", verifySignatureMiddleware);
 app.use("/api/v1/distribute", verifySignatureMiddleware);
+app.use("/api/v1/batch-distribute", verifySignatureMiddleware);
 app.use("/api/v1/secondary-royalty", verifySignatureMiddleware);
 
 app.use("/api/v1/initialize", initializeRouter);
 app.use("/api/v1/distribute", distributeRouter);
+app.use("/api/v1/batch-distribute", batchDistributeRouter);
 app.use("/api/v1/collaborators", collaboratorsRouter);
 app.use("/api/v1/secondary-royalty", secondaryRoyaltyRouter);
 app.use("/api/v1/simulate", simulateRouter);
