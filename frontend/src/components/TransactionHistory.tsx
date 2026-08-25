@@ -28,6 +28,16 @@ const DEFAULT_FILTERS: HistoryFilters = {
   endDate: "",
 };
 
+type SortField = "timestamp" | "amount" | "initiator";
+type SortDirection = "asc" | "desc";
+
+const CATEGORY_OPTIONS: { value: "" | "primary" | "secondary" | "batch"; label: string }[] = [
+  { value: "", label: "All categories" },
+  { value: "primary", label: "Primary" },
+  { value: "secondary", label: "Secondary" },
+  { value: "batch", label: "Batch" },
+];
+
 export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   contractId,
   selectedTxHash: propSelectedTxHash,
@@ -60,6 +70,14 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   const [pendingFilters, setPendingFilters] = useState<HistoryFilters>(DEFAULT_FILTERS);
   const [showFilterPanel, setShowFilterPanel] = useState(false);
 
+  // Client-side search/token/category/sort (#754): applied in memory over the
+  // fetched page, on top of the server-side date/type/recipient filters above.
+  const [searchQuery, setSearchQuery] = useState("");
+  const [tokenFilter, setTokenFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<"" | "primary" | "secondary" | "batch">("");
+  const [sortField, setSortField] = useState<SortField>("timestamp");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
   const LIMIT = 10;
 
   const activeTxHash = propSelectedTxHash !== undefined ? propSelectedTxHash : localSelectedTxHash;
@@ -68,7 +86,10 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
     filters.type !== "" ||
     filters.recipient !== "" ||
     filters.startDate !== "" ||
-    filters.endDate !== "";
+    filters.endDate !== "" ||
+    searchQuery !== "" ||
+    tokenFilter !== "" ||
+    categoryFilter !== "";
 
   function handleSelectTxHash(hash: string | null) {
     if (onSelectTxHash) {
@@ -138,8 +159,62 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   function resetFilters() {
     setPendingFilters(DEFAULT_FILTERS);
     setFilters(DEFAULT_FILTERS);
+    setSearchQuery("");
+    setTokenFilter("");
+    setCategoryFilter("");
+    setSortField("timestamp");
+    setSortDirection("desc");
     setOffset(0);
   }
+
+  const isBatch = (tx: TransactionRecord) => (tx.payoutCount ?? 0) > 1;
+  const isSecondaryTx = (type: string) => type.startsWith("secondary_");
+
+  function matchesCategory(tx: TransactionRecord, category: "" | "primary" | "secondary" | "batch") {
+    if (!category) return true;
+    if (category === "batch") return isBatch(tx);
+    if (category === "secondary") return isSecondaryTx(tx.type);
+    return !isSecondaryTx(tx.type);
+  }
+
+  function matchesSearch(tx: TransactionRecord, query: string) {
+    if (!query) return true;
+    const q = query.trim().toLowerCase();
+    return (
+      (tx.txHash ?? "").toLowerCase().includes(q) ||
+      String(tx.id).toLowerCase().includes(q) ||
+      tx.initiatorAddress.toLowerCase().includes(q)
+    );
+  }
+
+  function matchesToken(tx: TransactionRecord, token: string) {
+    if (!token) return true;
+    return (tx.tokenId ?? "").toLowerCase().includes(token.trim().toLowerCase());
+  }
+
+  function sortTransactions(txs: TransactionRecord[]): TransactionRecord[] {
+    const dir = sortDirection === "asc" ? 1 : -1;
+    return [...txs].sort((a, b) => {
+      if (sortField === "amount") {
+        const av = Number(a.requestedAmount ?? 0);
+        const bv = Number(b.requestedAmount ?? 0);
+        return (av - bv) * dir;
+      }
+      if (sortField === "initiator") {
+        return a.initiatorAddress.localeCompare(b.initiatorAddress) * dir;
+      }
+      return (new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()) * dir;
+    });
+  }
+
+  const displayedTransactions = sortTransactions(
+    transactions.filter(
+      (tx) =>
+        matchesCategory(tx, categoryFilter) &&
+        matchesSearch(tx, searchQuery) &&
+        matchesToken(tx, tokenFilter),
+    ),
+  );
 
   function filterByDateRange(
     txs: TransactionRecord[],
@@ -341,6 +416,71 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                 }
               />
             </label>
+
+            <label className="filter-label">
+              Category
+              <select
+                className="filter-select"
+                value={categoryFilter}
+                onChange={(e) =>
+                  setCategoryFilter(e.target.value as typeof categoryFilter)
+                }
+              >
+                {CATEGORY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="filter-label">
+              Token
+              <input
+                type="text"
+                className="filter-input"
+                placeholder="e.g. native, USDC…"
+                value={tokenFilter}
+                onChange={(e) => setTokenFilter(e.target.value)}
+              />
+            </label>
+
+            <label className="filter-label">
+              Search
+              <input
+                type="text"
+                className="filter-input"
+                placeholder="Transaction ID or collaborator address…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                aria-label="Search by transaction ID or collaborator address"
+              />
+            </label>
+
+            <label className="filter-label">
+              Sort by
+              <select
+                className="filter-select"
+                value={sortField}
+                onChange={(e) => setSortField(e.target.value as SortField)}
+              >
+                <option value="timestamp">Date</option>
+                <option value="amount">Amount</option>
+                <option value="initiator">Collaborator</option>
+              </select>
+            </label>
+
+            <label className="filter-label">
+              Direction
+              <select
+                className="filter-select"
+                value={sortDirection}
+                onChange={(e) => setSortDirection(e.target.value as SortDirection)}
+              >
+                <option value="desc">Descending</option>
+                <option value="asc">Ascending</option>
+              </select>
+            </label>
           </div>
 
           <div className="filter-actions">
@@ -404,6 +544,12 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
         </>
       )}
 
+      {transactions.length > 0 && displayedTransactions.length === 0 && !loading && (
+        <div className="empty-state" data-testid="history-empty-state">
+          No transactions match the active filters.
+        </div>
+      )}
+
       {transactions.length === 0 && !loading && (
         <div className="empty-state" data-testid="history-empty-state">
           {hasActiveFilters
@@ -412,7 +558,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
         </div>
       )}
 
-      {transactions.length > 0 && (
+      {transactions.length > 0 && displayedTransactions.length > 0 && (
         <>
           <div className="transactions-table">
             <table>
@@ -427,7 +573,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                 </tr>
               </thead>
               <tbody>
-                {transactions.map((tx) => (
+                {displayedTransactions.map((tx) => (
                   <tr
                     key={tx.id}
                     className="tx-row-clickable"
