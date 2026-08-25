@@ -11,6 +11,8 @@ import {
 import { sendError } from "../error-response.js";
 import { invalidateContract } from "../cache.js";
 import logger from "../logger.js";
+import { dedupMiddleware } from "../middleware/dedup.js";
+import { tieredLimiters } from "../middleware/tieredRateLimit.js";
 
 export const distributeRouter = Router();
 
@@ -26,6 +28,8 @@ distributeRouter.post(
     recordDistributeCall();
     next();
   },
+  ...tieredLimiters,
+  dedupMiddleware(),
   idempotencyMiddleware,
   validate(distributeSchema),
   async (req, res, next) => {
