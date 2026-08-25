@@ -1,106 +1,311 @@
 import { describe, test, expect } from "@jest/globals";
 import {
-  recordSecondarySaleSchema,
   initializeSchema,
+  recordSecondarySaleSchema,
+  distributeSchema,
+  setRoyaltyRateSchema,
+  distributeSecondarySchema,
+  MAX_COLLABORATORS,
   MAX_NFT_ID_LENGTH,
-  MAX_COLLABORATORS_BACKEND,
+  MAX_SALE_PRICE,
 } from "../src/validation.js";
 
 const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const TOKEN = "CTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT";
-const WALLET = "GAPTAQKSMN2ILFVHXDE5V274BUPC6QCRMJZYJFNGW7ENT2X3BQOS4M3C";
-const SELLER = "GA7E6YDRQKJ2JNOG27UPSCQ3FQ6U4X3QQGJKHNGF23T7QCI2FM6E3W2P";
-const BUYER = "GBOW474QUGZMHVHF6YDRQKJ2JNOG27UPUCY4FU7E6UDBOKBZJJNWYPSI";
+const WALLET = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+const TOKEN = "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 
-function makeSalePayload(overrides = {}) {
-  return {
+// ── initializeSchema ─────────────────────────────────────────────────────────
+
+describe("initializeSchema — input size validation", () => {
+  const validBase = {
     contractId: CONTRACT,
     walletAddress: WALLET,
-    nftId: "nft-001",
-    previousOwner: SELLER,
-    newOwner: BUYER,
-    salePrice: 1_000_000,
-    saleToken: TOKEN,
-    royaltyRate: 500,
-    ...overrides,
+    collaborators: [WALLET],
+    shares: [10000],
   };
-}
 
-describe("recordSecondarySaleSchema — nftId size limits", () => {
-  test("accepts nftId at exactly MAX_NFT_ID_LENGTH characters", () => {
-    const nftId = "a".repeat(MAX_NFT_ID_LENGTH);
-    const result = recordSecondarySaleSchema.safeParse(makeSalePayload({ nftId }));
-    expect(result.success).toBe(true);
-  });
-
-  test("rejects nftId one character over the limit", () => {
-    const nftId = "a".repeat(MAX_NFT_ID_LENGTH + 1);
-    const result = recordSecondarySaleSchema.safeParse(makeSalePayload({ nftId }));
-    expect(result.success).toBe(false);
-    const msg = result.error.issues.map((i) => i.message).join(" ");
-    expect(msg).toMatch(new RegExp(String(MAX_NFT_ID_LENGTH)));
-  });
-
-  test("rejects empty nftId", () => {
-    const result = recordSecondarySaleSchema.safeParse(makeSalePayload({ nftId: "" }));
-    expect(result.success).toBe(false);
-  });
-
-  test("accepts typical short nftId", () => {
-    const result = recordSecondarySaleSchema.safeParse(makeSalePayload({ nftId: "nft-abc-123" }));
-    expect(result.success).toBe(true);
-  });
-});
-
-function makeCollaborators(n) {
-  const base32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  return Array.from({ length: n }, (_, i) => {
-    const c1 = base32[Math.floor(i / 32) % 32];
-    const c2 = base32[i % 32];
-    return "G" + c1 + c2 + "A".repeat(53);
-  });
-}
-
-describe("initializeSchema — collaborator list size limits", () => {
-  test("accepts MAX_COLLABORATORS_BACKEND collaborators when shares sum to 10000", () => {
-    const n = MAX_COLLABORATORS_BACKEND;
-    const collaborators = makeCollaborators(n);
-    const share = Math.floor(10000 / n);
-    const shares = Array(n).fill(share);
-    // Adjust last share for rounding
-    shares[n - 1] = 10000 - share * (n - 1);
-
+  test("accepts exactly MAX_COLLABORATORS collaborators", () => {
+    const collab = Array(MAX_COLLABORATORS).fill(WALLET);
+    const shares = Array(MAX_COLLABORATORS).fill(Math.floor(10000 / MAX_COLLABORATORS));
+    // Adjust last share so they sum to 10000
+    shares[MAX_COLLABORATORS - 1] += 10000 - shares.reduce((a, b) => a + b, 0);
     const result = initializeSchema.safeParse({
-      contractId: CONTRACT,
-      walletAddress: WALLET,
-      collaborators,
+      ...validBase,
+      collaborators: collab,
       shares,
     });
     expect(result.success).toBe(true);
   });
 
-  test("rejects collaborator list exceeding MAX_COLLABORATORS_BACKEND", () => {
-    const n = MAX_COLLABORATORS_BACKEND + 1;
-    const collaborators = makeCollaborators(n);
-    const shares = Array(n).fill(0);
-    shares[0] = 10000;
-
+  test("rejects more than MAX_COLLABORATORS collaborators", () => {
+    const n = MAX_COLLABORATORS + 1;
+    const collab = Array(n).fill(WALLET);
+    const shareVal = Math.floor(10000 / n);
+    const shares = Array(n).fill(shareVal);
+    shares[n - 1] += 10000 - shares.reduce((a, b) => a + b, 0);
     const result = initializeSchema.safeParse({
-      contractId: CONTRACT,
-      walletAddress: WALLET,
-      collaborators,
+      ...validBase,
+      collaborators: collab,
       shares,
     });
     expect(result.success).toBe(false);
+    expect(result.error.issues[0].message).toMatch(/maximum/i);
   });
 
-  test("rejects empty collaborator list", () => {
+  test("rejects empty collaborators list", () => {
     const result = initializeSchema.safeParse({
-      contractId: CONTRACT,
-      walletAddress: WALLET,
+      ...validBase,
       collaborators: [],
       shares: [],
     });
     expect(result.success).toBe(false);
+    expect(result.error.issues[0].message).toMatch(/at least one/i);
+  });
+
+  test("rejects mismatched collaborators and shares lengths", () => {
+    const result = initializeSchema.safeParse({
+      ...validBase,
+      collaborators: [WALLET, WALLET],
+      shares: [10000],
+    });
+    expect(result.success).toBe(false);
+    expect(result.error.issues[0].message).toMatch(/same length/i);
+  });
+
+  test("rejects shares that do not sum to 10000", () => {
+    const result = initializeSchema.safeParse({
+      ...validBase,
+      collaborators: [WALLET],
+      shares: [5000],
+    });
+    expect(result.success).toBe(false);
+    expect(result.error.issues[0].message).toMatch(/sum to 10000/i);
+  });
+
+  test("rejects invalid Stellar address in collaborators", () => {
+    const result = initializeSchema.safeParse({
+      ...validBase,
+      collaborators: ["not-a-stellar-address"],
+      shares: [10000],
+    });
+    expect(result.success).toBe(false);
+    expect(result.error.issues[0].message).toMatch(/Invalid Stellar address/i);
+  });
+
+  test("rejects basis point share exceeding 10000", () => {
+    const result = initializeSchema.safeParse({
+      ...validBase,
+      collaborators: [WALLET],
+      shares: [10001],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects negative share", () => {
+    const result = initializeSchema.safeParse({
+      ...validBase,
+      collaborators: [WALLET],
+      shares: [-1],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects invalid contractId format", () => {
+    const result = initializeSchema.safeParse({
+      ...validBase,
+      contractId: "INVALID",
+    });
+    expect(result.success).toBe(false);
+    expect(result.error.issues[0].message).toMatch(/Invalid contract address/i);
+  });
+
+  test("rejects invalid walletAddress format", () => {
+    const result = initializeSchema.safeParse({
+      ...validBase,
+      walletAddress: "INVALID",
+    });
+    expect(result.success).toBe(false);
+    expect(result.error.issues[0].message).toMatch(/Invalid Stellar address/i);
+  });
+
+  test("accepts minimum valid payload", () => {
+    const result = initializeSchema.safeParse(validBase);
+    expect(result.success).toBe(true);
+  });
+});
+
+// ── recordSecondarySaleSchema ────────────────────────────────────────────────
+
+describe("recordSecondarySaleSchema — input size validation", () => {
+  const validBase = {
+    contractId: CONTRACT,
+    walletAddress: WALLET,
+    nftId: "nft-001",
+    previousOwner: WALLET,
+    newOwner: WALLET,
+    salePrice: 1_000_000,
+    saleToken: TOKEN,
+    royaltyRate: 500,
+  };
+
+  test("accepts nftId exactly at MAX_NFT_ID_LENGTH", () => {
+    const result = recordSecondarySaleSchema.safeParse({
+      ...validBase,
+      nftId: "x".repeat(MAX_NFT_ID_LENGTH),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("rejects nftId longer than MAX_NFT_ID_LENGTH", () => {
+    const result = recordSecondarySaleSchema.safeParse({
+      ...validBase,
+      nftId: "x".repeat(MAX_NFT_ID_LENGTH + 1),
+    });
+    expect(result.success).toBe(false);
+    expect(result.error.issues[0].message).toMatch(/at most/i);
+  });
+
+  test("rejects empty nftId", () => {
+    const result = recordSecondarySaleSchema.safeParse({
+      ...validBase,
+      nftId: "",
+    });
+    expect(result.success).toBe(false);
+    expect(result.error.issues[0].message).toMatch(/required/i);
+  });
+
+  test("rejects salePrice of zero", () => {
+    const result = recordSecondarySaleSchema.safeParse({
+      ...validBase,
+      salePrice: 0,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error.issues[0].message).toMatch(/positive/i);
+  });
+
+  test("rejects negative salePrice", () => {
+    const result = recordSecondarySaleSchema.safeParse({
+      ...validBase,
+      salePrice: -1,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("accepts salePrice at MAX_SALE_PRICE", () => {
+    const result = recordSecondarySaleSchema.safeParse({
+      ...validBase,
+      salePrice: MAX_SALE_PRICE,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("rejects salePrice exceeding MAX_SALE_PRICE", () => {
+    const result = recordSecondarySaleSchema.safeParse({
+      ...validBase,
+      salePrice: MAX_SALE_PRICE + 1,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error.issues[0].message).toMatch(/maximum safe integer/i);
+  });
+
+  test("rejects royaltyRate exceeding 10000", () => {
+    const result = recordSecondarySaleSchema.safeParse({
+      ...validBase,
+      royaltyRate: 10001,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("accepts royaltyRate of 0 (royalties disabled)", () => {
+    const result = recordSecondarySaleSchema.safeParse({
+      ...validBase,
+      royaltyRate: 0,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("rejects non-integer salePrice", () => {
+    const result = recordSecondarySaleSchema.safeParse({
+      ...validBase,
+      salePrice: 1000.5,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error.issues[0].message).toMatch(/integer/i);
+  });
+
+  test("accepts a valid secondary sale payload", () => {
+    const result = recordSecondarySaleSchema.safeParse(validBase);
+    expect(result.success).toBe(true);
+  });
+});
+
+// ── distributeSchema ─────────────────────────────────────────────────────────
+
+describe("distributeSchema — input size validation", () => {
+  test("rejects missing tokenId", () => {
+    const result = distributeSchema.safeParse({
+      contractId: CONTRACT,
+      walletAddress: WALLET,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects invalid tokenId format", () => {
+    const result = distributeSchema.safeParse({
+      contractId: CONTRACT,
+      walletAddress: WALLET,
+      tokenId: "INVALID",
+    });
+    expect(result.success).toBe(false);
+    expect(result.error.issues[0].message).toMatch(/Invalid contract address/i);
+  });
+
+  test("accepts a valid distribute payload", () => {
+    const result = distributeSchema.safeParse({
+      contractId: CONTRACT,
+      walletAddress: WALLET,
+      tokenId: TOKEN,
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+// ── setRoyaltyRateSchema ──────────────────────────────────────────────────────
+
+describe("setRoyaltyRateSchema — input size validation", () => {
+  test("rejects royaltyRate above 10000", () => {
+    const result = setRoyaltyRateSchema.safeParse({
+      contractId: CONTRACT,
+      walletAddress: WALLET,
+      royaltyRate: 10001,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects negative royaltyRate", () => {
+    const result = setRoyaltyRateSchema.safeParse({
+      contractId: CONTRACT,
+      walletAddress: WALLET,
+      royaltyRate: -1,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("accepts royaltyRate of 0", () => {
+    const result = setRoyaltyRateSchema.safeParse({
+      contractId: CONTRACT,
+      walletAddress: WALLET,
+      royaltyRate: 0,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("accepts royaltyRate of 10000", () => {
+    const result = setRoyaltyRateSchema.safeParse({
+      contractId: CONTRACT,
+      walletAddress: WALLET,
+      royaltyRate: 10000,
+    });
+    expect(result.success).toBe(true);
   });
 });
