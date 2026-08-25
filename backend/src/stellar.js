@@ -504,10 +504,23 @@ function isTimeoutError(error) {
 export async function retryBuildTx(callerAddress, contractId, method, args = []) {
   const maxRetries = 3;
   const baseBackoffMs = 1000;
+  const startedAt = Date.now();
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return await buildTx(callerAddress, contractId, method, args);
+      const result = await buildTx(callerAddress, contractId, method, args);
+      // RPC call outcome (#745): logged once per retryBuildTx invocation
+      // (not per attempt) so operators can see total duration and how many
+      // retries, if any, a build required before succeeding.
+      logger.info("Soroban RPC call succeeded", {
+        method,
+        contractId,
+        attempt,
+        retryCount: attempt - 1,
+        durationMs: Date.now() - startedAt,
+        status: "success",
+      });
+      return result;
     } catch (error) {
       const isLastAttempt = attempt === maxRetries;
       const isNetworkError =
@@ -581,6 +594,15 @@ export async function retryBuildTx(callerAddress, contractId, method, args = [])
         continue;
       }
 
+      logger.warn("Soroban RPC call failed with an unclassified error", {
+        method,
+        contractId,
+        attempt,
+        retryCount: attempt - 1,
+        durationMs: Date.now() - startedAt,
+        status: "error",
+        error: error?.message ?? String(error),
+      });
       throw error;
     }
   }

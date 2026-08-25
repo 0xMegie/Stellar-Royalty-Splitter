@@ -231,6 +231,176 @@ describe("retryBuildTx sequence-refresh contract (#275)", () => {
   });
 });
 
+// ── #745 — Structured RPC call logging ─────────────────────────────────────
+
+describe("retryBuildTx RPC call logging (#745)", () => {
+  function mockStellarSdk({ prepareTransaction }) {
+    const getAccount = jest.fn(async () => ({
+      accountId: () => "GTEST",
+      sequenceNumber: () => "1",
+    }));
+
+    jest.unstable_mockModule("@stellar/stellar-sdk", () => {
+      class Account {
+        constructor(id, seq) {
+          this.id = id;
+          this.seq = seq;
+        }
+        accountId() {
+          return this.id;
+        }
+        sequenceNumber() {
+          return this.seq;
+        }
+        incrementSequenceNumber() {
+          this.seq = String(BigInt(this.seq) + 1n);
+        }
+      }
+      const mock = {
+        Contract: class {
+          constructor(id) {
+            this.id = id;
+          }
+          call(method, ...args) {
+            return { kind: "op", method, args };
+          }
+        },
+        Networks: {
+          PUBLIC: "Public",
+          TESTNET: "Test SDF Network ; September 2015",
+        },
+        SorobanRpc: {
+          Server: class {
+            constructor() {}
+            getAccount = getAccount;
+            prepareTransaction = prepareTransaction;
+            simulateTransaction = jest.fn();
+          },
+          Api: { isSimulationError: () => false },
+        },
+        TransactionBuilder: class {
+          constructor() {
+            this.ops = [];
+          }
+          addOperation(op) {
+            this.ops.push(op);
+            return this;
+          }
+          setTimeout() {
+            return this;
+          }
+          build() {
+            return {};
+          }
+        },
+        BASE_FEE: "100",
+        nativeToScVal: () => ({}),
+        Address: class {
+          constructor(a) {
+            this.a = a;
+          }
+          toScVal() {
+            return { addr: this.a };
+          }
+        },
+        Account,
+        xdr: { ScVal: { scvU32: () => ({}), scvVec: () => ({}) } },
+      };
+      return { default: mock, ...mock };
+    });
+
+    global.fetch = jest.fn(async () => ({ ok: false, status: 500 }));
+    return { getAccount };
+  }
+
+  test("logs method, attempt, retryCount, duration, and status on success", async () => {
+    const prepareTransaction = jest.fn().mockResolvedValueOnce({ toXDR: () => "MOCK_XDR" });
+    mockStellarSdk({ prepareTransaction });
+
+    const loggerInfo = jest.fn();
+    jest.unstable_mockModule("../src/logger.js", () => ({
+      default: { info: loggerInfo, warn: jest.fn(), error: jest.fn() },
+      asyncLocalStorage: { getStore: () => undefined },
+      resolveLevel: () => "info",
+      VALID_LEVELS: ["error", "warn", "info", "debug"],
+    }));
+
+    const stellar = await import("../src/stellar.js");
+    stellar._resetFeeCache();
+
+    await stellar.retryBuildTx("GCALLER", "CCONTRACT", "distribute", []);
+
+    expect(loggerInfo).toHaveBeenCalledWith(
+      "Soroban RPC call succeeded",
+      expect.objectContaining({
+        method: "distribute",
+        contractId: "CCONTRACT",
+        retryCount: 0,
+        status: "success",
+        durationMs: expect.any(Number),
+      }),
+    );
+  });
+
+  test("records retryCount reflecting prior failed attempts before success", async () => {
+    const prepareTransaction = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("network glitch"))
+      .mockResolvedValueOnce({ toXDR: () => "MOCK_XDR" });
+    mockStellarSdk({ prepareTransaction });
+
+    const loggerInfo = jest.fn();
+    jest.unstable_mockModule("../src/logger.js", () => ({
+      default: { info: loggerInfo, warn: jest.fn(), error: jest.fn() },
+      asyncLocalStorage: { getStore: () => undefined },
+      resolveLevel: () => "info",
+      VALID_LEVELS: ["error", "warn", "info", "debug"],
+    }));
+
+    const stellar = await import("../src/stellar.js");
+    stellar._resetFeeCache();
+
+    await stellar.retryBuildTx("GCALLER", "CCONTRACT", "distribute", []);
+
+    expect(loggerInfo).toHaveBeenCalledWith(
+      "Soroban RPC call succeeded",
+      expect.objectContaining({ retryCount: 1, attempt: 2, status: "success" }),
+    );
+  });
+
+  test("logs an unclassified failure with the error message before rethrowing", async () => {
+    const prepareTransaction = jest
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error("boom: unexpected"), { code: "WEIRD" }));
+    mockStellarSdk({ prepareTransaction });
+
+    const loggerWarn = jest.fn();
+    jest.unstable_mockModule("../src/logger.js", () => ({
+      default: { info: jest.fn(), warn: loggerWarn, error: jest.fn() },
+      asyncLocalStorage: { getStore: () => undefined },
+      resolveLevel: () => "info",
+      VALID_LEVELS: ["error", "warn", "info", "debug"],
+    }));
+
+    const stellar = await import("../src/stellar.js");
+    stellar._resetFeeCache();
+
+    await expect(
+      stellar.retryBuildTx("GCALLER", "CCONTRACT", "distribute", []),
+    ).rejects.toThrow(/boom: unexpected/);
+
+    expect(loggerWarn).toHaveBeenCalledWith(
+      "Soroban RPC call failed with an unclassified error",
+      expect.objectContaining({
+        method: "distribute",
+        contractId: "CCONTRACT",
+        status: "error",
+        error: expect.stringContaining("boom: unexpected"),
+      }),
+    );
+  });
+});
+
 // ── #294 — Concurrent build lock ────────────────────────────────────────
 
 describe("buildTx concurrent locking (#294)", () => {
