@@ -227,6 +227,27 @@
   border-radius: 4px;
   margin-bottom: 16px;
   font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.error-message .retry-btn {
+  flex-shrink: 0;
+  background: #dc2626;
+  color: #ffffff;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.error-message .retry-btn:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
 }
 
 .empty-state {

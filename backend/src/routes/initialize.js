@@ -11,6 +11,7 @@ import { validate, initializeSchema, validateInitializePayloadSize } from "../va
 import { buildAndRecordTransaction } from "./_shared.js";
 import { sendError } from "../error-response.js";
 import { invalidateContract } from "../cache.js";
+import logger from "../logger.js";
 
 export const initializeRouter = Router();
 
@@ -93,9 +94,19 @@ initializeRouter.post(
     try {
       const { contractId, walletAddress, collaborators, shares } = req.body;
 
-
       // Check if contract is already initialized on-chain
       const alreadyInitialized = await isContractInitialized(contractId);
+
+      // Contract state transition (#745): log before/after initialization
+      // state so operators can confirm a contract moved from uninitialized
+      // to initialized, and with what collaborator/share configuration.
+      logger.info("contract state change: initialize requested", {
+        contractId,
+        walletAddress,
+        stateBefore: { initialized: alreadyInitialized },
+        collaboratorCount: collaborators.length,
+      });
+
       if (alreadyInitialized) {
         return sendError(
           res,
@@ -129,6 +140,16 @@ initializeRouter.post(
       // Invalidate cached read-only data for this contract so stale state
       // is not served after the new collaborator set is written on-chain.
       invalidateContract(contractId);
+
+      logger.info("contract state change: initialize XDR built", {
+        contractId,
+        walletAddress,
+        transactionId,
+        stateAfter: { initialized: true, collaboratorCount: collaborators.length },
+        admin: walletAddress,
+        collaborators,
+        timestamp: new Date().toISOString(),
+      });
 
       res.json({ xdr, transactionId });
     } catch (err) {

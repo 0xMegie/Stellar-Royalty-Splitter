@@ -35,9 +35,23 @@ describe("CONTRACT_ERROR_MESSAGES map (#677)", () => {
     expect(CONTRACT_ERROR_MESSAGES[26]).toContain("Sale price");
   });
 
-  test("all 27 codes are documented", () => {
+  test("code 32 maps to TooManyBatchTokens (#744)", () => {
+    expect(CONTRACT_ERROR_MESSAGES[32]).toContain("maximum allowed number of tokens");
+  });
+
+  test("code 33 maps to RoyaltyAmountNotPositive (#744)", () => {
+    expect(CONTRACT_ERROR_MESSAGES[33]).toContain("Royalty amount");
+  });
+
+  test("all 27 sequential codes are documented", () => {
     for (let i = 1; i <= 27; i++) {
       expect(CONTRACT_ERROR_MESSAGES[i]).toBeDefined();
+    }
+  });
+
+  test("codes 32 and 33 (#744) are documented", () => {
+    for (const code of [32, 33]) {
+      expect(CONTRACT_ERROR_MESSAGES[code]).toBeDefined();
     }
   });
 });

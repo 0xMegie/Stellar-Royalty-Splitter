@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { api, type TransactionRecord, type SecondarySale } from "../api";
 import { useSettings } from "../context/SettingsContext";
 import { formatCurrency, formatNumber } from "../utils/format";
+import { isCollaborator } from "../utils/collaborators";
 import { CopyButton } from "./CopyButton";
 import { Skeleton } from "./Skeleton";
 import MultiContractComparison from "./MultiContractComparison";
@@ -407,7 +408,9 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
               {filteredCollaborators.length > 0 ? (
                 filteredCollaborators.map((c) => {
                   const sharePct = (c.basisPoints / 100).toFixed(2);
-                  const isConnectedUser = walletAddress && c.address === walletAddress;
+                  // #746: shared membership-check helper instead of an
+                  // inline per-row address comparison.
+                  const isConnectedUser = isCollaborator([c], walletAddress);
                   return (
                     <tr key={c.address} className={isConnectedUser ? "highlight-user-row" : ""}>
                       <td className="address-cell" data-label="Collaborator Address">

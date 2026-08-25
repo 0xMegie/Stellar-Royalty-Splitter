@@ -63,6 +63,8 @@ export const CONTRACT_ERROR_MESSAGES: Record<number, string> = {
   25: "Updated shares would not sum to 10,000 basis points.",
   26: "Sale price must be greater than zero.",
   27: "Input exceeds the maximum allowed size.",
+  32: "Batch distribute cannot process more than the maximum allowed number of tokens in one call.",
+  33: "Royalty amount must be greater than zero.",
 };
 
 /**

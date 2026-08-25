@@ -693,6 +693,55 @@ fn test_collaborator_count() {
     assert_eq!(client.collaborator_count(), 3);
 }
 
+/// Issue #746 — is_collaborator returns true for a registered collaborator
+/// and false for any address that was never registered.
+#[test]
+fn test_is_collaborator_known_and_unknown() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (_, client) = setup(&env);
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    client.initialize(&vec![&env, a.clone(), b.clone()], &vec![&env, 6000_u32, 4000_u32]);
+
+    assert!(client.is_collaborator(&a));
+    assert!(client.is_collaborator(&b));
+    assert!(!client.is_collaborator(&stranger));
+}
+
+/// Issue #746 — is_collaborator is safe to call before initialize: it
+/// returns false rather than panicking, unlike get_share/get_collaborators
+/// which expect the contract to already be initialized.
+#[test]
+fn test_is_collaborator_false_before_initialize() {
+    let env = Env::default();
+    let (_, client) = setup(&env);
+    let addr = Address::generate(&env);
+
+    assert!(!client.is_collaborator(&addr));
+}
+
+/// Issue #746 — after update_share swaps out a collaborator's role (share
+/// changes but identity doesn't), is_collaborator still reports the
+/// existing collaborator set correctly and does not report a share amount
+/// as if it were an address.
+#[test]
+fn test_is_collaborator_reflects_current_registration_only() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (_, client) = setup(&env);
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    client.initialize(&vec![&env, a.clone(), b.clone()], &vec![&env, 6000_u32, 4000_u32]);
+
+    client.update_share(&a, &7000_u32);
+    client.update_share(&b, &3000_u32);
+
+    assert!(client.is_collaborator(&a));
+    assert!(client.is_collaborator(&b));
+}
+
 #[test]
 #[should_panic]
 fn test_unauthorized_init_rejected() {
@@ -4507,6 +4556,71 @@ fn test_batch_distribute_large_batch() {
     assert_eq!(TokenClient::new(&env, &token9).balance(&b), 5000);
 }
 
+/// Issue #744 — batch_distribute accepts exactly MAX_BATCH_TOKENS (50)
+/// tokens in one call without hitting the new bound.
+#[test]
+fn test_batch_distribute_accepts_max_batch_tokens() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    let mut tokens: SorobanVec<Address> = SorobanVec::new(&env);
+    for _ in 0..stellar_royalty_splitter::MAX_BATCH_TOKENS {
+        let token = make_token(&env, &token_admin);
+        mint(&env, &token, &contract_id, 1000);
+        tokens.push_back(token);
+    }
+
+    client.batch_distribute(&tokens);
+
+    assert_eq!(
+        client.get_distribute_count(),
+        stellar_royalty_splitter::MAX_BATCH_TOKENS as u64
+    );
+}
+
+/// Issue #744 — batch_distribute rejects a token list longer than
+/// MAX_BATCH_TOKENS with a specific error, and performs no transfers.
+#[test]
+fn test_batch_distribute_rejects_too_many_tokens() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+
+    let mut tokens: SorobanVec<Address> = SorobanVec::new(&env);
+    for _ in 0..(stellar_royalty_splitter::MAX_BATCH_TOKENS + 1) {
+        let token = make_token(&env, &token_admin);
+        mint(&env, &token, &contract_id, 1000);
+        tokens.push_back(token);
+    }
+
+    let result = client.try_batch_distribute(&tokens);
+    assert!(result.is_err());
+
+    // No distribution occurred — the bound is checked before any transfer.
+    assert_eq!(client.get_distribute_count(), 0);
+    let token0 = tokens.get(0).unwrap();
+    assert_eq!(TokenClient::new(&env, &token0).balance(&contract_id), 1000);
+}
+
 // ── Issue #664: expanded authorization / access-control coverage ────────────
 //
 // Fills gaps left by the existing auth tests: some protected operations only
@@ -4610,6 +4724,122 @@ fn test_record_secondary_royalty_rejects_wrong_signer() {
         "record_secondary_royalty must reject a signer that is not `from`"
     );
     assert_eq!(client.get_secondary_pool(), 0);
+}
+
+/// Issue #744 — record_secondary_royalty rejects a zero royalty_amount and
+/// leaves the secondary pool untouched.
+#[test]
+fn test_record_secondary_royalty_rejects_zero_amount() {
+    let env = Env::default();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    env.mock_all_auths_allowing_non_root_auth();
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+    mint(&env, &token, &admin, 100);
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "record_secondary_royalty",
+            args: (token.clone(), admin.clone(), 0_i128).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    let result = client.try_record_secondary_royalty(&token, &admin, &0_i128);
+    assert!(result.is_err(), "a zero royalty_amount must be rejected");
+    assert_eq!(client.get_secondary_pool(), 0);
+    // No transfer occurred — the payer's balance is unchanged.
+    assert_eq!(TokenClient::new(&env, &token).balance(&admin), 100);
+}
+
+/// Issue #744 — record_secondary_royalty rejects a negative royalty_amount.
+/// Without this check a negative amount would silently shrink the tracked
+/// secondary pool below zero rather than moving any tokens.
+#[test]
+fn test_record_secondary_royalty_rejects_negative_amount() {
+    let env = Env::default();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    env.mock_all_auths_allowing_non_root_auth();
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+    mint(&env, &token, &admin, 100);
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "record_secondary_royalty",
+            args: (token.clone(), admin.clone(), -50_i128).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    let result = client.try_record_secondary_royalty(&token, &admin, &-50_i128);
+    assert!(
+        result.is_err(),
+        "a negative royalty_amount must be rejected"
+    );
+    assert_eq!(client.get_secondary_pool(), 0);
+}
+
+/// Issue #744 — a positive royalty_amount still succeeds and accumulates
+/// correctly across multiple calls (regression guard for the new check).
+#[test]
+fn test_record_secondary_royalty_accumulates_across_calls() {
+    let env = Env::default();
+    let (contract_id, client) = setup(&env);
+
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    env.mock_all_auths_allowing_non_root_auth();
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+    mint(&env, &token, &admin, 300);
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "record_secondary_royalty",
+            args: (token.clone(), admin.clone(), 100_i128).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.record_secondary_royalty(&token, &admin, &100_i128);
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "record_secondary_royalty",
+            args: (token.clone(), admin.clone(), 150_i128).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.record_secondary_royalty(&token, &admin, &150_i128);
+
+    assert_eq!(client.get_secondary_pool(), 250);
 }
 
 /// update_share: authorized admin succeeds and the share is updated.
