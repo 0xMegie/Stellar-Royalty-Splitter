@@ -1,5 +1,10 @@
 # Contract Migrations
 
+> Looking for the **backend** database migration system instead (SQLite
+> schema, `schema_migrations` table, `dbVersion`)? See
+> [`backend/MIGRATIONS.md`](backend/MIGRATIONS.md). This document covers only
+> the Soroban contract's own migration mechanism.
+
 The contract exposes `migrate(from_version: String)` so upgraded WASM can apply explicit state changes instead of relying on blind storage compatibility.
 
 Current behavior:

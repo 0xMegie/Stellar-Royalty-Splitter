@@ -8,6 +8,8 @@ pub mod msg {
     pub const SET_ROYALTY_RATE_ADMIN: &str = "set_royalty_rate: admin authorization required";
     pub const PAUSE_ADMIN: &str = "pause: admin authorization required";
     pub const UNPAUSE_ADMIN: &str = "unpause: admin authorization required";
+    pub const PAUSE_OPERATION_ADMIN: &str = "pause_operation: admin authorization required";
+    pub const UNPAUSE_OPERATION_ADMIN: &str = "unpause_operation: admin authorization required";
     pub const ADMIN_TRANSFER_ADMIN: &str = "admin_transfer: admin authorization required";
     pub const PROPOSE_ADMIN_ADMIN: &str =
         "propose_admin_transfer: admin authorization required";

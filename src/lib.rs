@@ -33,6 +33,19 @@ pub struct MigrationRecord {
     pub note: String,
 }
 
+/// Selects which distribution operation a pause/unpause applies to (#749).
+///
+/// `Primary` and `Secondary` allow an admin to pause one distribution path
+/// while leaving the other running. They are independent of, and layered on
+/// top of, the existing global `pause()`/`unpause()` switch: a global pause
+/// still blocks both operations regardless of this per-operation state.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OperationType {
+    PrimaryDistribution,
+    SecondaryDistribution,
+}
+
 /// Typed storage keys.
 ///
 /// Instance storage keys: small, frequently accessed values (Admin, Paused, etc.).
@@ -51,6 +64,8 @@ pub enum StorageKey {
     LastDistribution,
     LastSecondaryDistribution,
     Paused,
+    PausedPrimary,
+    PausedSecondary,
     DistributeHistory,
     PendingAdmin,
     AdminList,
@@ -660,6 +675,105 @@ impl RoyaltySplitter {
             .unwrap_or(false)
     }
 
+    /// Pause a single distribution operation without affecting the other (#749).
+    ///
+    /// Lets an admin pause only `distribute`/`distribute_with_override`
+    /// (`OperationType::PrimaryDistribution`) or only
+    /// `distribute_secondary_royalties` (`OperationType::SecondaryDistribution`)
+    /// while the other operation keeps running. This is independent of, and
+    /// layered on top of, the global `pause()` switch: calling the global
+    /// `pause()` still blocks both operations regardless of this state, and
+    /// this function does not change the global `Paused` flag.
+    ///
+    /// # Authorization
+    /// Requires admin signature (same rules as `pause`/`unpause`).
+    ///
+    /// # Panics
+    /// * `"contract not initialized"` — called before `initialize`
+    pub fn pause_operation(env: Env, operation: OperationType) {
+        storage::extend_instance_ttl(&env);
+
+        Self::check_admin_auth(&env, auth::msg::PAUSE_OPERATION_ADMIN);
+
+        let key = Self::operation_pause_key(operation);
+        storage::instance_set(&env, &key, &true);
+
+        let admin = Self::require_admin_address(&env);
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("op_pause")),
+            (admin, Self::operation_event_tag(operation)),
+        );
+    }
+
+    /// Unpause a single distribution operation (#749). See `pause_operation`.
+    ///
+    /// # Authorization
+    /// Requires admin signature.
+    ///
+    /// # Panics
+    /// * `"contract not initialized"` — called before `initialize`
+    pub fn unpause_operation(env: Env, operation: OperationType) {
+        storage::extend_instance_ttl(&env);
+
+        Self::check_admin_auth(&env, auth::msg::UNPAUSE_OPERATION_ADMIN);
+
+        let key = Self::operation_pause_key(operation);
+        storage::instance_set(&env, &key, &false);
+
+        let admin = Self::require_admin_address(&env);
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("op_unpaus")),
+            (admin, Self::operation_event_tag(operation)),
+        );
+    }
+
+    /// Returns `true` if `operation` is currently paused (#749).
+    ///
+    /// This reflects only the per-operation pause state; it does not consult
+    /// the global `Paused` flag. Callers that need "is this operation
+    /// effectively blocked" should check both `is_paused()` and
+    /// `is_operation_paused(operation)` — which is exactly what `distribute`,
+    /// `distribute_with_override`, and `distribute_secondary_royalties` do
+    /// internally.
+    pub fn is_operation_paused(env: Env, operation: OperationType) -> bool {
+        storage::extend_instance_ttl(&env);
+        let key = Self::operation_pause_key(operation);
+        env.storage().instance().get(&key).unwrap_or(false)
+    }
+
+    /// Maps an `OperationType` to its dedicated storage key.
+    fn operation_pause_key(operation: OperationType) -> StorageKey {
+        match operation {
+            OperationType::PrimaryDistribution => StorageKey::PausedPrimary,
+            OperationType::SecondaryDistribution => StorageKey::PausedSecondary,
+        }
+    }
+
+    /// Short event-log tag identifying which operation a pause/unpause event
+    /// applied to. Kept ASCII/short to fit `symbol_short!` constraints.
+    fn operation_event_tag(operation: OperationType) -> soroban_sdk::Symbol {
+        match operation {
+            OperationType::PrimaryDistribution => symbol_short!("primary"),
+            OperationType::SecondaryDistribution => symbol_short!("secondry"),
+        }
+    }
+
+    /// Returns `true` if `operation` is currently blocked — either by the
+    /// global pause switch or by its own per-operation pause state (#749).
+    fn is_blocked(env: &Env, operation: OperationType) -> bool {
+        let globally_paused: bool = env
+            .storage()
+            .instance()
+            .get::<StorageKey, bool>(&StorageKey::Paused)
+            .unwrap_or(false);
+        if globally_paused {
+            return true;
+        }
+
+        let key = Self::operation_pause_key(operation);
+        env.storage().instance().get(&key).unwrap_or(false)
+    }
+
     /// Returns `true` if `initialize` has been called, `false` otherwise.
     ///
     /// Safe to call at any time — does not require initialization.
@@ -812,12 +926,10 @@ impl RoyaltySplitter {
 
         Self::check_admin_auth(&env, auth::msg::DISTRIBUTE_OVERRIDE_ADMIN);
 
-        if env
-            .storage()
-            .instance()
-            .get::<StorageKey, bool>(&StorageKey::Paused)
-            .unwrap_or(false)
-        {
+        // Blocked by either the global pause switch or a primary-distribution-
+        // specific pause (#749) — global pause always wins for backward
+        // compatibility.
+        if Self::is_blocked(&env, OperationType::PrimaryDistribution) {
             Self::fail(&env, ContractError::ContractPaused);
         }
 
@@ -1197,12 +1309,10 @@ impl RoyaltySplitter {
 
         Self::check_admin_auth(&env, auth::msg::DISTRIBUTE_SECONDARY_ADMIN);
 
-        if env
-            .storage()
-            .instance()
-            .get::<StorageKey, bool>(&StorageKey::Paused)
-            .unwrap_or(false)
-        {
+        // Blocked by either the global pause switch or a secondary-
+        // distribution-specific pause (#749) — global pause always wins for
+        // backward compatibility.
+        if Self::is_blocked(&env, OperationType::SecondaryDistribution) {
             Self::fail(&env, ContractError::ContractPaused);
         }
 

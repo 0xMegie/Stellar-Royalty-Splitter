@@ -43,6 +43,7 @@ import { earningsHistoryRouter } from "./routes/earnings-history.js";
 import { versionRouter } from "./routes/version.js";
 import { initializeWebSocket } from "./websocket.js";
 import { startSnapshotScheduler } from "./jobs/snapshot-job.js";
+import { startWebhookRetryScheduler } from "./jobs/retry-failed-webhooks.js";
 import { adminApiKeysRouter } from "./routes/admin-api-keys.js";
 import { recordApiKeyRequest } from "./database/rate-limit.js";
 import { createMetricsPusher } from "./metrics-pushgateway.js";
@@ -354,6 +355,9 @@ const wss = initializeWebSocket(server);
 
 // Start the snapshot scheduler (#613)
 const snapshotScheduler = startSnapshotScheduler();
+
+// Start the webhook retry scheduler (#743)
+const webhookRetryScheduler = startWebhookRetryScheduler();
 const metricsPusher = createMetricsPusher();
 metricsPusher.start();
 
@@ -396,6 +400,9 @@ const handleShutdown = createGracefulShutdownHandler({
     }
     if (snapshotScheduler) {
       snapshotScheduler.stop();
+    }
+    if (webhookRetryScheduler) {
+      webhookRetryScheduler.stop();
     }
     metricsPusher.stop();
   },
