@@ -36,13 +36,14 @@ instead of polling storage (#661).
 | `("royalty", "adm_prop")` | `propose_admin_transfer` | `Address new_admin` | First step of the two-step admin transfer — nominates a pending admin. |
 | `("royalty", "adm_acc")` | `accept_admin` | `(Address previous_admin, Address new_admin)` | Second step — the pending admin accepted and is now current admin. |
 | `("royalty", "withdraw")` | `withdraw` | `(Address token, i128 amount)` | Admin recovered stuck token balance to their own address. |
+| `("royalty", "incn_set")` | `set_incentives_enabled` | `bool enabled` | Whether incentive-adjusted distribution is enabled was changed. |
 
 ## Distribution events
 
 | Topic | Emitted by | Payload | Description |
 |---|---|---|---|
-| `("royalty", "dist")` | `distribute`, `distribute_with_override`, `batch_distribute` | `(Address recipient, i128 amount, Address token, Symbol distribution_type)` | One event **per recipient** per token payout. `distribution_type` is `"primary"` for `distribute`/`distribute_with_override`, `"batch"` for `batch_distribute`. |
-| `("royalty", "dist_all")` | `distribute_with_override` (and via it, `distribute`), `batch_distribute` | `(Address token, i128 total_amount)` | One event **per token** summarizing the total amount distributed across all recipients. |
+| `("royalty", "dist")` | `distribute`, `distribute_with_override`, `batch_distribute`, `distribute_with_incentives` | `(Address recipient, i128 amount, Address token, Symbol distribution_type)` | One event **per recipient** per token payout. `distribution_type` is `"primary"` for `distribute`/`distribute_with_override`/`distribute_with_incentives`, `"batch"` for `batch_distribute`. |
+| `("royalty", "dist_all")` | `distribute_with_override` (and via it, `distribute`), `batch_distribute`, `distribute_with_incentives` | `(Address token, i128 total_amount)` | One event **per token** summarizing the total amount distributed across all recipients. |
 | `("royalty", "batch")` | `batch_distribute` | `u32 token_count` | Fired once per `batch_distribute` call, after all per-token distributions complete. |
 | `("royalty", "sec_pay")` | `distribute_secondary_royalties` | `(Address recipient, i128 amount, Address token, Symbol "secondary")` | One event **per recipient** for a secondary royalty pool payout. |
 | `("royalty", "sec_dist")` | `distribute_secondary_royalties` | `(Address token, i128 pool_amount)` | Fired once per call, summarizing the total secondary pool amount distributed. |
