@@ -15,7 +15,16 @@ import {
   downloadRoyaltyConfig,
   RoyaltyConfigExportError,
 } from "../utils/royaltyConfig";
-import { isValidStellarAccountAddress } from "../../../shared/stellar-address";
+import {
+  isValidAccountAddress,
+  getAccountAddressError,
+  getPercentageValidationError,
+  formatBasisPoints,
+  getFieldState,
+  getFieldInputClass,
+  getAriaInvalid,
+  type FieldState,
+} from "../lib/formValidation";
 
 interface Collaborator {
   address: string;
@@ -45,20 +54,8 @@ const PERCENTAGE_NAVIGATION_KEYS = [
   "End",
 ];
 
-function getPercentageError(value: string) {
-  if (value === "") return "Percentage is required.";
-  if (SIGNED_PERCENTAGE_INPUT_RE.test(value)) {
-    return "Percentage must be between 0 and 100.";
-  }
-  if (!PERCENTAGE_INPUT_RE.test(value)) return "Percentage must be a number.";
-
-  const numericValue = Number(value);
-  if (Number.isNaN(numericValue)) return "Percentage must be a number.";
-  if (numericValue < 0 || numericValue > 100) {
-    return "Percentage must be between 0 and 100.";
-  }
-
-  return "";
+function getPercentageError(value: string): string {
+  return getPercentageValidationError(value) ?? "";
 }
 
 function isAllowedPercentageInput(value: string) {
@@ -140,6 +137,9 @@ export default function InitializeForm({
   const percentageRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [errors, setErrors] = useState<
     Record<number, { address?: string; basisPoints?: string }>
+  >({});
+  const [touched, setTouched] = useState<
+    Record<number, { address?: boolean; basisPoints?: boolean }>
   >({});
 
   const restoreDraft = useCallback((draftCollaborators: Collaborator[]) => {
@@ -361,12 +361,9 @@ export default function InitializeForm({
       const next = { ...prev };
       const row = { ...(next[i] ?? {}) };
       if (field === "address") {
-        row.address =
-          value && isValidStellarAccountAddress(value)
-            ? undefined
-            : "Must be a valid Stellar address (G..., 56 chars)";
+        row.address = getAccountAddressError(value) ?? undefined;
       } else {
-        row.basisPoints = getPercentageError(value) || undefined;
+        row.basisPoints = getPercentageValidationError(value) ?? undefined;
       }
       if (!row.address && !row.basisPoints) {
         delete next[i];
@@ -378,7 +375,17 @@ export default function InitializeForm({
   }
 
   function handleBlur(i: number, field: keyof Collaborator, value: string) {
+    setTouched((prev) => ({
+      ...prev,
+      [i]: { ...prev[i], [field]: true },
+    }));
     validateRow(i, field, value);
+  }
+
+  function getFieldStateForRow(i: number, field: keyof Collaborator): FieldState {
+    const isTouched = touched[i]?.[field] ?? false;
+    const error = errors[i]?.[field] ?? null;
+    return getFieldState(isTouched, error);
   }
 
   // Issue #694 — one summary of every active validation issue, derived from
@@ -606,29 +613,37 @@ export default function InitializeForm({
               <label htmlFor={`collaborator-${i}-address`}>
                 Collaborator {i + 1} wallet address
               </label>
-              <input
-                id={`collaborator-${i}-address`}
-                ref={(el) => {
-                  addressRefs.current[i] = el;
-                }}
-                placeholder="Wallet address (G...)"
-                value={c.address}
-                aria-invalid={Boolean(errors[i]?.address)}
-                aria-describedby={
-                  errors[i]?.address
-                    ? `collaborator-${i}-address-error`
-                    : undefined
-                }
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                  update(i, "address", e.target.value)
-                }
-                onBlur={(e: React.FocusEvent<HTMLInputElement>) =>
-                  handleBlur(i, "address", e.target.value)
-                }
-                style={{
-                  marginBottom: errors[i]?.address ? "0.25rem" : undefined,
-                }}
-              />
+              <div className="input-wrapper">
+                <input
+                  id={`collaborator-${i}-address`}
+                  ref={(el) => {
+                    addressRefs.current[i] = el;
+                  }}
+                  placeholder="Wallet address (G...)"
+                  value={c.address}
+                  className={getFieldInputClass(getFieldStateForRow(i, "address"))}
+                  aria-invalid={getAriaInvalid(getFieldStateForRow(i, "address"))}
+                  aria-describedby={
+                    errors[i]?.address
+                      ? `collaborator-${i}-address-error`
+                      : undefined
+                  }
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    update(i, "address", e.target.value)
+                  }
+                  onBlur={(e: React.FocusEvent<HTMLInputElement>) =>
+                    handleBlur(i, "address", e.target.value)
+                  }
+                  style={{
+                    marginBottom: errors[i]?.address || getFieldStateForRow(i, "address") === "valid" ? "0.25rem" : undefined,
+                  }}
+                />
+                {getFieldStateForRow(i, "address") === "valid" && (
+                  <span className="field-success" aria-hidden="true">
+                    Valid address
+                  </span>
+                )}
+              </div>
               {errors[i]?.address && (
                 <span
                   id={`collaborator-${i}-address-error`}
@@ -643,45 +658,52 @@ export default function InitializeForm({
               <label htmlFor={`collaborator-${i}-percentage`}>
                 Collaborator {i + 1} percentage
               </label>
-              <input
-                id={`collaborator-${i}-percentage`}
-                ref={(el) => {
-                  percentageRefs.current[i] = el;
-                }}
-                placeholder="% (0–100)"
-                type="number"
-                min={0}
-                max={100}
-                step="any"
-                value={c.basisPoints}
-                className={errors[i]?.basisPoints ? "input-error" : ""}
-                aria-invalid={Boolean(errors[i]?.basisPoints)}
-                aria-describedby={
-                  errors[i]?.basisPoints
-                    ? `collaborator-${i}-percentage-error`
-                    : undefined
-                }
-                onKeyDown={handlePercentageKeyDown}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                  const { value } = e.target;
-                  if (!isAllowedPercentageInput(value)) {
-                    updatePercentageError(
-                      setErrors,
-                      i,
-                      getPercentageError(value),
-                    );
-                    return;
+              <div className="input-wrapper">
+                <input
+                  id={`collaborator-${i}-percentage`}
+                  ref={(el) => {
+                    percentageRefs.current[i] = el;
+                  }}
+                  placeholder="% (0–100)"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="any"
+                  value={c.basisPoints}
+                  className={`${getFieldInputClass(getFieldStateForRow(i, "basisPoints"))}${errors[i]?.basisPoints ? " input-error" : ""}`.trim()}
+                  aria-invalid={getAriaInvalid(getFieldStateForRow(i, "basisPoints"))}
+                  aria-describedby={
+                    errors[i]?.basisPoints
+                      ? `collaborator-${i}-percentage-error`
+                      : undefined
                   }
-                  update(i, "basisPoints", value);
-                  validateRow(i, "basisPoints", value);
-                }}
-                onBlur={(e: React.FocusEvent<HTMLInputElement>) =>
-                  handleBlur(i, "basisPoints", e.target.value)
-                }
-                style={{
-                  marginBottom: errors[i]?.basisPoints ? "0.25rem" : undefined,
-                }}
-              />
+                  onKeyDown={handlePercentageKeyDown}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                    const { value } = e.target;
+                    if (!isAllowedPercentageInput(value)) {
+                      updatePercentageError(
+                        setErrors,
+                        i,
+                        getPercentageError(value),
+                      );
+                      return;
+                    }
+                    update(i, "basisPoints", value);
+                    validateRow(i, "basisPoints", value);
+                  }}
+                  onBlur={(e: React.FocusEvent<HTMLInputElement>) =>
+                    handleBlur(i, "basisPoints", e.target.value)
+                  }
+                  style={{
+                    marginBottom: errors[i]?.basisPoints || getFieldStateForRow(i, "basisPoints") === "valid" ? "0.25rem" : undefined,
+                  }}
+                />
+                {getFieldStateForRow(i, "basisPoints") === "valid" && (
+                  <span className="field-success" aria-hidden="true">
+                    Valid
+                  </span>
+                )}
+              </div>
               {errors[i]?.basisPoints && (
                 <span
                   id={`collaborator-${i}-percentage-error`}

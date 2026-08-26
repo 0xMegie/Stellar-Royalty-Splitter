@@ -7,6 +7,14 @@ import FormStatus from "./FormStatus";
 import { useFormStatus } from "../hooks/useFormStatus";
 import { useTransactionLifecycle } from "../hooks/useTransactionLifecycle";
 import { TransactionStatusBanner } from "./TransactionStatusBanner";
+import {
+  getContractAddressValidationError,
+  getAmountValidationError,
+  getFieldState,
+  getFieldInputClass,
+  getAriaInvalid,
+  type FieldState,
+} from "../lib/formValidation";
 import "./TransactionStatusBanner.css";
 
 interface Props {
@@ -70,6 +78,7 @@ export default function DistributeForm({
   const { status, setStatus, clearStatus } = useFormStatus();
   const [loading, setLoading] = useState(false);
   const [successTxHash, setSuccessTxHash] = useState<string | null>(null);
+  const [touched, setTouched] = useState<{ tokenId?: boolean; amount?: boolean }>({});
   // #653 — full transaction lifecycle state for granular wallet feedback
   const txLifecycle = useTransactionLifecycle();
   const draftKey = useMemo(
@@ -172,6 +181,25 @@ export default function DistributeForm({
     (total, collaborator) => total + collaborator.basisPoints,
     0,
   );
+
+  // Progressive validation field states
+  const tokenIdFieldState: FieldState = getFieldState(
+    touched.tokenId ?? false,
+    getContractAddressValidationError(tokenId),
+  );
+  const amountValue = amount.trim();
+  const amountFieldState: FieldState = getFieldState(
+    touched.amount ?? false,
+    amountValue ? getAmountValidationError(amountValue) : null,
+  );
+
+  function handleTokenIdBlur() {
+    setTouched((prev) => ({ ...prev, tokenId: true }));
+  }
+
+  function handleAmountBlur() {
+    setTouched((prev) => ({ ...prev, amount: true }));
+  }
 
   async function submit() {
     if (networkMismatch)
@@ -298,17 +326,27 @@ export default function DistributeForm({
       )}
 
       <label htmlFor="distribute-token-id">Token contract address</label>
-      <input
-        id="distribute-token-id"
-        placeholder="C..."
-        value={tokenId}
-        autoComplete="off"
-        spellCheck={false}
-        disabled={loading}
-        aria-invalid={tokenIdError ? "true" : undefined}
-        aria-describedby={tokenIdError ? "distribute-token-id-error" : undefined}
-        onChange={(e) => { setTokenId(e.target.value); setAmount(""); }}
-      />
+      <div className="input-wrapper">
+        <input
+          id="distribute-token-id"
+          placeholder="C..."
+          value={tokenId}
+          autoComplete="off"
+          spellCheck={false}
+          disabled={loading}
+          className={getFieldInputClass(tokenIdFieldState)}
+          aria-invalid={getAriaInvalid(tokenIdFieldState)}
+          aria-describedby={tokenIdError ? "distribute-token-id-error" : undefined}
+          onChange={(e) => { setTokenId(e.target.value); setAmount(""); }}
+          onBlur={handleTokenIdBlur}
+          style={{ marginBottom: tokenIdError || tokenIdFieldState === "valid" ? "0.25rem" : undefined }}
+        />
+        {tokenIdFieldState === "valid" && (
+          <span className="field-success" aria-hidden="true">
+            Valid address
+          </span>
+        )}
+      </div>
       {tokenIdError && (
         <p className="field-error" id="distribute-token-id-error" role="alert">
           {tokenIdError}
@@ -324,23 +362,42 @@ export default function DistributeForm({
         </p>
       )}
       <label htmlFor="distribute-amount">Amount</label>
-      <input
-        id="distribute-amount"
-        type="text"
-        inputMode="decimal"
-        placeholder="0"
-        value={amount}
-        onChange={(e) => setAmount(e.target.value)}
-        disabled={contractBalance === null || loading}
-        aria-invalid={exceedsBalance ? "true" : undefined}
-        aria-describedby={exceedsBalance ? "distribute-amount-error" : undefined}
-      />
+      <div className="input-wrapper">
+        <input
+          id="distribute-amount"
+          type="text"
+          inputMode="decimal"
+          placeholder="0"
+          value={amount}
+          className={getFieldInputClass(exceedsBalance ? "error" : amountFieldState)}
+          onChange={(e) => setAmount(e.target.value)}
+          onBlur={handleAmountBlur}
+          disabled={contractBalance === null || loading}
+          aria-invalid={exceedsBalance ? "true" : getAriaInvalid(amountFieldState)}
+          aria-describedby={exceedsBalance ? "distribute-amount-error" : amountFieldState === "error" ? "distribute-amount-validation" : undefined}
+          style={{ marginBottom: exceedsBalance || (amountFieldState === "error" && !exceedsBalance) || amountFieldState === "valid" ? "0.25rem" : undefined }}
+        />
+        {amountFieldState === "valid" && !exceedsBalance && (
+          <span className="field-success" aria-hidden="true">
+            Valid amount
+          </span>
+        )}
+      </div>
       {exceedsBalance && (
         <p
           className="field-error"
           id="distribute-amount-error"
         >
           Amount exceeds available balance of {contractBalance}.
+        </p>
+      )}
+      {!exceedsBalance && amountFieldState === "error" && amountValue && (
+        <p
+          className="field-error"
+          id="distribute-amount-validation"
+          role="alert"
+        >
+          {getAmountValidationError(amountValue)}
         </p>
       )}
       {collaboratorsLoading && (

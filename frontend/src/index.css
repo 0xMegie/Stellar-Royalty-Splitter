@@ -314,6 +314,44 @@ td:last-child {
   border-color: var(--error-color) !important;
 }
 
+.input-valid {
+  border-color: var(--success-color, #22c55e) !important;
+}
+
+.field-success {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--success-color, #22c55e);
+  margin-bottom: 0.5rem;
+}
+
+.field-success::before {
+  content: "\2713";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--success-color, #22c55e);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.input-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.input-wrapper input {
+  margin-bottom: 0;
+}
+
 .share-bar {
   height: 6px;
   border-radius: 3px;
