@@ -2,6 +2,14 @@ import { z } from "zod";
 import { sendError, sendValidationError } from "./error-response.js";
 import { isValidStellarAccountAddress } from "../../shared/stellar-address.js";
 
+// ── Size limits ──────────────────────────────────────────────────────────────
+// Soroban instance storage limit is 64 KB. These caps prevent single large
+// requests from bloating on-chain storage or exhausting backend processing.
+export const MAX_COLLABORATORS = 10;
+export const MAX_NFT_ID_LENGTH = 128;
+export const MAX_BODY_BYTES = 8_192; // 8 KB hard cap on any JSON request body
+export const MAX_SALE_PRICE = 9_007_199_254_740_991; // Number.MAX_SAFE_INTEGER
+
 export const stellarAddress = z
   .string("Validation failed: walletAddress must be a string")
   .refine(isValidStellarAccountAddress, "Validation failed: Invalid Stellar address");
@@ -20,8 +28,14 @@ export const initializeSchema = z
   .object({
     contractId: contractAddress,
     walletAddress: stellarAddress,
-    collaborators: z.array(stellarAddress).min(1, "Collaborators array must be non-empty").max(20),
-    shares: z.array(basisPoints).min(1).max(20),
+    collaborators: z
+      .array(stellarAddress)
+      .min(1, "at least one collaborator required")
+      .max(MAX_COLLABORATORS, `maximum ${MAX_COLLABORATORS} collaborators allowed`),
+    shares: z
+      .array(basisPoints)
+      .min(1, "at least one share required")
+      .max(MAX_COLLABORATORS, `maximum ${MAX_COLLABORATORS} shares allowed`),
   })
   .refine((d) => d.collaborators.length === d.shares.length, {
     message: "collaborators and shares must be the same length",
@@ -89,11 +103,15 @@ export const recordSecondarySaleSchema = z.object({
   walletAddress: stellarAddress,
   nftId: z
     .string()
-    .min(1, "nftId must not be empty")
-    .max(MAX_NFT_ID_LENGTH, `nftId must not exceed ${MAX_NFT_ID_LENGTH} characters`),
+    .min(1, "nftId is required")
+    .max(MAX_NFT_ID_LENGTH, `nftId must be at most ${MAX_NFT_ID_LENGTH} characters`),
   previousOwner: stellarAddress,
   newOwner: stellarAddress,
-  salePrice: z.number().positive("Sale price must be positive"),
+  salePrice: z
+    .number()
+    .int("salePrice must be an integer")
+    .positive("salePrice must be positive")
+    .max(MAX_SALE_PRICE, "salePrice exceeds maximum safe integer"),
   saleToken: contractAddress,
   royaltyRate: basisPoints,
 });
