@@ -50,6 +50,8 @@ import { startWebhookRetryScheduler } from "./jobs/retry-failed-webhooks.js";
 import { adminApiKeysRouter } from "./routes/admin-api-keys.js";
 import { recordApiKeyRequest } from "./database/rate-limit.js";
 import { createMetricsPusher } from "./metrics-pushgateway.js";
+import { transactionFinalityRouter } from "./routes/transaction-finality.js";
+import { startFinalityCleanupScheduler } from "./jobs/finality-cleanup-job.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -335,6 +337,9 @@ app.use("/api/v1/communications", communicationsRouter);
 // API version discovery (#676)
 app.use("/api/v1/version", versionRouter);
 
+// Transaction finality tracking (#finality)
+app.use("/api/v1/transactions", transactionFinalityRouter);
+
 // Admin operations (separate from /api/v1; protected by ADMIN_ROTATE_TOKEN)
 const RATE_LIMIT_ADMIN_WINDOW_MS = 60_000;
 const adminLimiter = rateLimit({
@@ -382,6 +387,9 @@ const snapshotScheduler = startSnapshotScheduler();
 
 // Start the webhook retry scheduler (#743)
 const webhookRetryScheduler = startWebhookRetryScheduler();
+
+// Start the finality cleanup scheduler (#finality)
+const finalityCleanupScheduler = startFinalityCleanupScheduler();
 const metricsPusher = createMetricsPusher();
 metricsPusher.start();
 
@@ -427,6 +435,9 @@ const handleShutdown = createGracefulShutdownHandler({
     }
     if (webhookRetryScheduler) {
       webhookRetryScheduler.stop();
+    }
+    if (finalityCleanupScheduler) {
+      finalityCleanupScheduler.stop();
     }
     metricsPusher.stop();
   },

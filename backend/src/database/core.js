@@ -263,6 +263,40 @@ export function initializeDatabase() {
           
         `,
       },
+      {
+        // Transaction finality tracking (#finality)
+        // Stores per-transaction Horizon polling state so contributors can
+        // query or subscribe via WebSocket to know when their transaction
+        // is confirmed, failed, or timed out.
+        version: 12,
+        sql: `
+          CREATE TABLE IF NOT EXISTS transaction_finality (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transaction_id INTEGER NOT NULL UNIQUE,
+            tx_hash TEXT,
+            status TEXT NOT NULL DEFAULT 'pending'
+              CHECK(status IN ('pending', 'confirmed', 'failed', 'timeout')),
+            confirmations INTEGER NOT NULL DEFAULT 0,
+            fee_paid TEXT,
+            submission_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            first_confirmation_at DATETIME,
+            final_status TEXT,
+            final_status_at DATETIME,
+            error_message TEXT,
+            poll_attempts INTEGER NOT NULL DEFAULT 0,
+            next_poll_at DATETIME,
+            FOREIGN KEY(transaction_id) REFERENCES transactions(id) ON DELETE CASCADE
+          );
+          CREATE INDEX IF NOT EXISTS idx_transaction_finality_transaction_id
+            ON transaction_finality(transaction_id);
+          CREATE INDEX IF NOT EXISTS idx_transaction_finality_status
+            ON transaction_finality(status);
+          CREATE INDEX IF NOT EXISTS idx_transaction_finality_tx_hash
+            ON transaction_finality(tx_hash);
+          CREATE INDEX IF NOT EXISTS idx_transaction_finality_submission_at
+            ON transaction_finality(submission_at);
+        `,
+      },
   ];
 
   for (const migration of migrations) {
