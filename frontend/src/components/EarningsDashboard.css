@@ -188,6 +188,22 @@
   }
 }
 
+.ws-indicator {
+  color: #48bb78;
+  font-size: 0.5rem;
+  margin-left: auto;
+  animation: wsPulse 2s infinite;
+}
+
+@keyframes wsPulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
 /* Section styling */
 .dashboard-section {
   background: var(--card-bg, #ffffff);

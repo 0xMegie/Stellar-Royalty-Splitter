@@ -6,6 +6,8 @@ import { isCollaborator } from "../utils/collaborators";
 import { CopyButton } from "./CopyButton";
 import { Skeleton } from "./Skeleton";
 import MultiContractComparison from "./MultiContractComparison";
+import { LiveEarningsCounter } from "./LiveEarningsCounter";
+import { useWebSocket, type DistributionEvent } from "../hooks/useWebSocket";
 import {
   buildExportFilename,
   buildDashboardCSV,
@@ -224,6 +226,21 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
     void loadDashboardData();
   }, [loadDashboardData]);
 
+  // Handle distribution events for real-time earnings updates
+  const handleDistributionEvent = useCallback((event: DistributionEvent) => {
+    if (event.contractId === activeContract) {
+      // Reload dashboard data to get updated totals
+      void loadDashboardData();
+    }
+  }, [activeContract, loadDashboardData]);
+
+  // Connect to WebSocket for real-time distribution updates
+  const { connected: wsConnected } = useWebSocket({
+    walletAddress: walletAddress ?? null,
+    onDistributionEvent: handleDistributionEvent,
+    enabled: !!walletAddress && !!activeContract,
+  });
+
   const contractSelector = selectableContracts.length > 0 && (
     <div className="contract-selector" data-testid="contract-selector">
       <label htmlFor="earnings-contract-select">Contract</label>
@@ -432,8 +449,13 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
           <div className="kpi-header">
             <span className="kpi-icon">💰</span>
             <span className="kpi-title">Total Distributed</span>
+            {wsConnected && <span className="ws-indicator" title="Live updates active">●</span>}
           </div>
-          <div className="kpi-value">{formatCurrency(totalDistributed, settings.displayCurrency)}</div>
+          <LiveEarningsCounter
+            value={totalDistributed}
+            currency={settings.displayCurrency}
+            testId="total-distributed"
+          />
           <div className="kpi-subtext">All-time primary & secondary payouts</div>
         </div>
 
@@ -442,7 +464,11 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
             <span className="kpi-icon">✨</span>
             <span className="kpi-title">Primary Royalties</span>
           </div>
-          <div className="kpi-value">{formatCurrency(primaryTotal, settings.displayCurrency)}</div>
+          <LiveEarningsCounter
+            value={primaryTotal}
+            currency={settings.displayCurrency}
+            testId="primary-royalties"
+          />
           <div className="kpi-subtext">Direct contract distributions</div>
         </div>
 
@@ -451,7 +477,11 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
             <span className="kpi-icon">🔄</span>
             <span className="kpi-title">Secondary Royalties</span>
           </div>
-          <div className="kpi-value">{formatCurrency(secondaryTotal, settings.displayCurrency)}</div>
+          <LiveEarningsCounter
+            value={secondaryTotal}
+            currency={settings.displayCurrency}
+            testId="secondary-royalties"
+          />
           <div className="kpi-subtext">NFT marketplace resales</div>
         </div>
 

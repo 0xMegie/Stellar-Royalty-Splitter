@@ -6,6 +6,7 @@ import { sendError } from "../error-response.js";
 import { invalidateContract } from "../cache.js";
 import { recordTransactionFailure, recordTransactionSuccess } from "../metrics.js";
 import logger from "../logger.js";
+import { broadcastToContract } from "../websocket.js";
 
 export const batchDistributeRouter = Router();
 
@@ -89,6 +90,17 @@ batchDistributeRouter.post(
             batch: true,
           });
           invalidateContract(contractId);
+
+          // Broadcast distribution event for real-time updates
+          broadcastToContract(contractId, {
+            type: "distribution_completed",
+            contractId,
+            transactionId,
+            timestamp: new Date().toISOString(),
+            tokenId,
+            batch: true,
+          });
+
           return { contractId, tokenId, transactionId, xdr: result.xdr };
         }
         recordTransactionFailure();

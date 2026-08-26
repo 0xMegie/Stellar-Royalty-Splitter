@@ -26,6 +26,7 @@ import {
   parsePagination,
 } from "../validation.js";
 import { sendError } from "../error-response.js";
+import { broadcastToContract } from "../websocket.js";
 
 export const secondaryRoyaltyRouter = Router();
 
@@ -116,6 +117,17 @@ secondaryRoyaltyRouter.post("/", validate(recordSecondarySaleSchema), async (req
       salePrice: salePrice.toString(),
       royaltyAmount: royaltyAmount.toString(),
       royaltyRateUsed: onChainRate,
+    });
+
+    // Broadcast secondary sale event for real-time updates
+    broadcastToContract(contractId, {
+      type: "secondary_sale_recorded",
+      contractId,
+      transactionId,
+      timestamp: new Date().toISOString(),
+      nftId,
+      salePrice: salePrice.toString(),
+      royaltyAmount: royaltyAmount.toString(),
     });
 
     res.json({
@@ -220,6 +232,17 @@ secondaryRoyaltyRouter.post(
         transactionId,
         numberOfSales: pendingSales.length,
         totalRoyalties: totalRoyalties.toString(),
+      });
+
+      // Broadcast secondary distribution event for real-time updates
+      broadcastToContract(contractId, {
+        type: "secondary_distribution_completed",
+        contractId,
+        transactionId,
+        timestamp: new Date().toISOString(),
+        numberOfSales: pendingSales.length,
+        totalRoyalties: totalRoyalties.toString(),
+        tokenId,
       });
 
       res.json({

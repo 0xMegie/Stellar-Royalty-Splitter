@@ -6,13 +6,29 @@ interface WebSocketMessage {
   [key: string]: unknown;
 }
 
+export interface DistributionEvent {
+  type: "distribution_completed" | "secondary_distribution_completed" | "secondary_sale_recorded";
+  contractId: string;
+  transactionId: string | number;
+  timestamp: string;
+  requestedAmount?: string | null;
+  tokenId?: string | null;
+  batch?: boolean;
+  numberOfSales?: number;
+  totalRoyalties?: string;
+  nftId?: string;
+  salePrice?: string;
+  royaltyAmount?: string;
+}
+
 interface UseWebSocketOptions {
   walletAddress: string | null;
   onNotification?: (notification: unknown) => void;
+  onDistributionEvent?: (event: DistributionEvent) => void;
   enabled?: boolean;
 }
 
-export function useWebSocket({ walletAddress, onNotification, enabled = true }: UseWebSocketOptions) {
+export function useWebSocket({ walletAddress, onNotification, onDistributionEvent, enabled = true }: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const [connected, setConnected] = useState(false);
@@ -43,6 +59,18 @@ export function useWebSocket({ walletAddress, onNotification, enabled = true }: 
           } else if (msg.type === "subscribed") {
             setConnected(true);
           }
+
+          // Handle distribution events for real-time earnings updates
+          if (msg.type === "notification" && onDistributionEvent) {
+            const data = msg.data as Record<string, unknown>;
+            if (
+              data.type === "distribution_completed" ||
+              data.type === "secondary_distribution_completed" ||
+              data.type === "secondary_sale_recorded"
+            ) {
+              onDistributionEvent(data as unknown as DistributionEvent);
+            }
+          }
         } catch {
           /* ignore parse errors */
         }
@@ -63,7 +91,7 @@ export function useWebSocket({ walletAddress, onNotification, enabled = true }: 
     } catch {
       /* connection error */
     }
-  }, [walletAddress, enabled, onNotification]);
+  }, [walletAddress, enabled, onNotification, onDistributionEvent]);
 
   useEffect(() => {
     connect();
