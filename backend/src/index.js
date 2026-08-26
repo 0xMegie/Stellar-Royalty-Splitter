@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import compression from "compression";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import logger, { asyncLocalStorage } from "./logger.js";
 import crypto from "crypto";
@@ -82,6 +83,18 @@ app.use(shutdownMiddleware);
 
 // Security headers
 app.use(helmet());
+
+// #766: gzip/deflate compress responses over 1KB (analytics payloads, CSV/JSON
+// exports, etc). Clients can opt out with `x-no-compression` for debugging.
+app.use(
+  compression({
+    threshold: 1024,
+    filter: (req, res) => {
+      if (req.headers["x-no-compression"]) return false;
+      return compression.filter(req, res);
+    },
+  })
+);
 
 const corsPreflightMaxAge = parseInt(process.env.CORS_PREFLIGHT_MAX_AGE ?? "86400", 10);
 
