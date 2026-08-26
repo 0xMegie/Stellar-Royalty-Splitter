@@ -13,16 +13,31 @@ export const defaultErrorCodes = {
   503: "service_unavailable",
 };
 
+export const retryableErrorCodes = {
+  too_many_requests: true,
+  service_unavailable: true,
+  request_timeout: true,
+  internal_server_error: false,
+};
+
 export function normalizeErrorCode(status, code) {
   return code || defaultErrorCodes[status] || "error";
 }
 
 export function buildErrorPayload(status, code, message, extra = {}) {
+  const normalizedCode = normalizeErrorCode(status, code);
+  const retryable = retryableErrorCodes[normalizedCode] || false;
+  const retryAfter = retryable ? (status === 429 ? 60 : 5) : null; // Default retry after hints
+  const detailsUrl = `docs/errors#${normalizedCode}`;
+  
   return {
     status,
-    code: normalizeErrorCode(status, code),
+    code: normalizedCode,
     message,
     error: message,
+    retryable,
+    retryAfter,
+    details_url: detailsUrl,
     ...extra,
   };
 }
