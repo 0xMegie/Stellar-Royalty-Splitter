@@ -1732,6 +1732,20 @@ impl RoyaltySplitter {
             .unwrap_or(Vec::new(&env))
     }
 
+    fn validate_unique_addresses(env: &Env, recipients: &Vec<Recipient>) {
+        let mut address_set: Vec<Address> = Vec::new(env);
+
+        for i in 0..recipients.len() {
+            let recipient = recipients.get(i).unwrap();
+            for j in 0..address_set.len() {
+                if address_set.get(j).unwrap() == recipient.address {
+                    Self::fail(env, ContractError::DuplicateRecipient);
+                }
+            }
+            address_set.push_back(recipient.address.clone());
+        }
+    }
+
     fn validate_recipient_list(env: &Env, recipients: &Vec<Recipient>) {
         if recipients.is_empty() {
             Self::fail(env, ContractError::EmptyRecipients);
@@ -1741,22 +1755,15 @@ impl RoyaltySplitter {
             Self::fail(env, ContractError::TooManyRecipients);
         }
 
-        let mut total_shares: u32 = 0;
-        let mut address_set: Vec<Address> = Vec::new(env);
+        Self::validate_unique_addresses(env, recipients);
 
+        let mut total_shares: u32 = 0;
         for i in 0..recipients.len() {
             let recipient = recipients.get(i).unwrap();
 
             if recipient.share == 0 {
                 Self::fail(env, ContractError::ZeroShare);
             }
-
-            for j in 0..address_set.len() {
-                if address_set.get(j).unwrap() == recipient.address {
-                    Self::fail(env, ContractError::DuplicateRecipient);
-                }
-            }
-            address_set.push_back(recipient.address.clone());
 
             total_shares = Self::checked_add_share_total(env, total_shares, recipient.share);
         }
