@@ -13,6 +13,12 @@ import { computeNextRun } from "../schedule-calculator.js";
 import { recordTransaction } from "../database/index.js";
 import { addAuditLog } from "../database/index.js";
 import logger from "../logger.js";
+import { server, addressToScVal, networkPassphrase } from "../stellar.js";
+import StellarSdk from "@stellar/stellar-sdk";
+import { getWebhooksByContractId } from "../database/webhooks.js";
+import { broadcastTransactionStatus } from "../websocket.js";
+
+const { Contract, TransactionBuilder, BASE_FEE, Account, SorobanRpc } = StellarSdk;
 
 /**
  * Run one pass of the payment schedule checker.
@@ -35,6 +41,77 @@ export async function runPaymentSchedules() {
 
   for (const schedule of due) {
     try {
+      // Dry-run simulation before distribution
+      let simulationError = null;
+      let estimatedFee = null;
+      try {
+        const contract = new Contract(schedule.contractId);
+        const dummyAccount = new Account(schedule.walletAddress, "0");
+        const tx = new TransactionBuilder(dummyAccount, {
+          fee: BASE_FEE,
+          networkPassphrase,
+        })
+          .addOperation(contract.call("distribute", addressToScVal(schedule.tokenId)))
+          .setTimeout(30)
+          .build();
+
+        const sim = await server.simulateTransaction(tx);
+        if (SorobanRpc.Api.isSimulationError(sim)) {
+          simulationError = sim.error?.toString() || "Simulation failed";
+        } else {
+          estimatedFee = sim.minResourceFee || sim.fee || BASE_FEE;
+        }
+      } catch (simErr) {
+        simulationError = simErr.message;
+      }
+
+      if (simulationError) {
+        logger.warn("Payment schedule simulation failed, skipping", {
+          scheduleId: schedule.id,
+          name: schedule.name,
+          error: simulationError,
+        });
+        
+        // Record failure and notify webhooks
+        const transactionId = recordTransaction(
+          schedule.contractId,
+          "distribute",
+          schedule.walletAddress,
+          { tokenId: schedule.tokenId, requestedAmount: null, error: simulationError }
+        );
+
+        addAuditLog(
+          schedule.contractId,
+          "scheduled_distribution_failed",
+          schedule.walletAddress,
+          {
+            scheduleId: schedule.id,
+            scheduleName: schedule.name,
+            error: simulationError,
+            transactionId,
+          }
+        );
+
+        // Notify webhooks of failure
+        await notifyWebhooks(schedule.contractId, {
+          event: "scheduled_distribution_failed",
+          scheduleId: schedule.id,
+          scheduleName: schedule.name,
+          error: simulationError,
+          timestamp: nowIso,
+        });
+
+        // Broadcast transaction status via WebSocket
+        broadcastTransactionStatus(String(transactionId), {
+          id: String(transactionId),
+          status: "failed",
+          error: simulationError,
+        });
+
+        failed++;
+        continue;
+      }
+
       // Record a pending distribute transaction so there is a full audit trail.
       // The actual XDR signing is the responsibility of the contract operator —
       // this job creates the on-chain intent record and logs the trigger.
@@ -42,7 +119,7 @@ export async function runPaymentSchedules() {
         schedule.contractId,
         "distribute",
         schedule.walletAddress,
-        { tokenId: schedule.tokenId, requestedAmount: null }
+        { tokenId: schedule.tokenId, requestedAmount: null, estimatedFee }
       );
 
       addAuditLog(
@@ -54,6 +131,7 @@ export async function runPaymentSchedules() {
           scheduleName: schedule.name,
           scheduleType: schedule.type,
           transactionId,
+          estimatedFee,
         }
       );
 
@@ -66,6 +144,24 @@ export async function runPaymentSchedules() {
         contractId: schedule.contractId,
         transactionId,
         nextRunAt,
+        estimatedFee,
+      });
+
+      // Notify webhooks of successful trigger
+      await notifyWebhooks(schedule.contractId, {
+        event: "scheduled_distribution_triggered",
+        scheduleId: schedule.id,
+        scheduleName: schedule.name,
+        transactionId,
+        estimatedFee,
+        timestamp: nowIso,
+      });
+
+      // Broadcast transaction status via WebSocket
+      broadcastTransactionStatus(String(transactionId), {
+        id: String(transactionId),
+        status: "pending",
+        fee: estimatedFee,
       });
 
       triggered++;
@@ -80,6 +176,38 @@ export async function runPaymentSchedules() {
   }
 
   return { triggered, skipped, failed };
+}
+
+/**
+ * Notify registered webhooks of schedule events.
+ *
+ * @param {string} contractId
+ * @param {object} payload
+ */
+async function notifyWebhooks(contractId, payload) {
+  const webhooks = getWebhooksByContractId(contractId);
+  for (const webhook of webhooks) {
+    try {
+      const response = await fetch(webhook.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        logger.warn("Webhook notification failed", {
+          webhookId: webhook.id,
+          url: webhook.url,
+          status: response.status,
+        });
+      }
+    } catch (err) {
+      logger.warn("Webhook notification error", {
+        webhookId: webhook.id,
+        url: webhook.url,
+        error: err.message,
+      });
+    }
+  }
 }
 
 /**

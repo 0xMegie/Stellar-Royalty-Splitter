@@ -43,12 +43,15 @@ describe("normalizeErrorCode", () => {
 describe("buildErrorPayload", () => {
   test("returns the standard shape with status/code/message/error duplicated", () => {
     const payload = buildErrorPayload(400, "validation_failed", "Bad input");
-    expect(payload).toEqual({
+    expect(payload).toMatchObject({
       status: 400,
       code: "validation_failed",
       message: "Bad input",
       error: "Bad input",
     });
+    expect(payload.retryable).toBe(false);
+    expect(payload.retryAfter).toBeNull();
+    expect(payload.details_url).toBe("docs/errors#validation_failed");
   });
 
   test("normalizes a falsy code via the status-based default", () => {
@@ -70,6 +73,24 @@ describe("buildErrorPayload", () => {
     expect(payload.stack).toBeUndefined();
     expect(JSON.stringify(payload)).not.toContain("at ");
   });
+
+  test("includes retryable field for retryable errors", () => {
+    const payload = buildErrorPayload(429, "too_many_requests", "Rate limit exceeded");
+    expect(payload.retryable).toBe(true);
+    expect(payload.retryAfter).toBe(60);
+  });
+
+  test("includes retryable field for service unavailable", () => {
+    const payload = buildErrorPayload(503, "service_unavailable", "Service unavailable");
+    expect(payload.retryable).toBe(true);
+    expect(payload.retryAfter).toBe(5);
+  });
+
+  test("sets retryable to false for non-retryable errors", () => {
+    const payload = buildErrorPayload(400, "validation_failed", "Bad input");
+    expect(payload.retryable).toBe(false);
+    expect(payload.retryAfter).toBeNull();
+  });
 });
 
 describe("sendError", () => {
@@ -78,13 +99,18 @@ describe("sendError", () => {
     sendError(res, 403, "forbidden", "Not allowed", { reason: "rbac" });
 
     expect(res.status).toHaveBeenCalledWith(403);
-    expect(res.json).toHaveBeenCalledWith({
-      status: 403,
-      code: "forbidden",
-      message: "Not allowed",
-      error: "Not allowed",
-      reason: "rbac",
-    });
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 403,
+        code: "forbidden",
+        message: "Not allowed",
+        error: "Not allowed",
+        reason: "rbac",
+        retryable: false,
+        retryAfter: null,
+        details_url: "docs/errors#forbidden",
+      })
+    );
   });
 });
 
@@ -98,13 +124,18 @@ describe("sendValidationError", () => {
     sendValidationError(res, issues);
 
     expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({
-      status: 400,
-      code: "validation_failed",
-      message: "shares must sum to 10000",
-      error: "shares must sum to 10000",
-      details: issues,
-    });
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 400,
+        code: "validation_failed",
+        message: "shares must sum to 10000",
+        error: "shares must sum to 10000",
+        details: issues,
+        retryable: false,
+        retryAfter: null,
+        details_url: "docs/errors#validation_failed",
+      })
+    );
   });
 
   test("falls back to a generic message when there are no issues", () => {

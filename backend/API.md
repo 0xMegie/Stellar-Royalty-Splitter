@@ -17,6 +17,9 @@ and internal errors — uses the same JSON shape and is built by
   "code": "validation_failed",
   "message": "Collaborators array must be non-empty",
   "error": "Collaborators array must be non-empty",
+  "retryable": false,
+  "retryAfter": null,
+  "details_url": "docs/errors#validation_failed",
   "details": [{ "field": "collaborators", "message": "Collaborators array must be non-empty" }]
 }
 ```
@@ -27,6 +30,9 @@ and internal errors — uses the same JSON shape and is built by
 | `code` | Stable, machine-readable error code — safe to branch on in frontend/integration code. Never changes across releases for the same failure class. |
 | `message` | Human-readable message. Safe to display to end users. |
 | `error` | Same value as `message` — kept for backward compatibility with older clients that read `.error` |
+| `retryable` | Boolean indicating whether the request can be retried |
+| `retryAfter` | Suggested retry delay in seconds (null if not retryable) |
+| `details_url` | Link to error documentation in the error catalog |
 | `details` | Present only on validation errors; an array of `{ field, message }` issues |
 
 Stack traces and other internal details are never included in a response —
@@ -222,13 +228,33 @@ Dry-run the `distribute` call via Soroban simulation. Returns the expected fee, 
     { "address": "G...", "amount": "500" },
     { "address": "G...", "amount": "500" }
   ],
-  "contractError": null
+  "contractError": null,
+  "feeBreakdown": {
+    "base_fee": 100,
+    "priority_fee": 0,
+    "resource_fee": 0,
+    "total": 100
+  },
+  "perRecipientEffectiveFee": 50,
+  "feeScalingComparison": [
+    { "collaborators": 2, "estimated_total_fee": 110 },
+    { "collaborators": 5, "estimated_total_fee": 140 },
+    { "collaborators": 10, "estimated_total_fee": 190 },
+    { "collaborators": 20, "estimated_total_fee": 290 }
+  ]
 }
 ```
 
 - `fee`: The expected Soroban resource fee returned by simulation
 - `recipientAmounts`: Array of `{ address, amount }` entries decoded from simulated `dist` events. Amounts are strings to preserve integer precision. The array is empty if simulation fails before payouts are emitted.
 - `contractError`: Error message if simulation failed, otherwise `null`
+- `feeBreakdown`: Object containing fee components:
+  - `base_fee`: Stellar base fee (100 stroops)
+  - `priority_fee`: Additional fee for priority processing
+  - `resource_fee`: Soroban resource fee
+  - `total`: Sum of all fee components
+- `perRecipientEffectiveFee`: Total fee divided by number of recipients
+- `feeScalingComparison`: Array showing estimated fee growth for 2, 5, 10, and 20 collaborators
 
 The endpoint only calls Soroban RPC simulation. It does not submit the transaction, record a transaction row, or modify contract state.
 
