@@ -24,6 +24,18 @@ pub struct RoyaltyRateChange {
     pub caller: Address,
 }
 
+/// A pending timelocked admin rotation (#778).
+///
+/// Created by `initiate_admin_rotation`; consumed by `finalize_admin_rotation`
+/// once `initiated_at + timelock` has elapsed, or discarded by
+/// `cancel_admin_rotation`.
+#[contracttype]
+#[derive(Clone)]
+pub struct AdminRotation {
+    pub new_admin: Address,
+    pub initiated_at: u64,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct MigrationRecord {
@@ -71,6 +83,10 @@ pub enum StorageKey {
     AdminList,
     AdminThreshold,
     IncentivesEnabled,
+    PendingAdminRotation,
+    AdminRotationTimelock,
+    EmergencyPaused,
+    AnomalyThreshold,
     // Persistent storage
     Collaborators,
     ShareMap,
@@ -129,6 +145,18 @@ pub const MAX_INDIVIDUAL_INCENTIVE_BPS: u32 = 1_000;
 /// distribution, in basis points (20%). Individual bonuses are scaled down
 /// proportionally when their raw sum would exceed this.
 pub const MAX_TOTAL_INCENTIVE_BPS: u32 = 2_000;
+
+/// Default duration (seconds) a timelocked admin rotation must wait before
+/// `finalize_admin_rotation` can complete it (#778). 48 hours.
+pub const DEFAULT_ADMIN_ROTATION_TIMELOCK: u64 = 172_800;
+
+/// Minimum configurable timelock duration (seconds) for admin rotation — 1 hour.
+/// Prevents `set_admin_rotation_timelock` from being configured down to a
+/// value so small the timelock provides no meaningful protection.
+pub const MIN_ADMIN_ROTATION_TIMELOCK: u64 = 3_600;
+
+/// Maximum configurable timelock duration (seconds) for admin rotation — 30 days.
+pub const MAX_ADMIN_ROTATION_TIMELOCK: u64 = 2_592_000;
 
 /// Maximum number of tokens accepted per `batch_distribute` call.
 ///
@@ -200,6 +228,11 @@ pub enum ContractError {
     InitializationCommitmentMismatch = 31,
     TooManyBatchTokens = 32,
     RoyaltyAmountNotPositive = 33,
+    NoPendingAdminRotation = 34,
+    AdminRotationTimelockNotElapsed = 35,
+    InvalidTimelockDuration = 36,
+    EmergencyContractPaused = 37,
+    InvalidAnomalyThreshold = 38,
 }
 
 #[contract]
@@ -827,9 +860,14 @@ impl RoyaltySplitter {
         }
     }
 
-    /// Returns `true` if `operation` is currently blocked — either by the
-    /// global pause switch or by its own per-operation pause state (#749).
+    /// Returns `true` if `operation` is currently blocked — by the
+    /// emergency pause (#779), the global pause switch, or its own
+    /// per-operation pause state (#749).
     fn is_blocked(env: &Env, operation: OperationType) -> bool {
+        if Self::is_emergency_paused_flag(env) {
+            return true;
+        }
+
         let globally_paused: bool = env
             .storage()
             .instance()
@@ -841,6 +879,15 @@ impl RoyaltySplitter {
 
         let key = Self::operation_pause_key(operation);
         env.storage().instance().get(&key).unwrap_or(false)
+    }
+
+    /// Raw emergency-pause flag read, shared by `is_blocked` and
+    /// `batch_distribute` (#779).
+    fn is_emergency_paused_flag(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get::<StorageKey, bool>(&StorageKey::EmergencyPaused)
+            .unwrap_or(false)
     }
 
     /// Returns `true` if `initialize` has been called, `false` otherwise.
@@ -1009,9 +1056,14 @@ impl RoyaltySplitter {
 
         Self::check_admin_auth(&env, auth::msg::DISTRIBUTE_OVERRIDE_ADMIN);
 
-        // Blocked by either the global pause switch or a primary-distribution-
-        // specific pause (#749) — global pause always wins for backward
-        // compatibility.
+        // Emergency pause (#779) takes precedence and gets its own distinct
+        // error so clients know `clear_emergency_pause` (not `unpause`) is
+        // the way out. Otherwise blocked by either the global pause switch
+        // or a primary-distribution-specific pause (#749) — global pause
+        // always wins for backward compatibility.
+        if Self::is_emergency_paused_flag(&env) {
+            Self::fail(&env, ContractError::EmergencyContractPaused);
+        }
         if Self::is_blocked(&env, OperationType::PrimaryDistribution) {
             Self::fail(&env, ContractError::ContractPaused);
         }
@@ -1020,6 +1072,18 @@ impl RoyaltySplitter {
         let amount = token_client.balance(&env.current_contract_address());
         if amount == 0 {
             soroban_sdk::panic_with_error!(&env, ContractError::Underfunded);
+        }
+
+        // Anomaly detection (#779): a single distribution larger than the
+        // configured threshold auto-trips the emergency pause instead of
+        // completing. This returns normally (does not panic) — Soroban's
+        // atomic execution model would roll back the pause flag itself
+        // along with everything else in this call if it then panicked, so
+        // the call must succeed as a no-op for the pause to durably persist.
+        // The *next* call sees EmergencyPaused already set and is rejected
+        // by the check above.
+        if Self::trip_anomaly_pause_if_exceeded(&env, &token, amount) {
+            return;
         }
 
         // Determine which recipient list to use
@@ -1123,6 +1187,169 @@ impl RoyaltySplitter {
         storage::instance_set(&env, &StorageKey::DistributeHistory, &new_count);
     }
 
+    // #777: distribute()/distribute_with_override() treat any failed
+    // transfer as fatal — the whole tx reverts, and per Soroban's atomic
+    // execution model nothing from a reverted tx is ever observable
+    // on-chain, not even events published earlier in the same call. A
+    // transfer can fail for reasons outside this contract's control (a
+    // classic-asset recipient missing a trustline, a frozen/deauthorized
+    // account, an adversarial recipient contract), and today that one bad
+    // recipient blocks payment to every other, uninvolved collaborator.
+    // This function uses the token client's `try_transfer` so one failing
+    // transfer doesn't sink the rest: successes commit, failures are
+    // collected and returned; their share of the balance stays in the
+    // contract (recover via `withdraw` or a retry through
+    // `distribute_with_override`, which recomputes against the
+    // then-current balance).
+    /// Distribute the full contract balance of `token`, tolerating
+    /// individual recipient transfer failures instead of aborting (#777).
+    /// Same recipient resolution / per-recipient split as
+    /// `distribute_with_override`. Emits `dist_strt` once up front,
+    /// `dist` per successful transfer, `dist_fail` once if any failed, and
+    /// `dist_all` (amount actually transferred) if any succeeded.
+    /// `LastDistribution`/`get_distribute_count` update only on success.
+    /// Requires admin signature. Panics like `distribute_with_override`
+    /// for every check before the transfer loop; a per-recipient failure
+    /// after that is recorded, not panicked on.
+    ///
+    /// Returns the list of recipient addresses whose transfer failed.
+    pub fn distribute_resilient(
+        env: Env,
+        token: Address,
+        override_recipients: Vec<Recipient>,
+    ) -> Vec<Address> {
+        storage::extend_instance_ttl(&env);
+
+        Self::check_admin_auth(&env, auth::msg::DISTRIBUTE_RESILIENT_ADMIN);
+
+        if Self::is_blocked(&env, OperationType::PrimaryDistribution) {
+            Self::fail(&env, ContractError::ContractPaused);
+        }
+
+        let token_client = token::Client::new(&env, &token);
+        let amount = token_client.balance(&env.current_contract_address());
+        if amount == 0 {
+            Self::fail(&env, ContractError::Underfunded);
+        }
+
+        let recipients_to_use: Vec<Recipient> = if !override_recipients.is_empty() {
+            override_recipients
+        } else {
+            let defaults: Vec<Recipient> =
+                storage::persistent_get::<Vec<Recipient>>(&env, &StorageKey::DefaultRecipients)
+                    .unwrap_or(Vec::new(&env));
+
+            if !defaults.is_empty() {
+                defaults
+            } else {
+                let collaborators: Vec<Address> =
+                    storage::persistent_get::<Vec<Address>>(&env, &StorageKey::Collaborators)
+                        .expect("no collaborators");
+                let share_map: Map<Address, u32> =
+                    storage::persistent_get::<Map<Address, u32>>(&env, &StorageKey::ShareMap)
+                        .expect("no share map");
+
+                let mut recipients: Vec<Recipient> = Vec::new(&env);
+                for addr in collaborators.iter() {
+                    let share = share_map.get(addr.clone()).unwrap_or(0);
+                    recipients.push_back(Recipient {
+                        address: addr,
+                        share,
+                    });
+                }
+                recipients
+            }
+        };
+
+        Self::validate_recipient_list(&env, &recipients_to_use);
+
+        let n = recipients_to_use.len();
+        if amount < n as i128 {
+            Self::fail(&env, ContractError::AmountTooSmall);
+        }
+
+        let mut payouts: Vec<(Address, i128)> = Vec::new(&env);
+        let mut total_calculated: i128 = 0;
+        for i in 0..(n - 1) {
+            let recipient = recipients_to_use.get(i).unwrap();
+            let payout = Self::checked_bps_amount(&env, amount, recipient.share);
+            payouts.push_back((recipient.address.clone(), payout));
+            total_calculated = total_calculated
+                .checked_add(payout)
+                .unwrap_or_else(|| Self::fail(&env, ContractError::ArithmeticOverflow));
+        }
+        let last = recipients_to_use.get(n - 1).unwrap();
+        payouts.push_back((
+            last.address.clone(),
+            amount
+                .checked_sub(total_calculated)
+                .unwrap_or_else(|| Self::fail(&env, ContractError::ArithmeticOverflow)),
+        ));
+
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("dist_strt")),
+            (token.clone(), amount, n as u32),
+        );
+
+        let mut failed: Vec<Address> = Vec::new(&env);
+        let mut distributed: i128 = 0;
+        let mut succeeded: u64 = 0;
+
+        for (addr, payout) in payouts.iter() {
+            match token_client.try_transfer(&env.current_contract_address(), &addr, &payout) {
+                Ok(Ok(())) => {
+                    succeeded += 1;
+                    distributed = distributed
+                        .checked_add(payout)
+                        .unwrap_or_else(|| Self::fail(&env, ContractError::ArithmeticOverflow));
+                    env.events().publish(
+                        (symbol_short!("royalty"), symbol_short!("dist")),
+                        (addr.clone(), payout, token.clone(), symbol_short!("primary")),
+                    );
+                }
+                _ => {
+                    failed.push_back(addr.clone());
+                }
+            }
+        }
+
+        if !failed.is_empty() {
+            env.events().publish(
+                (symbol_short!("royalty"), symbol_short!("dist_fail")),
+                (token.clone(), failed.clone()),
+            );
+        }
+
+        if succeeded > 0 {
+            env.events().publish(
+                (symbol_short!("royalty"), symbol_short!("dist_all")),
+                (token, distributed),
+            );
+
+            storage::instance_set(
+                &env,
+                &StorageKey::LastDistribution,
+                &env.ledger().timestamp(),
+            );
+
+            // Matches distribute_with_override's convention: +1 per call
+            // (not per recipient), regardless of how many of this call's
+            // transfers succeeded.
+            let current_count: u64 = env
+                .storage()
+                .instance()
+                .get(&StorageKey::DistributeHistory)
+                .unwrap_or(0);
+            storage::instance_set(
+                &env,
+                &StorageKey::DistributeHistory,
+                &current_count.saturating_add(1),
+            );
+        }
+
+        failed
+    }
+
     /// Get the total number of successful royalty distributions.
     ///
     /// Returns a monotonically increasing counter that increments on every
@@ -1184,6 +1411,12 @@ impl RoyaltySplitter {
         // and only then hitting resource limits mid-loop.
         if tokens.len() > MAX_BATCH_TOKENS {
             Self::fail(&env, ContractError::TooManyBatchTokens);
+        }
+
+        // Emergency pause (#779) takes precedence — see
+        // distribute_with_override for why it's checked separately.
+        if Self::is_emergency_paused_flag(&env) {
+            Self::fail(&env, ContractError::EmergencyContractPaused);
         }
 
         // Check paused state once for the entire batch
@@ -1249,6 +1482,17 @@ impl RoyaltySplitter {
         for token in tokens.iter() {
             let token_client = token::Client::new(&env, &token);
             let amount = token_client.balance(&env.current_contract_address());
+
+            // Anomaly detection (#779) — see distribute_with_override for
+            // why this returns normally instead of panicking on trip. Any
+            // earlier tokens in this same batch that already transferred
+            // stay transferred (this call is not reverting); the counter/
+            // timestamp update below is skipped for the whole batch,
+            // consistent with treating a tripped batch as not a normal
+            // completed distribution.
+            if Self::trip_anomaly_pause_if_exceeded(&env, &token, amount) {
+                return;
+            }
 
             if amount == 0 {
                 Self::fail(&env, ContractError::NoBalance);
@@ -1413,9 +1657,14 @@ impl RoyaltySplitter {
 
         Self::check_admin_auth(&env, auth::msg::DISTRIBUTE_SECONDARY_ADMIN);
 
-        // Blocked by either the global pause switch or a secondary-
-        // distribution-specific pause (#749) — global pause always wins for
-        // backward compatibility.
+        // Emergency pause (#779) takes precedence — see distribute_with_override
+        // for why it's checked separately from the general block below.
+        // Otherwise blocked by either the global pause switch or a
+        // secondary-distribution-specific pause (#749) — global pause
+        // always wins for backward compatibility.
+        if Self::is_emergency_paused_flag(&env) {
+            Self::fail(&env, ContractError::EmergencyContractPaused);
+        }
         if Self::is_blocked(&env, OperationType::SecondaryDistribution) {
             Self::fail(&env, ContractError::ContractPaused);
         }
@@ -1439,6 +1688,12 @@ impl RoyaltySplitter {
             .instance()
             .get(&StorageKey::SecondaryToken)
             .unwrap_or_else(|| Self::fail(&env, ContractError::NoSecondaryToken));
+
+        // Anomaly detection (#779) — see distribute_with_override for why
+        // this returns normally instead of panicking on trip.
+        if Self::trip_anomaly_pause_if_exceeded(&env, &token, pool) {
+            return;
+        }
 
         let token_client = token::Client::new(&env, &token);
         let balance = token_client.balance(&env.current_contract_address());
@@ -1791,6 +2046,7 @@ impl RoyaltySplitter {
             .unwrap_or(Vec::new(&env))
     }
 
+
     // #776: optional contributor reward incentives. Disabled by default —
     // enabling changes payout shares, so it's an explicit admin opt-in per
     // contract, not a forced default. Two components, each independently
@@ -2057,6 +2313,303 @@ impl RoyaltySplitter {
         );
     }
 
+    /// Initiate a timelocked admin rotation (#778).
+    ///
+    /// Starts the configurable timelock (48 hours by default, see
+    /// `set_admin_rotation_timelock`); the rotation only takes effect once
+    /// `finalize_admin_rotation` is called after it elapses. Calling this
+    /// again before finalization replaces any existing pending rotation
+    /// (there is only ever one pending rotation at a time).
+    ///
+    /// # Authorization
+    /// Requires current admin (or multi-sig threshold) signature.
+    pub fn initiate_admin_rotation(env: Env, new_admin: Address) {
+        storage::extend_instance_ttl(&env);
+
+        Self::check_admin_auth(&env, auth::msg::INITIATE_ADMIN_ROTATION_ADMIN);
+
+        let initiated_at = env.ledger().timestamp();
+        let rotation = AdminRotation {
+            new_admin: new_admin.clone(),
+            initiated_at,
+        };
+        storage::instance_set(&env, &StorageKey::PendingAdminRotation, &rotation);
+
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("rot_init")),
+            (new_admin, initiated_at),
+        );
+    }
+
+    /// Cancel a pending admin rotation (#778). Reverts to no pending rotation;
+    /// the current admin is unaffected.
+    ///
+    /// # Authorization
+    /// Requires current admin (or multi-sig threshold) signature — i.e. only
+    /// the admin the rotation would replace can cancel it.
+    ///
+    /// # Panics
+    /// * `ContractError::NoPendingAdminRotation` — no rotation is pending
+    pub fn cancel_admin_rotation(env: Env) {
+        storage::extend_instance_ttl(&env);
+
+        Self::check_admin_auth(&env, auth::msg::CANCEL_ADMIN_ROTATION_ADMIN);
+
+        let rotation: AdminRotation = env
+            .storage()
+            .instance()
+            .get(&StorageKey::PendingAdminRotation)
+            .unwrap_or_else(|| Self::fail(&env, ContractError::NoPendingAdminRotation));
+
+        env.storage()
+            .instance()
+            .remove(&StorageKey::PendingAdminRotation);
+
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("rot_cncl")),
+            rotation.new_admin,
+        );
+    }
+
+    /// Complete a pending admin rotation once its timelock has elapsed (#778).
+    ///
+    /// Permissionless by design: the outcome (which address becomes admin)
+    /// was already fixed and authorized at `initiate_admin_rotation` time, so
+    /// finalization only needs to enforce that the timelock has elapsed —
+    /// there is no bypass, and anyone (e.g. the new admin themselves, or an
+    /// automation script) can trigger it once the deadline passes. The
+    /// current admin can still prevent it any time before this call
+    /// succeeds via `cancel_admin_rotation`.
+    ///
+    /// # Panics
+    /// * `ContractError::NoPendingAdminRotation` — no rotation is pending
+    /// * `ContractError::AdminRotationTimelockNotElapsed` — called too early
+    pub fn finalize_admin_rotation(env: Env) {
+        storage::extend_instance_ttl(&env);
+
+        let rotation: AdminRotation = env
+            .storage()
+            .instance()
+            .get(&StorageKey::PendingAdminRotation)
+            .unwrap_or_else(|| Self::fail(&env, ContractError::NoPendingAdminRotation));
+
+        let timelock = Self::admin_rotation_timelock(&env);
+        let ready_at = rotation
+            .initiated_at
+            .checked_add(timelock)
+            .unwrap_or_else(|| Self::fail(&env, ContractError::ArithmeticOverflow));
+
+        if env.ledger().timestamp() < ready_at {
+            Self::fail(&env, ContractError::AdminRotationTimelockNotElapsed);
+        }
+
+        let previous_admin = Self::require_admin_address(&env);
+        storage::instance_set(&env, &StorageKey::Admin, &rotation.new_admin);
+        env.storage()
+            .instance()
+            .remove(&StorageKey::PendingAdminRotation);
+
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("rot_fin")),
+            (previous_admin, rotation.new_admin),
+        );
+    }
+
+    /// Returns the pending admin rotation, or `None` if none is in progress.
+    pub fn get_pending_admin_rotation(env: Env) -> Option<AdminRotation> {
+        storage::extend_instance_ttl(&env);
+        env.storage().instance().get(&StorageKey::PendingAdminRotation)
+    }
+
+    /// Configure the admin rotation timelock duration, in seconds (#778).
+    ///
+    /// Bounded to `[MIN_ADMIN_ROTATION_TIMELOCK, MAX_ADMIN_ROTATION_TIMELOCK]`
+    /// (1 hour – 30 days) so it can't be configured away to something that
+    /// provides no real protection, or up to something impractically long.
+    ///
+    /// # Authorization
+    /// Requires current admin (or multi-sig threshold) signature.
+    ///
+    /// # Panics
+    /// * `ContractError::InvalidTimelockDuration` — `seconds` outside the bounds
+    pub fn set_admin_rotation_timelock(env: Env, seconds: u64) {
+        storage::extend_instance_ttl(&env);
+
+        Self::check_admin_auth(&env, auth::msg::SET_ADMIN_ROTATION_TIMELOCK_ADMIN);
+
+        if seconds < MIN_ADMIN_ROTATION_TIMELOCK || seconds > MAX_ADMIN_ROTATION_TIMELOCK {
+            Self::fail(&env, ContractError::InvalidTimelockDuration);
+        }
+
+        storage::instance_set(&env, &StorageKey::AdminRotationTimelock, &seconds);
+
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("rot_tlck")),
+            seconds,
+        );
+    }
+
+    /// Returns the currently configured admin rotation timelock, in seconds.
+    /// Defaults to [`DEFAULT_ADMIN_ROTATION_TIMELOCK`] (48 hours) until
+    /// explicitly changed via `set_admin_rotation_timelock`.
+    pub fn get_admin_rotation_timelock(env: Env) -> u64 {
+        storage::extend_instance_ttl(&env);
+        Self::admin_rotation_timelock(&env)
+    }
+
+    fn admin_rotation_timelock(env: &Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&StorageKey::AdminRotationTimelock)
+            .unwrap_or(DEFAULT_ADMIN_ROTATION_TIMELOCK)
+    }
+
+    // #779: emergency pause + anomaly detection. Distinct from, and
+    // stronger than, the existing pause()/unpause() and pause_operation()/
+    // unpause_operation() (#749) switches — see is_blocked, which checks
+    // this flag first. Two ways to trip it:
+    //   - manually, via trigger_emergency_pause (same admin authorization
+    //     as routine operations — raising the alarm is the conservative,
+    //     low-risk direction);
+    //   - automatically, when a single distribution amount exceeds an
+    //     admin-configured anomaly threshold (set_anomaly_threshold).
+    // Clearing it requires a *stronger* bar than routine operations: when
+    // multi-sig is configured, every admin in the list must authorize (not
+    // just AdminThreshold of them) — see require_emergency_clear_auth.
+    //
+    // A note on why the automatic trip doesn't panic: Soroban transactions
+    // are atomic, so a call that panics rolls back every storage write it
+    // made, including the EmergencyPaused flag itself. `distribute`-family
+    // functions therefore set the flag and return normally (no transfers,
+    // no error) when an anomaly trips; the *next* call sees the flag
+    // already durably set and is rejected outright.
+
+    /// Configure the maximum single-distribution amount before it's treated
+    /// as anomalous and auto-trips the emergency pause (#779). Applies to
+    /// `distribute`/`distribute_with_override` (the full token balance),
+    /// each token in `batch_distribute`, and the pool in
+    /// `distribute_secondary_royalties`. Not configured (the default) means
+    /// no automatic anomaly check is performed.
+    ///
+    /// # Authorization
+    /// Requires admin signature.
+    ///
+    /// # Panics
+    /// * `ContractError::InvalidAnomalyThreshold` — `max_amount <= 0`
+    pub fn set_anomaly_threshold(env: Env, max_amount: i128) {
+        storage::extend_instance_ttl(&env);
+        Self::check_admin_auth(&env, auth::msg::SET_ANOMALY_THRESHOLD_ADMIN);
+
+        if max_amount <= 0 {
+            Self::fail(&env, ContractError::InvalidAnomalyThreshold);
+        }
+
+        storage::instance_set(&env, &StorageKey::AnomalyThreshold, &max_amount);
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("anom_set")),
+            max_amount,
+        );
+    }
+
+    /// Disable the automatic anomaly check (does not affect an
+    /// already-tripped emergency pause — use `clear_emergency_pause` for that).
+    ///
+    /// # Authorization
+    /// Requires admin signature.
+    pub fn clear_anomaly_threshold(env: Env) {
+        storage::extend_instance_ttl(&env);
+        Self::check_admin_auth(&env, auth::msg::SET_ANOMALY_THRESHOLD_ADMIN);
+        env.storage().instance().remove(&StorageKey::AnomalyThreshold);
+        env.events()
+            .publish((symbol_short!("royalty"), symbol_short!("anom_clr")), ());
+    }
+
+    /// Returns the configured anomaly threshold, or `None` if disabled.
+    pub fn get_anomaly_threshold(env: Env) -> Option<i128> {
+        storage::extend_instance_ttl(&env);
+        env.storage().instance().get(&StorageKey::AnomalyThreshold)
+    }
+
+    /// Checks `amount` against the configured anomaly threshold; if it's
+    /// exceeded, durably sets the emergency pause and emits an `anomaly`
+    /// event. Returns `true` if it tripped (caller must return without
+    /// distributing — see the module note on why this never panics).
+    fn trip_anomaly_pause_if_exceeded(env: &Env, token: &Address, amount: i128) -> bool {
+        let threshold: Option<i128> = env.storage().instance().get(&StorageKey::AnomalyThreshold);
+        let Some(threshold) = threshold else {
+            return false;
+        };
+
+        if amount <= threshold {
+            return false;
+        }
+
+        storage::instance_set(env, &StorageKey::EmergencyPaused, &true);
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("anomaly")),
+            (token.clone(), amount, threshold),
+        );
+        true
+    }
+
+    /// Manually trigger the emergency pause (#779), blocking all
+    /// distribution functions until `clear_emergency_pause` succeeds.
+    ///
+    /// # Authorization
+    /// Requires admin signature.
+    pub fn trigger_emergency_pause(env: Env, reason: String) {
+        storage::extend_instance_ttl(&env);
+        Self::check_admin_auth(&env, auth::msg::TRIGGER_EMERGENCY_PAUSE_ADMIN);
+        storage::instance_set(&env, &StorageKey::EmergencyPaused, &true);
+        env.events()
+            .publish((symbol_short!("royalty"), symbol_short!("emrg_set")), reason);
+    }
+
+    /// Clear the emergency pause (#779). Requires a stricter bar than
+    /// routine operations: when multi-sig is configured (`AdminList` set),
+    /// *every* listed admin must authorize — not just `AdminThreshold` of
+    /// them.
+    ///
+    /// # Authorization
+    /// Requires the single admin, or unanimous multi-sig admin, signature(s).
+    pub fn clear_emergency_pause(env: Env) {
+        storage::extend_instance_ttl(&env);
+        Self::require_emergency_clear_auth(&env);
+        storage::instance_set(&env, &StorageKey::EmergencyPaused, &false);
+        env.events()
+            .publish((symbol_short!("royalty"), symbol_short!("emrg_clr")), ());
+    }
+
+    /// Returns `true` if the emergency pause is currently active.
+    pub fn is_emergency_paused(env: Env) -> bool {
+        storage::extend_instance_ttl(&env);
+        Self::is_emergency_paused_flag(&env)
+    }
+
+    /// Auth helper for `clear_emergency_pause`: unanimous admin list
+    /// signatures when multi-sig is configured, otherwise the single admin —
+    /// deliberately stricter than `check_admin_auth`'s `AdminThreshold`.
+    fn require_emergency_clear_auth(env: &Env) {
+        let admin_list: Option<Vec<Address>> = env.storage().instance().get(&StorageKey::AdminList);
+        if let Some(admins) = admin_list {
+            if !admins.is_empty() {
+                let context = String::from_str(env, auth::msg::CLEAR_EMERGENCY_PAUSE_ADMIN);
+                env.events().publish((symbol_short!("auth_req"),), context);
+                for admin in admins.iter() {
+                    admin.require_auth();
+                }
+                return;
+            }
+        }
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&StorageKey::Admin)
+            .expect("contract not initialized");
+        auth::require_admin(env, &admin, auth::msg::CLEAR_EMERGENCY_PAUSE_ADMIN);
+    }
+
     fn validate_unique_addresses(env: &Env, recipients: &Vec<Recipient>) {
         let mut address_set: Vec<Address> = Vec::new(env);
 
@@ -2276,3 +2829,497 @@ mod contributor_incentive_tests {
         assert_eq!(client.get_distribute_count(), 1);
     }
 }
+
+#[cfg(test)]
+mod admin_rotation_tests {
+    //! Valid-path tests call through `RoyaltySplitterClient` (real contract
+    //! dispatch via `env.register_contract`), matching this repo's existing
+    //! test convention.
+    //!
+    //! `#[should_panic]` cases are marked `#[ignore]`: a pre-existing
+    //! soroban-sdk 20.5.0 + modern-rustc incompatibility means a contract
+    //! panic crossing the generated client's dispatch boundary aborts the
+    //! whole test binary (SIGABRT) instead of unwinding — confirmed on both
+    //! macOS/aarch64 and Linux/x86_64, both with and without `try_*`. This is
+    //! the same reason `tests/integration_test.rs`, `tests/fuzz_royalty_allocation.rs`,
+    //! and `tests/commit_reveal_test.rs` no longer compile/run their
+    //! panic-path cases either, and why CI's `Test` job is filtered down to a
+    //! single non-panicking test name. The logic itself (bounds checks
+    //! ordered before any state mutation, `ContractError` variants returned)
+    //! mirrors the rest of the file's established guard-rail pattern; run
+    //! these `--ignored` on a toolchain/SDK combination without the abort to
+    //! confirm.
+    use super::*;
+    use soroban_sdk::testutils::{Address as _, Ledger};
+
+    fn setup(env: &Env) -> (Address, Address, RoyaltySplitterClient<'_>) {
+        let contract_id = env.register_contract(None, RoyaltySplitter);
+        let client = RoyaltySplitterClient::new(env, &contract_id);
+        let admin = Address::generate(env);
+        let b = Address::generate(env);
+        client.initialize(
+            &Vec::from_array(env, [admin.clone(), b.clone()]),
+            &Vec::from_array(env, [6_000u32, 4_000u32]),
+        );
+        (contract_id, admin, client)
+    }
+
+    #[test]
+    fn default_timelock_is_48_hours() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, client) = setup(&env);
+        assert_eq!(
+            client.get_admin_rotation_timelock(),
+            DEFAULT_ADMIN_ROTATION_TIMELOCK
+        );
+        assert!(client.get_pending_admin_rotation().is_none());
+    }
+
+    #[test]
+    fn initiate_then_finalize_after_timelock_rotates_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, admin, client) = setup(&env);
+        let new_admin = Address::generate(&env);
+
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+        client.initiate_admin_rotation(&new_admin);
+
+        let pending = client.get_pending_admin_rotation().unwrap();
+        assert_eq!(pending.new_admin, new_admin);
+        assert_eq!(pending.initiated_at, 1_000);
+        assert_eq!(client.get_admin(), admin);
+
+        env.ledger()
+            .with_mut(|l| l.timestamp = 1_000 + DEFAULT_ADMIN_ROTATION_TIMELOCK);
+        client.finalize_admin_rotation();
+
+        assert_eq!(client.get_admin(), new_admin);
+        assert!(client.get_pending_admin_rotation().is_none());
+    }
+
+    #[test]
+    #[ignore = "aborts under soroban-sdk 20.5.0 client dispatch on modern rustc; see module doc"]
+    #[should_panic]
+    fn finalize_before_timelock_elapses_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, client) = setup(&env);
+        let new_admin = Address::generate(&env);
+
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+        client.initiate_admin_rotation(&new_admin);
+
+        env.ledger()
+            .with_mut(|l| l.timestamp = 1_000 + DEFAULT_ADMIN_ROTATION_TIMELOCK - 1);
+        client.finalize_admin_rotation();
+    }
+
+    #[test]
+    #[ignore = "aborts under soroban-sdk 20.5.0 client dispatch on modern rustc; see module doc"]
+    #[should_panic]
+    fn finalize_without_pending_rotation_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, client) = setup(&env);
+        client.finalize_admin_rotation();
+    }
+
+    #[test]
+    fn cancel_clears_pending_rotation_and_blocks_finalize() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, admin, client) = setup(&env);
+        let new_admin = Address::generate(&env);
+
+        client.initiate_admin_rotation(&new_admin);
+        assert!(client.get_pending_admin_rotation().is_some());
+
+        client.cancel_admin_rotation();
+        assert!(client.get_pending_admin_rotation().is_none());
+        assert_eq!(client.get_admin(), admin);
+    }
+
+    #[test]
+    #[ignore = "aborts under soroban-sdk 20.5.0 client dispatch on modern rustc; see module doc"]
+    #[should_panic]
+    fn cancel_without_pending_rotation_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, client) = setup(&env);
+        client.cancel_admin_rotation();
+    }
+
+    #[test]
+    fn re_initiating_replaces_prior_pending_rotation() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, client) = setup(&env);
+        let first_candidate = Address::generate(&env);
+        let second_candidate = Address::generate(&env);
+
+        env.ledger().with_mut(|l| l.timestamp = 500);
+        client.initiate_admin_rotation(&first_candidate);
+
+        env.ledger().with_mut(|l| l.timestamp = 900);
+        client.initiate_admin_rotation(&second_candidate);
+
+        let pending = client.get_pending_admin_rotation().unwrap();
+        assert_eq!(pending.new_admin, second_candidate);
+        assert_eq!(pending.initiated_at, 900);
+
+        env.ledger()
+            .with_mut(|l| l.timestamp = 900 + DEFAULT_ADMIN_ROTATION_TIMELOCK);
+        client.finalize_admin_rotation();
+        assert_eq!(client.get_admin(), second_candidate);
+    }
+
+    #[test]
+    fn set_admin_rotation_timelock_changes_wait_period() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, client) = setup(&env);
+        let new_admin = Address::generate(&env);
+
+        client.set_admin_rotation_timelock(&MIN_ADMIN_ROTATION_TIMELOCK);
+        assert_eq!(
+            client.get_admin_rotation_timelock(),
+            MIN_ADMIN_ROTATION_TIMELOCK
+        );
+
+        env.ledger().with_mut(|l| l.timestamp = 10_000);
+        client.initiate_admin_rotation(&new_admin);
+
+        env.ledger()
+            .with_mut(|l| l.timestamp = 10_000 + MIN_ADMIN_ROTATION_TIMELOCK);
+        client.finalize_admin_rotation();
+        assert_eq!(client.get_admin(), new_admin);
+    }
+
+    #[test]
+    #[ignore = "aborts under soroban-sdk 20.5.0 client dispatch on modern rustc; see module doc"]
+    #[should_panic]
+    fn set_admin_rotation_timelock_below_minimum_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, client) = setup(&env);
+        client.set_admin_rotation_timelock(&(MIN_ADMIN_ROTATION_TIMELOCK - 1));
+    }
+
+    #[test]
+    #[ignore = "aborts under soroban-sdk 20.5.0 client dispatch on modern rustc; see module doc"]
+    #[should_panic]
+    fn set_admin_rotation_timelock_above_maximum_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, client) = setup(&env);
+        client.set_admin_rotation_timelock(&(MAX_ADMIN_ROTATION_TIMELOCK + 1));
+    }
+}
+
+/// Minimal test-only "token" used to deterministically exercise
+/// `distribute_resilient`'s partial-failure path (#777). Soroban's real
+/// token clients dispatch by function name/signature, not by trait object,
+/// so any contract exposing `balance`/`transfer` with matching signatures
+/// works as a token for `token::Client`. `transfer` panics for a
+/// pre-configured "blocked" recipient (standing in for a real-world failure
+/// like a missing trustline or a frozen account) and succeeds as a no-op
+/// otherwise; `balance` returns a pre-configured constant regardless of
+/// transfers, since only `distribute_resilient`'s control flow is under
+/// test here, not real token accounting.
+#[cfg(test)]
+#[contract]
+pub struct MockPartialFailToken;
+
+#[cfg(test)]
+#[contractimpl]
+impl MockPartialFailToken {
+    pub fn set_balance(env: Env, amount: i128) {
+        env.storage().instance().set(&symbol_short!("bal"), &amount);
+    }
+
+    pub fn set_blocked(env: Env, addr: Address) {
+        env.storage().instance().set(&symbol_short!("blocked"), &addr);
+    }
+
+    pub fn balance(env: Env, _id: Address) -> i128 {
+        env.storage().instance().get(&symbol_short!("bal")).unwrap_or(0)
+    }
+
+    pub fn transfer(env: Env, _from: Address, to: Address, _amount: i128) {
+        let blocked: Option<Address> = env.storage().instance().get(&symbol_short!("blocked"));
+        if blocked == Some(to) {
+            panic!("blocked recipient");
+        }
+    }
+}
+
+#[cfg(test)]
+mod distribute_resilient_tests {
+    //! The two "a recipient's transfer fails" cases below are marked
+    //! `#[ignore]`: they need `MockPartialFailToken::transfer` to actually
+    //! panic so `try_transfer` has something to catch, but under this
+    //! soroban-sdk 20.5.0 + modern-rustc combination *any* contract-dispatch
+    //! panic aborts the whole process (SIGABRT) instead of unwinding —
+    //! confirmed for both the outermost client-dispatch boundary (see the
+    //! `admin_rotation_tests` module doc) and, here, for a panic several
+    //! calls deep inside a `try_transfer`'d cross-contract call. The
+    //! `distribute_resilient` implementation follows the standard Soroban
+    //! pattern for defensive cross-contract calls (match on
+    //! `Ok(Ok(()))`, treat everything else as a recorded failure); run these
+    //! `--ignored` on a toolchain/SDK combination without the abort to
+    //! confirm end-to-end.
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
+
+    fn setup(env: &Env) -> (Address, RoyaltySplitterClient<'_>) {
+        let contract_id = env.register_contract(None, RoyaltySplitter);
+        let client = RoyaltySplitterClient::new(env, &contract_id);
+        let admin = Address::generate(env);
+        let b = Address::generate(env);
+        client.initialize(
+            &Vec::from_array(env, [admin, b]),
+            &Vec::from_array(env, [6_000u32, 4_000u32]),
+        );
+        (contract_id, client)
+    }
+
+    fn mock_token(env: &Env, balance: i128, blocked: Option<&Address>) -> Address {
+        let token = env.register_contract(None, MockPartialFailToken);
+        let token_client = MockPartialFailTokenClient::new(env, &token);
+        token_client.set_balance(&balance);
+        if let Some(addr) = blocked {
+            token_client.set_blocked(addr);
+        }
+        token
+    }
+
+    #[test]
+    fn all_succeed_behaves_like_a_normal_distribution() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, client) = setup(&env);
+
+        let asset_admin = Address::generate(&env);
+        let token = env.register_stellar_asset_contract(asset_admin);
+        StellarAssetClient::new(&env, &token).mint(&contract_id, &10_000);
+
+        let failed = client.distribute_resilient(&token, &Vec::new(&env));
+        assert!(failed.is_empty());
+        assert_eq!(client.get_distribute_count(), 1);
+        assert!(client.get_last_distribution().is_some());
+        assert_eq!(TokenClient::new(&env, &token).balance(&contract_id), 0);
+    }
+
+    #[test]
+    #[ignore = "aborts under soroban-sdk 20.5.0 nested contract dispatch on modern rustc; see module doc"]
+    fn one_blocked_recipient_does_not_sink_the_other() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_contract_id, client) = setup(&env);
+        let blocked_addr = client.get_recipients().get(1).unwrap().address;
+
+        let token = mock_token(&env, 10_000, Some(&blocked_addr));
+
+        let failed = client.distribute_resilient(&token, &Vec::new(&env));
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed.get(0).unwrap(), blocked_addr);
+
+        // The one successful transfer still counts as a completed
+        // distribution — the call did not revert because of the other's
+        // failure.
+        assert_eq!(client.get_distribute_count(), 1);
+        assert!(client.get_last_distribution().is_some());
+    }
+
+    #[test]
+    #[ignore = "aborts under soroban-sdk 20.5.0 nested contract dispatch on modern rustc; see module doc"]
+    fn every_recipient_blocked_reports_full_failure_without_reverting() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_contract_id, client) = setup(&env);
+        let sole_recipient = Address::generate(&env);
+
+        let token = mock_token(&env, 10_000, Some(&sole_recipient));
+        let override_recipients = Vec::from_array(
+            &env,
+            [Recipient {
+                address: sole_recipient.clone(),
+                share: 10_000,
+            }],
+        );
+
+        let failed = client.distribute_resilient(&token, &override_recipients);
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed.get(0).unwrap(), sole_recipient);
+
+        // No transfer succeeded, so the call must not be recorded as a
+        // completed distribution.
+        assert_eq!(client.get_distribute_count(), 0);
+        assert!(client.get_last_distribution().is_none());
+    }
+}
+
+#[cfg(test)]
+mod emergency_pause_tests {
+    //! The two `#[ignore]`d cases need a genuine auth/panic rejection from
+    //! the contract, but under this soroban-sdk 20.5.0 + modern-rustc
+    //! combination any contract-dispatch panic aborts the whole process
+    //! instead of unwinding (see `admin_rotation_tests`' module doc for the
+    //! full explanation, confirmed on both macOS/aarch64 and Linux/x86_64).
+    //! Run these `--ignored` on a toolchain/SDK combination without the
+    //! issue to confirm end-to-end.
+    use super::*;
+    use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
+    use soroban_sdk::{token::{Client as TokenClient, StellarAssetClient}, IntoVal};
+
+    fn setup(env: &Env) -> (Address, Address, Address, RoyaltySplitterClient<'_>) {
+        let contract_id = env.register_contract(None, RoyaltySplitter);
+        let client = RoyaltySplitterClient::new(env, &contract_id);
+        let a = Address::generate(env);
+        let b = Address::generate(env);
+        client.initialize(
+            &Vec::from_array(env, [a.clone(), b.clone()]),
+            &Vec::from_array(env, [6_000u32, 4_000u32]),
+        );
+        (contract_id, a, b, client)
+    }
+
+    #[test]
+    fn disabled_by_default() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, _, client) = setup(&env);
+
+        assert!(client.get_anomaly_threshold().is_none());
+        assert!(!client.is_emergency_paused());
+    }
+
+    #[test]
+    fn set_and_clear_anomaly_threshold() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, _, client) = setup(&env);
+
+        client.set_anomaly_threshold(&5_000);
+        assert_eq!(client.get_anomaly_threshold(), Some(5_000));
+
+        client.clear_anomaly_threshold();
+        assert!(client.get_anomaly_threshold().is_none());
+    }
+
+    #[test]
+    fn oversized_distribution_trips_emergency_pause_without_reverting() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _a, _b, client) = setup(&env);
+        client.set_anomaly_threshold(&5_000);
+
+        let asset_admin = Address::generate(&env);
+        let token = env.register_stellar_asset_contract(asset_admin);
+        StellarAssetClient::new(&env, &token).mint(&contract_id, &10_000);
+
+        // 10,000 exceeds the 5,000 threshold: the call must succeed as a
+        // no-op (not panic — see module doc) but durably set the pause.
+        client.distribute(&token);
+
+        assert!(client.is_emergency_paused());
+        assert_eq!(client.get_distribute_count(), 0);
+        assert_eq!(
+            TokenClient::new(&env, &token).balance(&contract_id),
+            10_000
+        );
+    }
+
+    #[test]
+    fn distribution_under_threshold_is_unaffected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _a, _b, client) = setup(&env);
+        client.set_anomaly_threshold(&5_000);
+
+        let asset_admin = Address::generate(&env);
+        let token = env.register_stellar_asset_contract(asset_admin);
+        StellarAssetClient::new(&env, &token).mint(&contract_id, &4_000);
+
+        client.distribute(&token);
+
+        assert!(!client.is_emergency_paused());
+        assert_eq!(client.get_distribute_count(), 1);
+        assert_eq!(TokenClient::new(&env, &token).balance(&contract_id), 0);
+    }
+
+    #[test]
+    fn manual_trigger_and_clear_single_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, _, client) = setup(&env);
+
+        client.trigger_emergency_pause(&String::from_str(&env, "manual test pause"));
+        assert!(client.is_emergency_paused());
+
+        client.clear_emergency_pause();
+        assert!(!client.is_emergency_paused());
+    }
+
+    #[test]
+    fn clear_succeeds_when_every_multisig_admin_authorizes() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, a, b, client) = setup(&env);
+
+        // AdminThreshold of 1 is enough for routine operations, but
+        // clear_emergency_pause walks the *entire* admin list regardless —
+        // with mock_all_auths every address auto-authorizes, so this proves
+        // the iteration over all admins completes without erroring.
+        client.set_admins(&Vec::from_array(&env, [a, b]), &1);
+        client.trigger_emergency_pause(&String::from_str(&env, "test"));
+
+        client.clear_emergency_pause();
+        assert!(!client.is_emergency_paused());
+    }
+
+    #[test]
+    #[ignore = "aborts under soroban-sdk 20.5.0 client dispatch on modern rustc; see module doc"]
+    fn distribute_while_emergency_paused_panics_with_distinct_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _a, _b, client) = setup(&env);
+        client.trigger_emergency_pause(&String::from_str(&env, "test"));
+
+        let asset_admin = Address::generate(&env);
+        let token = env.register_stellar_asset_contract(asset_admin);
+        StellarAssetClient::new(&env, &token).mint(&contract_id, &1_000);
+
+        client.distribute(&token);
+    }
+
+    #[test]
+    #[ignore = "aborts under soroban-sdk 20.5.0 client dispatch on modern rustc; see module doc"]
+    fn clear_emergency_pause_fails_without_every_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, a, b, client) = setup(&env);
+
+        client.set_admins(&Vec::from_array(&env, [a.clone(), b]), &1);
+        client.trigger_emergency_pause(&String::from_str(&env, "test"));
+
+        // Only `a` authorizes — `b` is required too (unanimity), so this
+        // must fail even though a plain `AdminThreshold` of 1 would pass.
+        client
+            .set_auths(&[MockAuth {
+                address: &a,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "clear_emergency_pause",
+                    args: ().into_val(&env),
+                    sub_invokes: &[],
+                },
+            }
+            .into()])
+            .clear_emergency_pause();
+    }
+}
+
