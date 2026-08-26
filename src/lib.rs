@@ -70,6 +70,7 @@ pub enum StorageKey {
     PendingAdmin,
     AdminList,
     AdminThreshold,
+    IncentivesEnabled,
     // Persistent storage
     Collaborators,
     ShareMap,
@@ -81,6 +82,8 @@ pub enum StorageKey {
     InitializeNonce,
     AppliedMigrations,
     MigrationMemo,
+    ContributorJoinDate,
+    ContributorActivityCount,
 }
 
 /// Maximum number of rate-change entries kept in history.
@@ -97,6 +100,35 @@ pub const MAX_RECIPIENTS: u32 = 10;
 
 /// Maximum number of admins in the multi-sig admin list (`set_admins`).
 pub const MAX_ADMIN_LIST: u32 = 10;
+
+/// Window (seconds) after a collaborator's join date during which they
+/// qualify for the early-adopter incentive bonus (#776). 30 days.
+pub const EARLY_ADOPTER_WINDOW_SECS: u64 = 2_592_000;
+
+/// Early-adopter incentive bonus, in basis points (0.5%).
+pub const EARLY_ADOPTER_BONUS_BPS: u32 = 50;
+
+/// Activity incentive bonus granted per `ACTIVITY_BONUS_STEP` recorded
+/// secondary-royalty payments a collaborator has personally made, in basis
+/// points (0.1% per step).
+pub const ACTIVITY_BONUS_BPS_PER_STEP: u32 = 10;
+
+/// Number of recorded activities per activity-bonus step.
+pub const ACTIVITY_BONUS_STEP: u32 = 100;
+
+/// Maximum number of activity-bonus steps counted per collaborator — caps
+/// the activity component at 100 bps (1%) before the overall per-collaborator
+/// cap below is applied.
+pub const ACTIVITY_BONUS_MAX_STEPS: u32 = 10;
+
+/// Maximum incentive bonus a single collaborator can receive, in basis
+/// points (10%) — the safety bound called for by #776's acceptance criteria.
+pub const MAX_INDIVIDUAL_INCENTIVE_BPS: u32 = 1_000;
+
+/// Maximum combined incentive bonus across all collaborators in one
+/// distribution, in basis points (20%). Individual bonuses are scaled down
+/// proportionally when their raw sum would exceed this.
+pub const MAX_TOTAL_INCENTIVE_BPS: u32 = 2_000;
 
 /// Maximum number of tokens accepted per `batch_distribute` call.
 ///
@@ -263,6 +295,17 @@ impl RoyaltySplitter {
 
             share_map.set(addr, share);
         }
+
+        // Record each collaborator's join date for the early-adopter
+        // incentive bonus (#776). initialize_validated only runs once per
+        // contract (guarded by the AlreadyInitialized check in initialize/
+        // reveal_initialize), so every collaborator here is joining fresh.
+        let now = env.ledger().timestamp();
+        let mut join_dates: Map<Address, u64> = Map::new(env);
+        for addr in collaborators.iter() {
+            join_dates.set(addr, now);
+        }
+        storage::persistent_set(env, &StorageKey::ContributorJoinDate, &join_dates);
 
         let admin = collaborators.get(0).unwrap();
         storage::instance_set(env, &StorageKey::Admin, &admin);
@@ -879,6 +922,20 @@ impl RoyaltySplitter {
         storage::persistent_set(&env, &StorageKey::Collaborators, &collaborators);
         storage::persistent_set(&env, &StorageKey::ShareMap, &share_map);
 
+        // Record a join date for any newly-added collaborator without
+        // disturbing existing collaborators' tenure (#776) — replacing the
+        // list here shouldn't reset an early adopter's incentive eligibility.
+        let mut join_dates: Map<Address, u64> =
+            storage::persistent_get::<Map<Address, u64>>(&env, &StorageKey::ContributorJoinDate)
+                .unwrap_or(Map::new(&env));
+        let now = env.ledger().timestamp();
+        for addr in collaborators.iter() {
+            if !join_dates.contains_key(addr.clone()) {
+                join_dates.set(addr, now);
+            }
+        }
+        storage::persistent_set(&env, &StorageKey::ContributorJoinDate, &join_dates);
+
         env.events().publish(
             (symbol_short!("royalty"), symbol_short!("recip_set")),
             recipients.len(),
@@ -1314,6 +1371,25 @@ impl RoyaltySplitter {
         storage::instance_set(&env, &StorageKey::SecondaryPool, &new_pool);
 
         storage::instance_set(&env, &StorageKey::SecondaryToken, &token);
+
+        // Activity incentive tracking (#776): a collaborator engaging with
+        // the contract by recording secondary royalty payments earns
+        // activity credit toward the incentive bonus. `from` is often a
+        // marketplace/reseller rather than a collaborator, so this only
+        // counts when `from` is itself a registered collaborator.
+        let share_map: Map<Address, u32> =
+            storage::persistent_get::<Map<Address, u32>>(&env, &StorageKey::ShareMap)
+                .unwrap_or(Map::new(&env));
+        if share_map.contains_key(from.clone()) {
+            let mut activity: Map<Address, u32> = storage::persistent_get::<Map<Address, u32>>(
+                &env,
+                &StorageKey::ContributorActivityCount,
+            )
+            .unwrap_or(Map::new(&env));
+            let count = activity.get(from.clone()).unwrap_or(0).saturating_add(1);
+            activity.set(from, count);
+            storage::persistent_set(&env, &StorageKey::ContributorActivityCount, &activity);
+        }
     }
 
     /// Distribute all accumulated secondary royalties to collaborators.
@@ -1715,6 +1791,272 @@ impl RoyaltySplitter {
             .unwrap_or(Vec::new(&env))
     }
 
+    // #776: optional contributor reward incentives. Disabled by default —
+    // enabling changes payout shares, so it's an explicit admin opt-in per
+    // contract, not a forced default. Two components, each independently
+    // bounded, feed a per-collaborator bonus (in basis points):
+    //   - an early-adopter bonus while within EARLY_ADOPTER_WINDOW_SECS of
+    //     their join date (recorded at `initialize`/`set_recipients`);
+    //   - an activity bonus based on how many secondary-royalty payments
+    //     they've personally recorded via `record_secondary_royalty` — the
+    //     closest existing signal of a collaborator actively engaging with
+    //     the contract, since `distribute`-side calls are admin-only and
+    //     wouldn't distinguish which collaborator triggered them under
+    //     multi-sig.
+    // Each collaborator's combined bonus is capped at
+    // MAX_INDIVIDUAL_INCENTIVE_BPS; the sum across all collaborators is
+    // additionally capped at MAX_TOTAL_INCENTIVE_BPS, scaling every
+    // individual bonus down proportionally if needed. The bonus pool is
+    // funded by shrinking every collaborator's base share by the same
+    // factor, so the adjusted list always sums to exactly 10,000 basis
+    // points — see `calculate_incentive_shares`.
+
+    /// Enable or disable incentive-adjusted distribution (#776). Disabled by
+    /// default. While disabled, `calculate_incentive_shares`
+    /// returns the plain recipient list unchanged.
+    ///
+    /// # Authorization
+    /// Requires admin signature.
+    pub fn set_incentives_enabled(env: Env, enabled: bool) {
+        storage::extend_instance_ttl(&env);
+        Self::check_admin_auth(&env, auth::msg::SET_INCENTIVES_ENABLED_ADMIN);
+        storage::instance_set(&env, &StorageKey::IncentivesEnabled, &enabled);
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("incn_set")),
+            enabled,
+        );
+    }
+
+    /// Returns whether incentive-adjusted distribution is enabled.
+    pub fn is_incentives_enabled(env: Env) -> bool {
+        storage::extend_instance_ttl(&env);
+        env.storage()
+            .instance()
+            .get(&StorageKey::IncentivesEnabled)
+            .unwrap_or(false)
+    }
+
+    /// Returns a collaborator's recorded join date, or `None` if they have
+    /// never been a collaborator on this contract.
+    pub fn get_contributor_join_date(env: Env, collaborator: Address) -> Option<u64> {
+        storage::extend_instance_ttl(&env);
+        let join_dates: Map<Address, u64> =
+            storage::persistent_get::<Map<Address, u64>>(&env, &StorageKey::ContributorJoinDate)
+                .unwrap_or(Map::new(&env));
+        join_dates.get(collaborator)
+    }
+
+    /// Returns how many secondary-royalty payments a collaborator has
+    /// personally recorded via `record_secondary_royalty`. Returns 0 if none.
+    pub fn get_contributor_activity_count(env: Env, collaborator: Address) -> u32 {
+        storage::extend_instance_ttl(&env);
+        let activity: Map<Address, u32> = storage::persistent_get::<Map<Address, u32>>(
+            &env,
+            &StorageKey::ContributorActivityCount,
+        )
+        .unwrap_or(Map::new(&env));
+        activity.get(collaborator).unwrap_or(0)
+    }
+
+    /// A collaborator's incentive bonus in basis points, before the
+    /// aggregate `MAX_TOTAL_INCENTIVE_BPS` scale-down.
+    fn incentive_bonus_bps(env: &Env, addr: &Address, now: u64) -> u32 {
+        let mut bonus: u32 = 0;
+
+        let join_dates: Map<Address, u64> =
+            storage::persistent_get::<Map<Address, u64>>(env, &StorageKey::ContributorJoinDate)
+                .unwrap_or(Map::new(env));
+        if let Some(join_date) = join_dates.get(addr.clone()) {
+            if now.saturating_sub(join_date) <= EARLY_ADOPTER_WINDOW_SECS {
+                bonus = bonus.saturating_add(EARLY_ADOPTER_BONUS_BPS);
+            }
+        }
+
+        let activity: Map<Address, u32> =
+            storage::persistent_get::<Map<Address, u32>>(env, &StorageKey::ContributorActivityCount)
+                .unwrap_or(Map::new(env));
+        let count = activity.get(addr.clone()).unwrap_or(0);
+        let steps = (count / ACTIVITY_BONUS_STEP).min(ACTIVITY_BONUS_MAX_STEPS);
+        bonus = bonus.saturating_add(steps.saturating_mul(ACTIVITY_BONUS_BPS_PER_STEP));
+
+        bonus.min(MAX_INDIVIDUAL_INCENTIVE_BPS)
+    }
+
+    /// Returns the recipient list with incentive bonuses applied (#776), or
+    /// the plain `get_recipients()` list unchanged if incentives are
+    /// disabled or nobody currently qualifies for a bonus. Named
+    /// `calculate_incentive_shares` rather than the
+    /// `calculate_distribution_with_incentives` name #776 suggests —
+    /// Soroban caps contract function names at 32 characters.
+    ///
+    /// Bonuses are funded by shrinking every collaborator's base share by
+    /// the same factor, so the returned list always sums to exactly 10,000
+    /// basis points. Pure read — does not transfer tokens or modify state.
+    pub fn calculate_incentive_shares(env: Env) -> Vec<Recipient> {
+        storage::extend_instance_ttl(&env);
+
+        let base = Self::get_recipients(env.clone());
+        let enabled: bool = env
+            .storage()
+            .instance()
+            .get(&StorageKey::IncentivesEnabled)
+            .unwrap_or(false);
+        if !enabled || base.is_empty() {
+            return base;
+        }
+
+        let now = env.ledger().timestamp();
+        let n = base.len();
+        let mut raw_bonuses: Vec<u32> = Vec::new(&env);
+        let mut total_bonus: u32 = 0;
+        for r in base.iter() {
+            let b = Self::incentive_bonus_bps(&env, &r.address, now);
+            raw_bonuses.push_back(b);
+            total_bonus = total_bonus.saturating_add(b);
+        }
+
+        if total_bonus == 0 {
+            return base;
+        }
+
+        let effective_total = total_bonus.min(MAX_TOTAL_INCENTIVE_BPS);
+        let mut scaled_bonuses: Vec<u32> = Vec::new(&env);
+        let mut scaled_sum: u32 = 0;
+        for i in 0..n {
+            let raw = raw_bonuses.get(i).unwrap();
+            let scaled = if total_bonus == effective_total {
+                raw
+            } else {
+                ((raw as u64) * (effective_total as u64) / (total_bonus as u64)) as u32
+            };
+            scaled_bonuses.push_back(scaled);
+            scaled_sum = scaled_sum.saturating_add(scaled);
+        }
+
+        // scaled_sum <= effective_total <= MAX_TOTAL_INCENTIVE_BPS (2,000),
+        // so this can never underflow.
+        let pool_bps = 10_000u32 - scaled_sum;
+
+        let mut adjusted: Vec<Recipient> = Vec::new(&env);
+        let mut assigned_total: u32 = 0;
+        for i in 0..(n - 1) {
+            let r = base.get(i).unwrap();
+            let shrunk_base = ((r.share as u64) * (pool_bps as u64) / 10_000) as u32;
+            let new_share = shrunk_base.saturating_add(scaled_bonuses.get(i).unwrap());
+            assigned_total = assigned_total.saturating_add(new_share);
+            adjusted.push_back(Recipient {
+                address: r.address,
+                share: new_share,
+            });
+        }
+
+        // Last recipient absorbs the rounding remainder, same convention
+        // used throughout distribute()/distribute_with_override() for
+        // payout dust — guarantees the list always sums to exactly 10,000.
+        let last = base.get(n - 1).unwrap();
+        let last_share = 10_000u32
+            .checked_sub(assigned_total)
+            .unwrap_or_else(|| Self::fail(&env, ContractError::ArithmeticOverflow));
+        adjusted.push_back(Recipient {
+            address: last.address,
+            share: last_share,
+        });
+
+        adjusted
+    }
+
+    /// Distribute the full contract balance of `token` using
+    /// incentive-adjusted shares (#776). Identical payout mechanics to
+    /// `distribute_with_override` (share * amount / 10,000, last recipient
+    /// absorbs dust), but computed from
+    /// `calculate_incentive_shares` instead of the plain
+    /// recipient list.
+    ///
+    /// # Authorization
+    /// Requires admin signature.
+    ///
+    /// # Panics
+    /// Same conditions as `distribute_with_override`.
+    pub fn distribute_with_incentives(env: Env, token: Address) {
+        storage::extend_instance_ttl(&env);
+
+        Self::check_admin_auth(&env, auth::msg::DISTRIBUTE_INCENTIVES_ADMIN);
+
+        let recipients = Self::calculate_incentive_shares(env.clone());
+        Self::execute_distribution(env, token, recipients);
+    }
+
+    /// Shared payout loop for `distribute_with_override` and
+    /// `distribute_with_incentives` (#776): validates `recipients`, splits
+    /// the full token balance proportionally (last recipient absorbs
+    /// dust), transfers to each, and updates distribution bookkeeping.
+    fn execute_distribution(env: Env, token: Address, recipients: Vec<Recipient>) {
+        if Self::is_blocked(&env, OperationType::PrimaryDistribution) {
+            Self::fail(&env, ContractError::ContractPaused);
+        }
+
+        let token_client = token::Client::new(&env, &token);
+        let amount = token_client.balance(&env.current_contract_address());
+        if amount == 0 {
+            soroban_sdk::panic_with_error!(&env, ContractError::Underfunded);
+        }
+
+        Self::validate_recipient_list(&env, &recipients);
+
+        let n = recipients.len();
+        if amount < n as i128 {
+            Self::fail(&env, ContractError::AmountTooSmall);
+        }
+
+        let mut payouts: Vec<(Address, i128)> = Vec::new(&env);
+        let mut total_calculated: i128 = 0;
+        for i in 0..(n - 1) {
+            let recipient = recipients.get(i).unwrap();
+            let payout = Self::checked_bps_amount(&env, amount, recipient.share);
+            payouts.push_back((recipient.address.clone(), payout));
+            total_calculated = total_calculated
+                .checked_add(payout)
+                .unwrap_or_else(|| Self::fail(&env, ContractError::ArithmeticOverflow));
+        }
+        let last = recipients.get(n - 1).unwrap();
+        payouts.push_back((
+            last.address.clone(),
+            amount
+                .checked_sub(total_calculated)
+                .unwrap_or_else(|| Self::fail(&env, ContractError::ArithmeticOverflow)),
+        ));
+
+        for (addr, payout) in payouts.iter() {
+            token_client.transfer(&env.current_contract_address(), &addr, &payout);
+            env.events().publish(
+                (symbol_short!("royalty"), symbol_short!("dist")),
+                (addr, payout, token.clone(), symbol_short!("primary")),
+            );
+        }
+
+        env.events().publish(
+            (symbol_short!("royalty"), symbol_short!("dist_all")),
+            (token, amount),
+        );
+
+        storage::instance_set(
+            &env,
+            &StorageKey::LastDistribution,
+            &env.ledger().timestamp(),
+        );
+
+        let current_count: u64 = env
+            .storage()
+            .instance()
+            .get(&StorageKey::DistributeHistory)
+            .unwrap_or(0);
+        storage::instance_set(
+            &env,
+            &StorageKey::DistributeHistory,
+            &current_count.saturating_add(1),
+        );
+    }
+
     fn validate_unique_addresses(env: &Env, recipients: &Vec<Recipient>) {
         let mut address_set: Vec<Address> = Vec::new(env);
 
@@ -1794,5 +2136,143 @@ impl RoyaltySplitter {
             .get(&StorageKey::Admin)
             .expect("contract not initialized");
         auth::require_admin(env, &admin, message);
+    }
+}
+
+#[cfg(test)]
+mod contributor_incentive_tests {
+    use super::*;
+    use soroban_sdk::testutils::{Address as _, Ledger};
+    use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
+
+    fn setup(env: &Env) -> (Address, Address, Address, RoyaltySplitterClient<'_>) {
+        let contract_id = env.register_contract(None, RoyaltySplitter);
+        let client = RoyaltySplitterClient::new(env, &contract_id);
+        let a = Address::generate(env);
+        let b = Address::generate(env);
+        client.initialize(
+            &Vec::from_array(env, [a.clone(), b.clone()]),
+            &Vec::from_array(env, [6_000u32, 4_000u32]),
+        );
+        (contract_id, a, b, client)
+    }
+
+    fn recipients_eq(a: &Vec<Recipient>, b: &Vec<Recipient>) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        for i in 0..a.len() {
+            let (ra, rb) = (a.get(i).unwrap(), b.get(i).unwrap());
+            if ra.address != rb.address || ra.share != rb.share {
+                return false;
+            }
+        }
+        true
+    }
+
+    #[test]
+    fn disabled_by_default_returns_plain_recipients() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, _, client) = setup(&env);
+
+        assert!(!client.is_incentives_enabled());
+        assert!(recipients_eq(&client.calculate_incentive_shares(), &client.get_recipients()));
+    }
+
+    #[test]
+    fn early_adopter_bonus_shrinks_base_proportionally_and_sums_to_10000() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+        let (_, a, b, client) = setup(&env);
+        client.set_incentives_enabled(&true);
+
+        // Both collaborators joined at the same timestamp (initialize), so
+        // both get the flat +50bps early-adopter bonus. total_bonus = 100,
+        // under MAX_TOTAL_INCENTIVE_BPS so no proportional scaling.
+        // pool_bps = 10_000 - 100 = 9_900.
+        // a (not last): 6_000 * 9_900 / 10_000 + 50 = 5_940 + 50 = 5_990.
+        // b (last, absorbs remainder): 10_000 - 5_990 = 4_010.
+        let adjusted = client.calculate_incentive_shares();
+        assert_eq!(adjusted.len(), 2);
+        assert_eq!(adjusted.get(0).unwrap().address, a);
+        assert_eq!(adjusted.get(0).unwrap().share, 5_990);
+        assert_eq!(adjusted.get(1).unwrap().address, b);
+        assert_eq!(adjusted.get(1).unwrap().share, 4_010);
+
+        let total: u32 = adjusted.iter().map(|r| r.share).sum();
+        assert_eq!(total, 10_000);
+    }
+
+    #[test]
+    fn bonus_expires_after_early_adopter_window() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+        let (_, _, _, client) = setup(&env);
+        client.set_incentives_enabled(&true);
+
+        env.ledger()
+            .with_mut(|l| l.timestamp = 1_000 + EARLY_ADOPTER_WINDOW_SECS + 1);
+
+        // No activity recorded either, so total_bonus is 0 and the plain
+        // list is returned unchanged.
+        assert!(recipients_eq(&client.calculate_incentive_shares(), &client.get_recipients()));
+    }
+
+    #[test]
+    fn activity_bonus_accrues_from_recorded_secondary_royalties() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+        let (contract_id, a, _b, client) = setup(&env);
+        client.set_incentives_enabled(&true);
+
+        // Advance past the early-adopter window (measured from the join
+        // date recorded at `initialize` above) so only the activity bonus
+        // computed below is in play.
+        env.ledger()
+            .with_mut(|l| l.timestamp = 1_000 + EARLY_ADOPTER_WINDOW_SECS + 1);
+
+        let asset_admin = Address::generate(&env);
+        let token = env.register_stellar_asset_contract(asset_admin);
+        StellarAssetClient::new(&env, &token).mint(&a, &1_000_000);
+        TokenClient::new(&env, &token).approve(&a, &contract_id, &1_000_000, &200_000);
+
+        for _ in 0..ACTIVITY_BONUS_STEP {
+            client.record_secondary_royalty(&token, &a, &1);
+        }
+        assert_eq!(client.get_contributor_activity_count(&a), ACTIVITY_BONUS_STEP);
+
+        // a earns exactly one activity step (+10bps); pool_bps = 9_990.
+        // a (not last): 6_000 * 9_990 / 10_000 + 10 = 5_994 + 10 = 6_004.
+        // b (last): 10_000 - 6_004 = 3_996.
+        let adjusted = client.calculate_incentive_shares();
+        assert_eq!(adjusted.get(0).unwrap().share, 6_004);
+        assert_eq!(adjusted.get(1).unwrap().share, 3_996);
+        let total: u32 = adjusted.iter().map(|r| r.share).sum();
+        assert_eq!(total, 10_000);
+    }
+
+    #[test]
+    fn distribute_with_incentives_pays_adjusted_shares() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+        let (contract_id, a, b, client) = setup(&env);
+        client.set_incentives_enabled(&true);
+
+        let asset_admin = Address::generate(&env);
+        let token = env.register_stellar_asset_contract(asset_admin);
+        StellarAssetClient::new(&env, &token).mint(&contract_id, &10_000);
+
+        client.distribute_with_incentives(&token);
+
+        let token_client = TokenClient::new(&env, &token);
+        assert_eq!(token_client.balance(&a), 5_990);
+        assert_eq!(token_client.balance(&b), 4_010);
+        assert_eq!(token_client.balance(&contract_id), 0);
+        assert_eq!(client.get_distribute_count(), 1);
     }
 }
