@@ -262,6 +262,20 @@ export {
   isContributorBlocked,
 } from "./contributor-status.js";
 
+// Transaction finality tracking (#finality)
+export {
+  createFinalityRecord,
+  setFinalityTxHash,
+  incrementPollAttempt,
+  markFinalityConfirmed,
+  markFinalityFailed,
+  markFinalityTimeout,
+  getFinalityByTransactionId,
+  getFinalityByTxHash,
+  getPendingFinalityRecords,
+  deleteOldFinalityRecords,
+} from "./transaction-finality.js";
+
 // Default export for backwards compatibility
 import { db } from "./core.js";
 export default db;

@@ -6,7 +6,7 @@ import { isValidStellarAccountAddress } from "../../shared/stellar-address.js";
 // Soroban instance storage limit is 64 KB. These caps prevent single large
 // requests from bloating on-chain storage or exhausting backend processing.
 export const MAX_COLLABORATORS = 10;
-export const MAX_NFT_ID_LENGTH = 128;
+export const MAX_NFT_ID_LENGTH = 256; // raised to 256 in a later migration
 export const MAX_BODY_BYTES = 8_192; // 8 KB hard cap on any JSON request body
 export const MAX_SALE_PRICE = 9_007_199_254_740_991; // Number.MAX_SAFE_INTEGER
 
@@ -56,7 +56,6 @@ export const INITIALIZE_COLLABORATORS_PAYLOAD_LIMIT_BYTES = 8 * 1024;
 
 // Named size limits — kept in sync with on-chain MAX_COLLABORATORS / MAX_RECIPIENTS constants.
 export const MAX_COLLABORATORS_BACKEND = 20;
-export const MAX_NFT_ID_LENGTH = 256;
 
 export const amountSchema = z.union([
   z.number().positive("Distribution amount must be positive"),
