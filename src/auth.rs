@@ -33,6 +33,12 @@ pub mod msg {
         "set_incentives_enabled: admin authorization required";
     pub const DISTRIBUTE_INCENTIVES_ADMIN: &str =
         "distribute_with_incentives: admin authorization required";
+    pub const INITIATE_ADMIN_ROTATION_ADMIN: &str =
+        "initiate_admin_rotation: admin authorization required";
+    pub const CANCEL_ADMIN_ROTATION_ADMIN: &str =
+        "cancel_admin_rotation: admin authorization required";
+    pub const SET_ADMIN_ROTATION_TIMELOCK_ADMIN: &str =
+        "set_admin_rotation_timelock: admin authorization required";
 }
 
 /// Requires admin authorization; panics with `message` if missing.
