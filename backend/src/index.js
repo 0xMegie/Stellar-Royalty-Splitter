@@ -52,6 +52,7 @@ import { recordApiKeyRequest } from "./database/rate-limit.js";
 import { createMetricsPusher } from "./metrics-pushgateway.js";
 import { transactionFinalityRouter } from "./routes/transaction-finality.js";
 import { startFinalityCleanupScheduler } from "./jobs/finality-cleanup-job.js";
+import { setupGraphQL } from "./graphql.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -376,8 +377,12 @@ app.use(notFoundHandler);
 // Central error handler — must be mounted last.
 app.use(errorHandler);
 
-const PORT = process.env.PORT ?? 3001;
-const server = app.listen(PORT, () => logger.info(`API listening on http://localhost:${PORT}`));
+async function startServer() {
+  // GraphQL API (#809)
+  await setupGraphQL(app, "/api/v1/graphql");
+
+  const PORT = process.env.PORT ?? 3001;
+  const server = app.listen(PORT, () => logger.info(`API listening on http://localhost:${PORT}`));
 
 // Initialize WebSocket for real-time notifications (#594)
 const wss = initializeWebSocket(server);
@@ -445,3 +450,8 @@ const handleShutdown = createGracefulShutdownHandler({
 
 process.once("SIGTERM", () => handleShutdown("SIGTERM"));
 process.once("SIGINT", () => handleShutdown("SIGINT"));
+
+startServer().catch((error) => {
+  logger.error("Failed to start server", { error: error.message });
+  process.exit(1);
+});
