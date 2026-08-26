@@ -39,6 +39,8 @@ pub mod msg {
         "cancel_admin_rotation: admin authorization required";
     pub const SET_ADMIN_ROTATION_TIMELOCK_ADMIN: &str =
         "set_admin_rotation_timelock: admin authorization required";
+    pub const DISTRIBUTE_RESILIENT_ADMIN: &str =
+        "distribute_resilient: admin authorization required";
 }
 
 /// Requires admin authorization; panics with `message` if missing.
