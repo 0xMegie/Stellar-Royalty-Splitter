@@ -297,6 +297,25 @@ export function initializeDatabase() {
             ON transaction_finality(submission_at);
         `,
       },
+      {
+        // #818: Dead Letter Queue for failed webhooks
+        version: 13,
+        sql: `
+          CREATE TABLE IF NOT EXISTS webhook_dlq (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            webhook_id INTEGER NOT NULL,
+            url TEXT NOT NULL,
+            contract_id TEXT NOT NULL,
+            payload TEXT,
+            error TEXT,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX IF NOT EXISTS idx_webhook_dlq_webhook_id ON webhook_dlq(webhook_id);
+          CREATE INDEX IF NOT EXISTS idx_webhook_dlq_contract_id ON webhook_dlq(contract_id);
+          CREATE INDEX IF NOT EXISTS idx_webhook_dlq_created_at ON webhook_dlq(created_at);
+        `,
+      },
   ];
 
   for (const migration of migrations) {

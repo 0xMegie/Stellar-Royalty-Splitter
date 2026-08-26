@@ -4,7 +4,7 @@
  * background retry job (retry-failed-webhooks.js).
  */
 
-import { listWebhooks, updateWebhookRetryStateWithPayload, resetWebhookRetryCount } from "./database/webhooks.js";
+import { listWebhooks, updateWebhookRetryStateWithPayload, resetWebhookRetryCount, moveToDlq } from "./database/webhooks.js";
 import logger from "./logger.js";
 import { parsePositiveInt } from "./utils.js";
 
@@ -86,12 +86,21 @@ export function deliverDistributeWebhooks(transaction) {
         updateWebhookRetryStateWithPayload(webhook.id, retryCount, nextRetryTime.toISOString(), JSON.stringify(payload));
 
         if (retryCount >= MAX_WEBHOOK_RETRIES) {
-          logger.error("Webhook delivery exhausted all retries", {
+          logger.error("Webhook delivery exhausted all retries, moving to DLQ", {
             url: webhook.url,
             webhookId: webhook.id,
             contractId: webhook.contractId,
             retryCount,
           });
+
+          try {
+            moveToDlq(webhook.id, webhook.url, webhook.contractId, JSON.stringify(payload), errorMessage, retryCount);
+          } catch (dlqErr) {
+            logger.error("Failed to move webhook to DLQ", {
+              webhookId: webhook.id,
+              error: dlqErr instanceof Error ? dlqErr.message : String(dlqErr),
+            });
+          }
         }
       });
   }
