@@ -22,6 +22,7 @@ export {
   addDistributionPayout,
   getTransactionCount,
   getTransactionHistory,
+  getTransactionHistoryCursor,
   getTransactionDetails,
   getTransactionById,
   getRetryEligibleTransactions,
