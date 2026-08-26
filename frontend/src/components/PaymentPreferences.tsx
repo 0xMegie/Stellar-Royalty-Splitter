@@ -102,16 +102,49 @@ export const PaymentPreferences: React.FC<PaymentPreferencesProps> = ({
 
   const isDirty = pending !== selected;
 
+  // #771: optimistic update with rollback. A network drop mid-submit must
+  // not lose the user's choice or leave the UI stuck between the old and
+  // new value — we apply the choice immediately, then reconcile once the
+  // request (or the service worker's offline queue) resolves it.
   const handleSave = async () => {
     if (!walletAddress || !pending) return;
+    const previousSelected = selected;
     setLoading(true);
     setSaveStatus(null);
+    setSelected(pending); // optimistic
 
     try {
       const result = await api.savePaymentPreference(walletAddress, pending);
-      setSelected(result.paymentMethod as PaymentMethod);
+
+      if (result?.queued) {
+        // Offline: the service worker accepted the write into its retry
+        // queue. Keep the optimistic value — it's a "will happen" pending
+        // state, not a failure — and say so instead of claiming success.
+        setSaveStatus({
+          type: "success",
+          message: "⏳ You're offline — this will sync automatically once you reconnect.",
+        });
+        return;
+      }
+
+      if (result?.offline && !result?.queued) {
+        // Offline queue is full — the write was rejected outright, not
+        // just delayed, so roll back rather than leave a stale optimistic
+        // value the backend never received.
+        setSelected(previousSelected);
+        setSaveStatus({
+          type: "error",
+          message: `✗ ${result.message ?? "Offline queue is full. Please try again once back online."}`,
+        });
+        return;
+      }
+
+      setSelected((result.paymentMethod as PaymentMethod) ?? pending);
       setSaveStatus({ type: "success", message: "✓ Payment preference saved!" });
     } catch (err: unknown) {
+      // Hard failure (validation error, 5xx, etc.) — revert the optimistic
+      // update so the UI reflects what the backend actually has.
+      setSelected(previousSelected);
       const message =
         err instanceof Error ? err.message : "Failed to save preference.";
       setSaveStatus({ type: "error", message: `✗ ${message}` });

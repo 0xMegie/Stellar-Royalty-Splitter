@@ -9,10 +9,14 @@
  * - **Other GETs (icons, fonts, etc.)**: stale-while-revalidate. Return
  *   the cached copy immediately if present, refetch in the background.
  * - **POST / write requests while offline**: queued in IndexedDB under
- *   the `srs-write-queue` store. On `online` event the queue is replayed
- *   in order, surfacing each completion as a `message` event so the UI
- *   can show toasts. (Replay is best-effort — failed replays stay queued
- *   for the next online cycle.)
+ *   the `srs-write-queue` store. On `online` event (and periodic pings
+ *   from the page while it stays online, see registerServiceWorker.ts)
+ *   the queue is replayed in order, surfacing each completion as a
+ *   `message` event so the UI can show toasts. Each queued item retries
+ *   with exponential backoff (capped at 10 minutes between attempts,
+ *   #771) instead of hammering the backend every cycle, and the queue is
+ *   bounded to MAX_QUEUE_SIZE entries so a long offline stretch can't
+ *   grow it unbounded.
  *
  * The cache version is bumped per shipped change so old caches are
  * dropped on `activate`.
@@ -29,6 +33,13 @@ const APP_SHELL = [
 
 const QUEUE_DB = "srs-sw-db";
 const QUEUE_STORE = "srs-write-queue";
+const MAX_QUEUE_SIZE = 100;
+const BASE_BACKOFF_MS = 1_000;
+const MAX_BACKOFF_MS = 10 * 60 * 1000; // 10 minutes
+
+function computeBackoffMs(attempts) {
+  return Math.min(BASE_BACKOFF_MS * Math.pow(2, attempts), MAX_BACKOFF_MS);
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -68,14 +79,48 @@ function openQueueDb() {
   });
 }
 
+async function queueCount(db) {
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(QUEUE_STORE, "readonly").objectStore(QUEUE_STORE).count();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function broadcastQueueCount() {
+  const db = await openQueueDb();
+  const count = await queueCount(db);
+  const clientsList = await self.clients.matchAll();
+  for (const client of clientsList) {
+    client.postMessage({ type: "srs-queue-updated", count });
+  }
+}
+
+/**
+ * Queues a write, bounded at MAX_QUEUE_SIZE (#771 acceptance criteria).
+ * Returns `{ accepted: false }` when the queue is already full so the
+ * caller (the fetch handler below) can tell the client to stop treating
+ * the write as "will retry automatically."
+ */
 async function enqueueWrite(serialized) {
   const db = await openQueueDb();
-  return new Promise((resolve, reject) => {
+  const count = await queueCount(db);
+  if (count >= MAX_QUEUE_SIZE) {
+    return { accepted: false };
+  }
+  await new Promise((resolve, reject) => {
     const tx = db.transaction(QUEUE_STORE, "readwrite");
-    tx.objectStore(QUEUE_STORE).add(serialized);
+    tx.objectStore(QUEUE_STORE).add({
+      ...serialized,
+      attempts: 0,
+      nextRetryAt: Date.now(),
+      queuedAt: Date.now(),
+    });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+  await broadcastQueueCount();
+  return { accepted: true };
 }
 
 async function drainQueue() {
@@ -86,7 +131,13 @@ async function drainQueue() {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+
+  const now = Date.now();
+  let changed = false;
+
   for (const item of items) {
+    if (now < item.nextRetryAt) continue; // still in its backoff window
+
     try {
       const res = await fetch(item.url, {
         method: item.method,
@@ -99,15 +150,34 @@ async function drainQueue() {
           tx.objectStore(QUEUE_STORE).delete(item.id);
           tx.oncomplete = () => resolve();
         });
+        changed = true;
         const clientsList = await self.clients.matchAll();
         for (const client of clientsList) {
           client.postMessage({ type: "srs-write-replayed", url: item.url });
         }
+      } else {
+        await rescheduleRetry(db, item);
+        changed = true;
       }
     } catch {
-      // Leave in queue; the next online cycle will retry.
+      // Network still down — back off and try again next cycle.
+      await rescheduleRetry(db, item);
+      changed = true;
     }
   }
+
+  if (changed) await broadcastQueueCount();
+}
+
+async function rescheduleRetry(db, item) {
+  const attempts = item.attempts + 1;
+  const nextRetryAt = Date.now() + computeBackoffMs(attempts);
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(QUEUE_STORE, "readwrite");
+    tx.objectStore(QUEUE_STORE).put({ ...item, attempts, nextRetryAt });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
 }
 
 self.addEventListener("fetch", (event) => {
@@ -126,7 +196,18 @@ self.addEventListener("fetch", (event) => {
         req.headers.forEach((v, k) => {
           headers[k] = v;
         });
-        await enqueueWrite({ url: req.url, method: req.method, headers, body });
+        const { accepted } = await enqueueWrite({ url: req.url, method: req.method, headers, body });
+        if (!accepted) {
+          return new Response(
+            JSON.stringify({
+              queued: false,
+              offline: true,
+              error: "offline_queue_full",
+              message: "Offline queue is full (max 100 pending writes). Please retry once back online.",
+            }),
+            { status: 503, headers: { "Content-Type": "application/json" } },
+          );
+        }
         return new Response(
           JSON.stringify({ queued: true, offline: true }),
           {
