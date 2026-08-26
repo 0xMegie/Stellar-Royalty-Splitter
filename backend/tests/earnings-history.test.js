@@ -99,5 +99,26 @@ describe("Earnings history API", () => {
     expect(res.text).toContain('"distribute"');
     expect(res.text).not.toContain('"secondary_royalty"');
   });
+
+  test("GET /earnings-history/:walletAddress/export streams rows instead of buffering the whole file (#766)", async () => {
+    const records = Array.from({ length: 500 }, (_, i) => ({
+      payoutDate: `2026-07-${String((i % 28) + 1).padStart(2, "0")}T10:00:00Z`,
+      transactionId: `tx_${i}`,
+      royaltyType: "distribute",
+      amount: "10.00",
+    }));
+    mockGetContributorPayoutRecords.mockReturnValue(records);
+
+    const res = await request(app).get(
+      `/api/v1/earnings-history/${WALLET}/export?start=2026-07-01&end=2026-07-31`
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers["transfer-encoding"]).toBe("chunked");
+    const lines = res.text.trim().split("\n");
+    expect(lines).toHaveLength(records.length + 1);
+    expect(lines[0]).toBe('"Payout Date","Transaction ID","Royalty Type","Amount"');
+    expect(lines[1]).toBe('"2026-07-01T10:00:00Z","tx_0","distribute","10.00"');
+  });
 });
 

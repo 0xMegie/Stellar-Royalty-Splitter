@@ -25,6 +25,24 @@ vi.mock("../context/SettingsContext", () => ({
 
 import { useSettings } from "../context/SettingsContext";
 
+vi.mock("../utils/dashboardExport", async () => {
+  const actual = await vi.importActual<typeof import("../utils/dashboardExport")>(
+    "../utils/dashboardExport",
+  );
+  return {
+    ...actual,
+    exportElementToPDF: vi.fn().mockResolvedValue(undefined),
+    downloadDashboardCSV: vi.fn(),
+    downloadDashboardJSON: vi.fn(),
+  };
+});
+
+import {
+  exportElementToPDF,
+  downloadDashboardCSV,
+  downloadDashboardJSON,
+} from "../utils/dashboardExport";
+
 const mockUseSettings = useSettings as Mock;
 
 function setTrackedContracts(contracts: string[]) {
@@ -188,6 +206,86 @@ describe("EarningsDashboard Component", () => {
     });
 
     expect(screen.getByText(/Error Loading Dashboard/i)).toBeInTheDocument();
+  });
+
+  describe("dashboard export (#770)", () => {
+    beforeEach(() => {
+      mockGetAnalytics.mockResolvedValue(mockAnalyticsData);
+      mockGetCollaborators.mockResolvedValue(mockCollaborators);
+      mockGetRoyaltyStats.mockResolvedValue({ totalRoyaltiesGenerated: "300" });
+      mockGetTransactionHistory.mockResolvedValue(mockTransactionHistory);
+      mockGetSecondarySales.mockResolvedValue(mockSecondarySales);
+    });
+
+    async function renderLoaded() {
+      render(<EarningsDashboard contractId={MOCK_CONTRACT} walletAddress={MOCK_WALLET} />);
+      await waitFor(() => {
+        expect(screen.getByTestId("earnings-dashboard")).toBeInTheDocument();
+      });
+    }
+
+    it("opens the export menu with PDF, CSV, and JSON options", async () => {
+      await renderLoaded();
+
+      fireEvent.click(screen.getByRole("button", { name: /export/i }));
+
+      expect(screen.getByRole("menuitem", { name: /export as pdf/i })).toBeInTheDocument();
+      expect(screen.getByRole("menuitem", { name: /export as csv/i })).toBeInTheDocument();
+      expect(screen.getByRole("menuitem", { name: /export as json/i })).toBeInTheDocument();
+    });
+
+    it("triggers a PDF export of the dashboard element", async () => {
+      await renderLoaded();
+
+      fireEvent.click(screen.getByRole("button", { name: /export/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: /export as pdf/i }));
+
+      await waitFor(() => {
+        expect(exportElementToPDF).toHaveBeenCalledTimes(1);
+      });
+      const [element, filename] = (exportElementToPDF as Mock).mock.calls[0];
+      expect(element).toBeInstanceOf(HTMLElement);
+      expect(filename).toMatch(/^dashboard-.*\.pdf$/);
+    });
+
+    it("triggers a CSV export with collaborator rows", async () => {
+      await renderLoaded();
+
+      fireEvent.click(screen.getByRole("button", { name: /export/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: /export as csv/i }));
+
+      expect(downloadDashboardCSV).toHaveBeenCalledTimes(1);
+      const [csv, filename] = (downloadDashboardCSV as Mock).mock.calls[0];
+      expect(csv).toContain("Collaborator Address");
+      expect(csv).toContain(MOCK_WALLET);
+      expect(filename).toMatch(/^dashboard-.*\.csv$/);
+    });
+
+    it("triggers a JSON export with dashboard totals", async () => {
+      await renderLoaded();
+
+      fireEvent.click(screen.getByRole("button", { name: /export/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: /export as json/i }));
+
+      expect(downloadDashboardJSON).toHaveBeenCalledTimes(1);
+      const [json, filename] = (downloadDashboardJSON as Mock).mock.calls[0];
+      const parsed = JSON.parse(json);
+      expect(parsed.totalDistributed).toBe(1000);
+      expect(parsed.contractId).toBe(MOCK_CONTRACT);
+      expect(filename).toMatch(/^dashboard-.*\.json$/);
+    });
+
+    it("shows an error banner when PDF export fails", async () => {
+      (exportElementToPDF as Mock).mockRejectedValueOnce(new Error("canvas failed"));
+      await renderLoaded();
+
+      fireEvent.click(screen.getByRole("button", { name: /export/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: /export as pdf/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent(/failed to generate pdf export/i);
+      });
+    });
   });
 
   describe("multi-contract selector", () => {

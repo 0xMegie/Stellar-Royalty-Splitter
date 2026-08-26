@@ -35,10 +35,10 @@ async function fetch(id) {
   }
   const rv = sim.result?.retval;
   if (!rv) return [];
-  return (rv.map()?.entries ?? []).map((e) => {
+  return (rv.map()?.entries ?? []).map((e) => ({
     address: Address.fromScVal(e.key()).toString(),
     basisPoints: e.val().u32(),
-  });
+  }));
 }
 
 function schedule(key, id) {

@@ -81,7 +81,7 @@ async function refreshContractState(key, contractId, tokenId) {
     const state = await readContractState(contractId, tokenId);
     cacheSet(key, state, TTL.contractState);
     const now = Date.now();
-    const expiresAt = now + TT\.contractState * 1000;
+    const expiresAt = now + TTL.contractState * 1000;
     meta.expiresAt = expiresAt;
     meta.refreshAt = expiresAt - CACH_WARM_LEAD_TIME_MS;
     meta.staleValue = null; // clear stale since fresh data is available
@@ -161,7 +161,7 @@ function i128ScValToString(scVal) {
 }
 
 function decodeShareMap(scVal) {
-  const mapEntries = scVal?.map?)()?.entries ?? [];
+  const mapEntries = scVal?.map?.()?.entries ?? [];
   return mapEntries.map((entry) => ({
     address: StellarSdk.Address.fromScVal(entry.key()).toString(),
     basisPoints: entry.val().u32(),
@@ -332,7 +332,7 @@ contractRouter.get("/balance/:contractId", validateContractIdMiddleware, async (
 
     const retval = sim.result?.retval;
     // get_balance returns i128
-    const balance = retval?.i128?()
+    const balance = retval?.i128?.()
       ? ((BigInt(retval.i128().hi()) << 64n) | BigInt(retval.i128().lo())).toString()
       : "0";
 
@@ -368,7 +368,7 @@ contractRouter.get("/collaborator-count/:contractId", validateContractIdMiddlewa
       return sendError(res, 400, "contract_simulation_failed", sim.error ?? "Simulation failed");
     }
 
-    const count = sim.result?.retval?.u32(?)() ?? 0;
+    const count = sim.result?.retval?.u32?.() ?? 0;
     res.json({ contractId, count });
   } catch (err) {
     next(err);
@@ -406,14 +406,14 @@ contractRouter.get(
       }
 
       const resultVal = sim.result?.retval;
-      const totalShares = resultVal?.u32?() ?? 0;
+      const totalShares = resultVal?.u32?.() ?? 0;
 
       res.json({ contractId, totalShares });
     } catch (err) {
       next(err);
     }
   }
-});
+);
 
 /**
  * GET /api/contract/version/:contractId

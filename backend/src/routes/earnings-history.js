@@ -59,25 +59,27 @@ router.get("/earnings-history/:walletAddress/export", (req, res) => {
     }
 
     const headers = ["Payout Date", "Transaction ID", "Royalty Type", "Amount"];
-    const csvRows = [headers.map(escapeCSVField).join(",")];
+    const filename = `royalty-earnings-${walletAddress.substring(0, 8)}.csv`;
 
+    // #766: stream rows instead of buffering the whole CSV in memory so
+    // large exports don't hold the full payload as one string. Compression
+    // middleware (gzip) applies transparently on top of this stream.
+    res.set("Content-Type", "text/csv; charset=utf-8");
+    res.set("Content-Disposition", `attachment; filename="${filename}"`);
+    res.status(200);
+
+    res.write(headers.map(escapeCSVField).join(",") + "\n");
     for (const row of records) {
-      csvRows.push(
+      res.write(
         [
           escapeCSVField(row.payoutDate),
           escapeCSVField(row.transactionId),
           escapeCSVField(row.royaltyType),
           escapeCSVField(row.amount),
-        ].join(",")
+        ].join(",") + "\n"
       );
     }
-
-    const csvContent = csvRows.join("\n");
-    const filename = `royalty-earnings-${walletAddress.substring(0, 8)}.csv`;
-
-    res.set("Content-Type", "text/csv; charset=utf-8");
-    res.set("Content-Disposition", `attachment; filename="${filename}"`);
-    return res.status(200).send(csvContent);
+    return res.end();
   } catch (error) {
     logger.error("Earnings export error:", error);
     sendError(res, 500, "export_generation_failed", "Failed to generate earnings export");

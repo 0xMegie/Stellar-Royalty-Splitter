@@ -2,7 +2,7 @@
  * Tests for service-worker registration + connectivity watcher (#522).
  */
 
-import { describe, test, expect, beforeEach, vi } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   isOnline,
   registerServiceWorker,
@@ -85,5 +85,53 @@ describe("watchConnectivity (#522)", () => {
     window.dispatchEvent(new Event("online"));
     handle.stop();
     expect(postMessage).toHaveBeenCalledWith({ type: "srs-drain-queue" });
+  });
+
+  describe("periodic queue retry while online (#771)", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    test("pings the SW to drain the queue every 15s while online", () => {
+      const postMessage = vi.fn();
+      Object.defineProperty(navigator, "serviceWorker", {
+        configurable: true,
+        value: { controller: { postMessage } },
+      });
+
+      const handle = watchConnectivity(() => undefined);
+      window.dispatchEvent(new Event("online"));
+      postMessage.mockClear(); // ignore the immediate on-reconnect drain
+
+      vi.advanceTimersByTime(15_000);
+      expect(postMessage).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(30_000);
+      expect(postMessage).toHaveBeenCalledTimes(3);
+
+      handle.stop();
+    });
+
+    test("stops pinging once offline", () => {
+      const postMessage = vi.fn();
+      Object.defineProperty(navigator, "serviceWorker", {
+        configurable: true,
+        value: { controller: { postMessage } },
+      });
+
+      const handle = watchConnectivity(() => undefined);
+      window.dispatchEvent(new Event("online"));
+      window.dispatchEvent(new Event("offline"));
+      postMessage.mockClear();
+
+      vi.advanceTimersByTime(60_000);
+      expect(postMessage).not.toHaveBeenCalled();
+
+      handle.stop();
+    });
   });
 });

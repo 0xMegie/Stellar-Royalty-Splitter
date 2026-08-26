@@ -1,4 +1,7 @@
 import "@testing-library/jest-dom/vitest";
+// jsdom does not implement IndexedDB; polyfill it so modules backed by
+// IndexedDB (offline write queue, cached earnings snapshots) can be tested.
+import "fake-indexeddb/auto";
 
 // jsdom does not implement ResizeObserver, which recharts' ResponsiveContainer
 // relies on to size the chart. Stub it so component tests can render charts

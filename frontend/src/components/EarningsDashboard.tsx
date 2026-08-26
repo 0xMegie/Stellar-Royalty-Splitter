@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { api, type TransactionRecord, type SecondarySale } from "../api";
 import { useSettings } from "../context/SettingsContext";
 import { formatCurrency, formatNumber } from "../utils/format";
@@ -6,6 +6,14 @@ import { isCollaborator } from "../utils/collaborators";
 import { CopyButton } from "./CopyButton";
 import { Skeleton } from "./Skeleton";
 import MultiContractComparison from "./MultiContractComparison";
+import {
+  buildExportFilename,
+  buildDashboardCSV,
+  buildDashboardJSON,
+  downloadDashboardCSV,
+  downloadDashboardJSON,
+  exportElementToPDF,
+} from "../utils/dashboardExport";
 import "./EarningsDashboard.css";
 
 interface CollaboratorEarning {
@@ -79,6 +87,12 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
   const [recentPayouts, setRecentPayouts] = useState<RecentPayout[]>([]);
   const [activeTab, setActiveTab] = useState<"all" | "primary" | "secondary">("all");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // #770: multi-format export (PDF/CSV/JSON) of the earnings dashboard.
+  const dashboardRef = useRef<HTMLDivElement>(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exporting, setExporting] = useState<"pdf" | "csv" | "json" | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const loadDashboardData = useCallback(async () => {
     if (!activeContract) {
@@ -305,8 +319,64 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
     return true;
   });
 
+  const exportMetadata = { contractId: activeContract };
+
+  const handleExportPDF = async () => {
+    setExportError(null);
+    setExportMenuOpen(false);
+    if (!dashboardRef.current) return;
+    setExporting("pdf");
+    try {
+      await exportElementToPDF(
+        dashboardRef.current,
+        buildExportFilename(exportMetadata, "pdf"),
+      );
+    } catch (err) {
+      console.error("Dashboard PDF export failed:", err);
+      setExportError("Failed to generate PDF export. Please try again.");
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const handleExportCSV = () => {
+    setExportError(null);
+    setExportMenuOpen(false);
+    try {
+      const csv = buildDashboardCSV(collaborators, [
+        { key: "address", label: "Collaborator Address" },
+        { key: "basisPoints", label: "Basis Points" },
+        { key: "totalEarned", label: "Total Earned" },
+        { key: "payoutCount", label: "Payout Count" },
+        { key: "avgPayout", label: "Average Payout" },
+      ]);
+      downloadDashboardCSV(csv, buildExportFilename(exportMetadata, "csv"));
+    } catch (err) {
+      console.error("Dashboard CSV export failed:", err);
+      setExportError("Failed to generate CSV export. Please try again.");
+    }
+  };
+
+  const handleExportJSON = () => {
+    setExportError(null);
+    setExportMenuOpen(false);
+    try {
+      const json = buildDashboardJSON(exportMetadata, {
+        totalDistributed,
+        primaryTotal,
+        secondaryTotal,
+        collaborators,
+        recentPayouts,
+      });
+      downloadDashboardJSON(json, buildExportFilename(exportMetadata, "json"));
+    } catch (err) {
+      console.error("Dashboard JSON export failed:", err);
+      setExportError("Failed to generate JSON export. Please try again.");
+    }
+  };
+
   return (
-    <div className="earnings-dashboard" data-testid="earnings-dashboard">
+    <div className="earnings-dashboard" data-testid="earnings-dashboard" ref={dashboardRef}>
       <header className="earnings-header">
         <div className="earnings-header-info">
           <h1>Collaborator Earnings Dashboard</h1>
@@ -315,6 +385,31 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
           </p>
         </div>
         {contractSelector}
+        <div className="export-dashboard" data-testid="export-dashboard">
+          <button
+            type="button"
+            className="export-dashboard-btn"
+            onClick={() => setExportMenuOpen((open) => !open)}
+            aria-haspopup="true"
+            aria-expanded={exportMenuOpen}
+            disabled={exporting !== null}
+          >
+            {exporting ? `Exporting ${exporting.toUpperCase()}…` : "⬇️ Export"}
+          </button>
+          {exportMenuOpen && (
+            <div className="export-dashboard-menu" role="menu">
+              <button type="button" role="menuitem" onClick={() => void handleExportPDF()}>
+                Export as PDF
+              </button>
+              <button type="button" role="menuitem" onClick={handleExportCSV}>
+                Export as CSV
+              </button>
+              <button type="button" role="menuitem" onClick={handleExportJSON}>
+                Export as JSON
+              </button>
+            </div>
+          )}
+        </div>
         <button
           type="button"
           className="refresh-dashboard-btn"
@@ -324,6 +419,12 @@ export const EarningsDashboard: React.FC<EarningsDashboardProps> = ({
           🔄 Refresh
         </button>
       </header>
+
+      {exportError && (
+        <div className="export-error-banner" role="alert">
+          {exportError}
+        </div>
+      )}
 
       {/* KPI Cards Section */}
       <section className="kpi-grid" aria-label="Royalty Summary Statistics">
