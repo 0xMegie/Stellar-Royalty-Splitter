@@ -1,3 +1,5 @@
+import client from "prom-client";
+
 const metrics = {
   distributeCallsTotal: 0,
   transactionsSuccessfulTotal: 0,
@@ -14,6 +16,65 @@ const metrics = {
   healthCheckCacheResponseTimeMs: 0,
   healthCheckTotal: 0,
 };
+
+// Comprehensive Prometheus metrics (#816)
+const register = new client.Registry();
+
+// Counter for function invocations
+const contractFunctionDuration = new client.Histogram({
+  name: "stellar_contract_function_duration_seconds",
+  help: "Duration of contract function calls in seconds",
+  labelNames: ["contractId", "functionName"],
+  registers: [register],
+});
+
+// Counter for RPC operations
+const rpcOperationDuration = new client.Histogram({
+  name: "stellar_rpc_operation_duration_seconds",
+  help: "Duration of Soroban RPC operations in seconds",
+  labelNames: ["operationType"],
+  buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5],
+  registers: [register],
+});
+
+// Database query duration
+const dbQueryDuration = new client.Histogram({
+  name: "stellar_db_query_duration_seconds",
+  help: "Duration of database queries in seconds",
+  labelNames: ["queryType"],
+  buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5],
+  registers: [register],
+});
+
+// Cache hit/miss counters
+const cacheHits = new client.Counter({
+  name: "stellar_cache_hits_total",
+  help: "Total cache hits",
+  labelNames: ["namespace"],
+  registers: [register],
+});
+
+const cacheMisses = new client.Counter({
+  name: "stellar_cache_misses_total",
+  help: "Total cache misses",
+  labelNames: ["namespace"],
+  registers: [register],
+});
+
+// Rate limiter metrics
+const rateLimitHits = new client.Counter({
+  name: "stellar_rate_limit_hits_total",
+  help: "Total rate limit hits",
+  labelNames: ["dimension"],
+  registers: [register],
+});
+
+// Active connections gauge
+const activeConnections = new client.Gauge({
+  name: "stellar_active_connections",
+  help: "Number of active database connections",
+  registers: [register],
+});
 
 function formatMetricValue(value) {
   return Number.isFinite(value) ? value : 0;
@@ -73,8 +134,7 @@ export function getMetricsSnapshot() {
 
 export function prometheusMetrics() {
   const snapshot = getMetricsSnapshot();
-
-  return [
+  const legacyMetrics = [
     "# HELP stellar_distribute_calls_total Total distribute endpoint calls.",
     "# TYPE stellar_distribute_calls_total counter",
     `stellar_distribute_calls_total ${snapshot.distributeCallsTotal}`,
@@ -115,6 +175,8 @@ export function prometheusMetrics() {
     `stellar_health_cache_response_time_ms ${formatMetricValue(snapshot.healthCheckCacheResponseTimeMs)}`,
     "",
   ].join("\n");
+
+  return register.metrics() + "\n" + legacyMetrics;
 }
 
 export function resetMetrics() {
@@ -130,4 +192,34 @@ export function resetMetrics() {
   metrics.healthCheckSorobanResponseTimeMs = 0;
   metrics.healthCheckCacheResponseTimeMs = 0;
   metrics.healthCheckTotal = 0;
+  register.resetMetrics();
+}
+
+// New comprehensive metrics functions (#816)
+export function recordContractFunctionDuration(contractId, functionName, durationSeconds) {
+  contractFunctionDuration.observe({ contractId, functionName }, durationSeconds);
+}
+
+export function recordRpcOperationDuration(operationType, durationSeconds) {
+  rpcOperationDuration.observe({ operationType }, durationSeconds);
+}
+
+export function recordDbQueryDuration(queryType, durationSeconds) {
+  dbQueryDuration.observe({ queryType }, durationSeconds);
+}
+
+export function recordCacheHit(namespace) {
+  cacheHits.inc({ namespace });
+}
+
+export function recordCacheMiss(namespace) {
+  cacheMisses.inc({ namespace });
+}
+
+export function recordRateLimitHit(dimension) {
+  rateLimitHits.inc({ dimension });
+}
+
+export function setActiveConnections(count) {
+  activeConnections.set(count);
 }
