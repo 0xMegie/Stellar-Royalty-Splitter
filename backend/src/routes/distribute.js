@@ -13,6 +13,7 @@ import { invalidateContract } from "../cache.js";
 import logger from "../logger.js";
 import { dedupMiddleware } from "../middleware/dedup.js";
 import { tieredLimiters } from "../middleware/tieredRateLimit.js";
+import { broadcastToContract } from "../websocket.js";
 
 export const distributeRouter = Router();
 
@@ -59,6 +60,17 @@ distributeRouter.post(
       // Invalidate cached history and contract state so the new distribution
       // appears immediately on subsequent reads.
       invalidateContract(contractId);
+
+      // Broadcast distribution event to connected WebSocket clients for real-time updates
+      broadcastToContract(contractId, {
+        type: "distribution_completed",
+        contractId,
+        transactionId,
+        timestamp: new Date().toISOString(),
+        requestedAmount: req.body.requestedAmount ?? null,
+        tokenId: req.body.tokenId ?? null,
+      });
+
       res.json({ xdr, transactionId });
     } catch (err) {
       recordTransactionFailure();
