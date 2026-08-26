@@ -52,6 +52,7 @@ import { recordApiKeyRequest } from "./database/rate-limit.js";
 import { createMetricsPusher } from "./metrics-pushgateway.js";
 import { transactionFinalityRouter } from "./routes/transaction-finality.js";
 import { startFinalityCleanupScheduler } from "./jobs/finality-cleanup-job.js";
+import { startPaymentScheduleJob } from "./jobs/payment-schedule-job.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -390,6 +391,10 @@ const webhookRetryScheduler = startWebhookRetryScheduler();
 
 // Start the finality cleanup scheduler (#finality)
 const finalityCleanupScheduler = startFinalityCleanupScheduler();
+
+// Start the payment schedule job (#599)
+const paymentScheduleJob = startPaymentScheduleJob();
+
 const metricsPusher = createMetricsPusher();
 metricsPusher.start();
 
@@ -438,6 +443,9 @@ const handleShutdown = createGracefulShutdownHandler({
     }
     if (finalityCleanupScheduler) {
       finalityCleanupScheduler.stop();
+    }
+    if (paymentScheduleJob) {
+      paymentScheduleJob.stop();
     }
     metricsPusher.stop();
   },
