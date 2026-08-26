@@ -68,6 +68,8 @@ export const CONTRACT_ERROR_MESSAGES: Record<number, string> = {
   34: "No admin rotation is currently pending.",
   35: "Admin rotation timelock has not elapsed yet.",
   36: "Admin rotation timelock duration is outside the allowed range.",
+  37: "Contract is under emergency pause; distributions are halted until cleared.",
+  38: "Anomaly threshold must be greater than zero.",
 };
 
 /**

@@ -72,6 +72,20 @@ describe("CONTRACT_ERROR_MESSAGES map (#677)", () => {
       expect(CONTRACT_ERROR_MESSAGES[code]).toBeDefined();
     }
   });
+
+  test("code 37 maps to EmergencyContractPaused (#779)", () => {
+    expect(CONTRACT_ERROR_MESSAGES[37]).toContain("emergency pause");
+  });
+
+  test("code 38 maps to InvalidAnomalyThreshold (#779)", () => {
+    expect(CONTRACT_ERROR_MESSAGES[38]).toContain("Anomaly threshold");
+  });
+
+  test("codes 37-38 (#779) are documented", () => {
+    for (const code of [37, 38]) {
+      expect(CONTRACT_ERROR_MESSAGES[code]).toBeDefined();
+    }
+  });
 });
 
 describe("extractContractError (#677)", () => {

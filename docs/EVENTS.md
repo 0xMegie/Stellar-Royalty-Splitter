@@ -41,6 +41,11 @@ instead of polling storage (#661).
 | `("royalty", "rot_cncl")` | `cancel_admin_rotation` | `Address new_admin` | A pending admin rotation was cancelled before completing. |
 | `("royalty", "rot_fin")` | `finalize_admin_rotation` | `(Address previous_admin, Address new_admin)` | A timelocked admin rotation completed; `new_admin` is now the contract admin. |
 | `("royalty", "rot_tlck")` | `set_admin_rotation_timelock` | `u64 seconds` | The admin rotation timelock duration was changed. |
+| `("royalty", "anom_set")` | `set_anomaly_threshold` | `i128 max_amount` | The automatic anomaly-detection threshold was configured. |
+| `("royalty", "anom_clr")` | `clear_anomaly_threshold` | `()` | The automatic anomaly-detection threshold was disabled. |
+| `("royalty", "anomaly")` | `distribute_with_override`, `batch_distribute`, `distribute_secondary_royalties` | `(Address token, i128 amount, i128 threshold)` | A distribution amount exceeded the configured anomaly threshold; the emergency pause was auto-tripped and the call returned without distributing. |
+| `("royalty", "emrg_set")` | `trigger_emergency_pause` | `String reason` | The emergency pause was manually triggered. |
+| `("royalty", "emrg_clr")` | `clear_emergency_pause` | `()` | The emergency pause was cleared. |
 
 ## Distribution events
 

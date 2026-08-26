@@ -41,6 +41,12 @@ pub mod msg {
         "set_admin_rotation_timelock: admin authorization required";
     pub const DISTRIBUTE_RESILIENT_ADMIN: &str =
         "distribute_resilient: admin authorization required";
+    pub const SET_ANOMALY_THRESHOLD_ADMIN: &str =
+        "set_anomaly_threshold: admin authorization required";
+    pub const TRIGGER_EMERGENCY_PAUSE_ADMIN: &str =
+        "trigger_emergency_pause: admin authorization required";
+    pub const CLEAR_EMERGENCY_PAUSE_ADMIN: &str =
+        "clear_emergency_pause: unanimous admin authorization required";
 }
 
 /// Requires admin authorization; panics with `message` if missing.
