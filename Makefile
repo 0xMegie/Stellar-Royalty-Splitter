@@ -16,9 +16,14 @@ OPT_WASM      := $(TARGET_DIR)/$(CONTRACT_NAME).optimized.wasm
 # (which embeds wasm-opt) when the standalone binary isn't installed.
 WASM_OPT      := $(shell command -v wasm-opt 2>/dev/null)
 
-.PHONY: all build optimize clean check-size deploy-ready
+.PHONY: all build optimize clean check-size deploy-ready validate-env
 
 all: optimize
+
+## Validate local dev environment: Rust/Soroban tooling, Node/npm
+## versions, and required env vars (presence only, no values printed).
+validate-env:
+	./scripts/validate-env.sh
 
 ## Build the contract in release mode.
 build:

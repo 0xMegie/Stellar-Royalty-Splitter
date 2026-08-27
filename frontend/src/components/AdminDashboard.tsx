@@ -2,14 +2,21 @@ import { useState, useEffect } from "react";
 import { api, TransactionRecord } from "../api";
 import { QRCodeSVG } from "qrcode.react";
 import { CopyButton } from "./CopyButton";
+import { Skeleton } from "./Skeleton";
+import { BulkContributorUpload } from "./BulkContributorUpload";
+import { ContributorTaxInfo } from "./ContributorTaxInfo";
+import { TaxComplianceReport } from "./TaxComplianceReport";
+import { PaymentHoldManager } from "./PaymentHoldManager";
 import "./AdminDashboard.css";
 
 interface AdminDashboardProps {
   contractId: string;
+  adminToken?: string;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   contractId,
+  adminToken = "",
 }) => {
   const [showModal, setShowModal] = useState(false);
   const [showQRModal, setShowQRModal] = useState(false);
@@ -102,6 +109,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     );
   }
 
+  // Render-only loading flag derived from the existing version sentinel.
+  // The fetch sets contractVersion to "loading..." before the request resolves,
+  // so this shows a skeleton in place of the raw sentinel without touching the
+  // data-fetching logic (out of scope per the issue).
+  const versionLoading = contractVersion === "loading...";
+
   return (
     <div className="admin-dashboard">
       <div className="admin-header">
@@ -144,7 +157,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         <div className="contract-version-display">
           <div className="contract-version-label">Contract Version</div>
           <div className="contract-version-value">
-            <code>v{contractVersion}</code>
+            {versionLoading ? (
+              <Skeleton width="80px" height="1.25rem" />
+            ) : (
+              <code>v{contractVersion}</code>
+            )}
           </div>
         </div>
 
@@ -164,6 +181,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
       </div>
 
+      {/* Key Rotation Panel (#588) */}
+      {adminToken && <KeyRotationPanel adminToken={adminToken} />}
+
       {/* Initialize History */}
       <div className="history-section">
         <div className="history-header">
@@ -174,7 +194,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
 
         {loading ? (
-          <div className="loading-mini">Loading...</div>
+          <div className="history-list" aria-busy="true" aria-label="Loading initialize history">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="history-item">
+                <Skeleton width="40%" height="0.875rem" className="mb-2" />
+                <Skeleton width="70%" height="1rem" className="mb-2" />
+                <Skeleton width="55%" height="1rem" />
+              </div>
+            ))}
+          </div>
         ) : initHistory.length > 0 ? (
           <div className="history-list">
             {initHistory.map((record, idx) => (
@@ -244,7 +272,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="detail-block">
                 <h3>Contract Version</h3>
                 <div className="version-info-block">
-                  <code>v{contractVersion}</code>
+                  {versionLoading ? (
+                    <Skeleton width="80px" height="1.25rem" />
+                  ) : (
+                    <code>v{contractVersion}</code>
+                  )}
                 </div>
               </div>
 
@@ -355,6 +387,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </div>
       )}
+
+      {/* Admin Management Sections */}
+      <div className="admin-management-sections">
+        <h2>Management Tools</h2>
+        <div className="management-grid">
+          <div className="management-card">
+            <h3>Bulk Contributor Upload</h3>
+            <p>Import multiple contributors at once via CSV file</p>
+            {contractId && <BulkContributorUpload contractId={contractId} />}
+          </div>
+          <div className="management-card">
+            <h3>Tax Information</h3>
+            <p>Manage contributor tax compliance documentation</p>
+            <TaxComplianceReport />
+          </div>
+          <div className="management-card">
+            <h3>Payment Holds</h3>
+            <p>Manage payment holds and release workflows</p>
+            <PaymentHoldManager contractId={contractId} isAdmin={true} />
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

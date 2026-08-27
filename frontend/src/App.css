@@ -7,19 +7,60 @@
   transition: background-color var(--transition-base);
 }
 
+.session-toast {
+  position: fixed;
+  top: var(--spacing-md);
+  right: var(--spacing-md);
+  z-index: 1000;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  max-width: 420px;
+  padding: 0.85rem 1rem;
+  background: var(--error-light);
+  color: var(--error-dark);
+  border: 1px solid var(--error-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.9rem;
+}
+
+.session-toast span {
+  flex: 1;
+}
+
+.session-toast-close {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  color: currentColor;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  line-height: 1;
+}
+
+.session-toast-close:hover,
+.session-toast-close:focus-visible {
+  background: rgba(0, 0, 0, 0.08);
+}
+
 .app-content {
   display: flex;
   flex: 1;
-  max-width: 1600px;
+  max-width: 1200px;
   margin: 0 auto;
   width: 100%;
-  gap: var(--spacing-lg);
-  padding: var(--spacing-lg);
+  box-sizing: border-box;
+  gap: clamp(var(--spacing-sm), 1.5vw, var(--spacing-md));
+  padding: clamp(var(--spacing-xs), 1.5vw, var(--spacing-md));
+  min-width: 0;
 }
 
 /* Sidebar Styles */
 .app-sidebar {
-  width: 320px;
+  width: clamp(240px, 22vw, 320px);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -91,14 +132,14 @@
 }
 
 .contract-input--error {
-  border-color: #e53e3e;
+  border-color: var(--error);
   box-shadow: 0 0 0 3px rgba(229, 62, 62, 0.15);
 }
 
 .contract-input-error {
   margin: 4px 0 0 0;
   font-size: 0.78rem;
-  color: #e53e3e;
+  color: var(--error);
 }
 
 .contract-status {
@@ -107,11 +148,11 @@
 }
 
 .contract-status--ok {
-  color: #38a169;
+  color: var(--success);
 }
 
 .contract-status--warn {
-  color: #d69e2e;
+  color: var(--warning);
 }
 
 .quick-actions {
@@ -204,8 +245,61 @@
   font-size: 1rem;
 }
 
+.connect-wallet-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--spacing-sm);
+  width: min(100%, 420px);
+}
+
+.connect-wallet-panel .card {
+  margin-bottom: 0;
+}
+
 .hidden-section {
   display: none;
+}
+
+/* ── Sidebar toggle (#591) ─────────────────────────────────────────────── */
+.sidebar-toggle-btn {
+  display: none; /* shown only on mobile via media query */
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.6rem 1rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  text-align: left;
+  box-shadow: var(--shadow-sm);
+}
+
+.sidebar-toggle-btn:hover {
+  border-color: var(--accent-primary);
+  box-shadow: var(--shadow-md);
+}
+
+.sidebar-toggle-chevron {
+  margin-left: auto;
+  transition: transform 0.25s ease;
+  display: inline-block;
+}
+
+.sidebar-toggle-chevron.open {
+  transform: rotate(180deg);
+}
+
+/* Collapsible wrapper for the sidebar cards on mobile */
+.app-sidebar-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
 }
 
 /* Responsive Design */
@@ -256,6 +350,29 @@
     flex-direction: column;
     gap: var(--spacing-sm);
     flex-wrap: nowrap;
+  }
+
+  /* Show the toggle button on mobile */
+  .sidebar-toggle-btn {
+    display: flex;
+  }
+
+  /* Sidebar cards collapse when closed */
+  .app-sidebar-cards {
+    gap: var(--spacing-sm);
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      max-height 0.3s ease,
+      opacity 0.25s ease;
+  }
+
+  .app-sidebar-cards.open {
+    max-height: 1200px;
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .sidebar-card {
@@ -383,6 +500,47 @@
     word-wrap: break-word;
     overflow-wrap: break-word;
   }
+
+  .quick-actions {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+
+  .quick-action-btn {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+  }
+}
+
+/* Secondary Royalties Grid Layout */
+.secondary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(var(--spacing-md), 2vw, var(--spacing-lg));
+  align-items: start;
+}
+
+.secondary-grid-col {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(var(--spacing-md), 2vw, var(--spacing-lg));
+  min-width: 0;
+}
+
+@media (max-width: 1024px) {
+  .secondary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .secondary-grid {
+    gap: var(--spacing-sm);
+  }
+
+  .secondary-grid-col {
+    gap: var(--spacing-sm);
+  }
 }
 
 /* Help modal */
@@ -421,4 +579,33 @@
 
 .modal-close:hover {
   opacity: 1;
+}
+
+/* Feature Error Boundary Styles */
+.feature-error-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  padding: var(--spacing-lg);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-lg);
+  margin: var(--spacing-lg);
+}
+
+.feature-error-content {
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.feature-error-content h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 0.5rem 0;
+}
+
+.feature-error-content p {
+  margin: 0;
+  font-size: 0.95rem;
 }

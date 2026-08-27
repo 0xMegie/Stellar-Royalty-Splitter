@@ -1,159 +1,319 @@
-# Contributing to Stellar Royalty Splitter
+# Contributing Guide
 
-Thanks for your interest in contributing. This guide covers everything you need to get the project running locally, write and run tests, and open a pull request.
-
----
-
-## Table of Contents
-
-- [Prerequisites](#prerequisites)
-- [Fork and clone](#fork-and-clone)
-- [Smart contract setup](#smart-contract-setup)
-- [Backend setup](#backend-setup)
-- [Frontend setup](#frontend-setup)
-- [Running tests](#running-tests)
-- [Branch naming](#branch-naming)
-- [Commit message standards](#commit-message-standards)
-- [PR guidelines](#pr-guidelines)
-- [Windows auth guard caveat](#windows-auth-guard-caveat)
-
----
+Thank you for contributing to the Stellar Royalty Splitter! This guide will help you set up your development environment and follow our contribution workflow.
 
 ## Prerequisites
 
-You need the following tools installed before working on any part of the project.
+- **Node.js**: 20.x LTS (required for backend CI)
+- **Rust**: Latest stable (for smart contract development)
+- **Git**: Latest version
+- **Visual Studio Build Tools** (Windows): For native module compilation
 
-### Rust and wasm32 target
+## Setup
 
-```bash
-# Install Rust via rustup
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Add the wasm32 target required for Soroban contract compilation
-rustup target add wasm32-unknown-unknown
-```
-
-### Soroban CLI (Stellar CLI)
-
-```bash
-cargo install --locked stellar-cli
-```
-
-Verify the install:
-
-```bash
-stellar --version
-```
-
-### Node.js
-
-The backend and frontend both require Node.js 18 or later.
-
-- Download: https://nodejs.org
-- Or via a version manager: `nvm install 20`
-
-Verify:
-
-```bash
-node --version   # should be >= 18
-npm --version
-```
-
----
-
-## Fork and clone
-
-```bash
-git clone https://github.com/<your-username>/Stellar-Royalty-Splitter.git
-cd Stellar-Royalty-Splitter
-```
-
----
-
-## Smart contract setup
-
-The Soroban contract lives in `src/lib.rs`. No additional setup is needed beyond Rust and the wasm32 target.
-
-Build the contract:
-
-```bash
-cargo build --target wasm32-unknown-unknown --release
-```
-
----
-
-## Backend setup
+### Backend
 
 ```bash
 cd backend
-cp .env.example .env   # fill in your values — see README for field descriptions
-npm install
-npm run dev            # starts on http://localhost:3001
-```
-
-The backend builds unsigned Soroban transaction XDR and returns it to the frontend. It never holds or uses a user's private key.
-
----
-
-## Frontend setup
-
-```bash
-cd frontend
-npm install
-npm run dev            # starts on http://localhost:5173
-```
-
-The frontend proxies `/api/*` to the backend automatically via the Vite config. Make sure the backend is running first.
-
----
-
-## Running tests
-
-### Smart contract tests
-
-Run all tests (unit + integration):
-
-```bash
-cargo test
-```
-
-Run only the inline unit tests inside `src/lib.rs`:
-
-```bash
-cargo test --lib
-```
-
-Run only the integration tests in `tests/`:
-
-```bash
-cargo test --test integration_test
-```
-
-Run a specific test by name:
-
-```bash
-cargo test test_royalty_rate_boundary_max
-```
-
-Show output from passing tests (useful for debugging):
-
-```bash
-cargo test -- --nocapture
-```
-
-### Backend tests
-
-```bash
-cd backend
+npm ci
+npm run lint
 npm test
 ```
 
-### Frontend tests
+### Smart Contract
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo build --target wasm32-unknown-unknown --release
+cargo test --workspace --locked --features testutils
+```
+
+## Development Workflow
+
+### 1. Create a Branch
+
+```bash
+git checkout main
+git pull origin main
+git checkout -b feature/your-feature-name
+```
+
+**Branch naming conventions:**
+
+- `feature/description` - New features
+- `fix/description` - Bug fixes
+- `docs/description` - Documentation
+- `chore/description` - Maintenance tasks
+
+### 2. Make Changes
+
+**Backend:**
+
+- Ensure code follows ESLint rules
+- Write tests for new functionality
+- Update API.md if endpoints change
+
+**Smart Contract:**
+
+- Follow Rust conventions
+- Include unit tests
+- Update documentation
+
+### 3. Run Quality Checks
+
+**Backend:**
+
+```bash
+cd backend
+npm run lint      # ESLint checks
+npm run format    # Auto-format code
+npm test          # Run all tests
+```
+
+**Smart Contract:**
+
+```bash
+cargo fmt --all -- --check
+cargo test --workspace --locked --features testutils
+```
+
+**Fix issues:**
+
+```bash
+cd backend
+npm run format    # Auto-fix formatting
+npm run lint      # Check remaining issues
+```
+
+### 3a. Run Dependency Security Audits
+
+Run these checks locally before opening a PR to catch vulnerable dependencies early.
+
+**JavaScript (backend):**
+
+```bash
+cd backend
+npm audit --audit-level=high
+```
+
+**JavaScript (frontend):**
 
 ```bash
 cd frontend
-npm test -- --run   # single pass, no watch mode
+npm audit --audit-level=high
 ```
+
+**Rust:**
+
+```bash
+# Install cargo-audit once
+cargo install cargo-audit --locked
+
+# Run audit (from repo root)
+cargo audit
+```
+
+The CI pipeline runs all three audits automatically on every PR and on a weekly schedule. PRs that introduce high or critical vulnerabilities will fail CI. If a finding is a false positive or cannot be remediated immediately, open a separate issue — do not disable the check in-line.
+
+### 4. Commit Your Changes
+
+```bash
+git add .
+git commit -m "type: description"
+```
+
+**Commit types:**
+
+- `feat:` - New feature
+- `fix:` - Bug fix
+- `docs:` - Documentation
+- `refactor:` - Code refactoring
+- `test:` - Test additions/fixes
+- `chore:` - Maintenance
+
+**Example:**
+
+```bash
+git commit -m "feat: add pagination to /users endpoint"
+git commit -m "fix: resolve race condition in distribution logic"
+```
+
+### 5. Push and Create Pull Request
+
+```bash
+git push -u origin feature/your-feature-name
+```
+
+Then create a PR on GitHub with:
+
+- **Title**: Clear, descriptive, under 70 characters
+- **Description**:
+  - What was changed
+  - Why it was changed
+  - What was tested
+  - Any blocking issues or notes
+
+### 6. Address Feedback
+
+- Push additional commits to your branch
+- Address review comments
+- Do NOT force-push unless asked
+
+### 7. Merge
+
+Once approved and CI passes, maintainers will merge your PR.
+
+## Quality Standards
+
+### Backend Code
+
+- **Linting**: Must pass ESLint
+- **Tests**: All tests must pass
+- **Node Versions**: Must work on Node 20.x and 22.x
+- **Coverage**: Aim for >70% test coverage
+
+### Smart Contract Code
+
+- **Formatting**: Must pass `cargo fmt --check`
+- **Tests**: All tests must pass
+- **Targets**: Must compile for `wasm32-unknown-unknown`
+- **Documentation**: Public functions must be documented
+
+## Common Issues
+
+### better-sqlite3 Installation Fails (Windows)
+
+If you see build errors for `better-sqlite3`:
+
+1. Install Visual Studio Build Tools with C++ workload
+2. Or use WSL2: `wsl --install`
+3. Or skip local tests (they run in CI):
+   ```bash
+   npm ci --omit=optional
+   ```
+
+### Port Already in Use
+
+Backend runs on port 5000 by default:
+
+```bash
+npm run dev  # Port 5000
+```
+
+If port is in use, kill the process or change PORT env var:
+
+```bash
+set PORT=5001 && npm run dev
+```
+
+### Git Merge Conflicts
+
+When pulling main:
+
+```bash
+git fetch origin
+git rebase origin/main
+# Fix conflicts in your editor
+git add .
+git rebase --continue
+```
+
+## CI/CD Pipeline
+
+### Automatic Checks
+
+All PRs run:
+
+- **Backend CI**:
+  - Node 20.x and 22.x tests
+  - ESLint checks
+  - Jest tests
+- **Smart Contract CI**:
+  - WASM compilation
+  - Cargo tests
+  - Formatting check
+- **Dependency Security Audit**:
+  - `npm audit --audit-level=high` for backend and frontend JS packages
+  - `cargo audit` for Rust crates
+  - Also runs weekly to catch newly disclosed CVEs
+
+### CI Must Pass Before Merge
+
+PRs are blocked from merging until:
+
+- All status checks pass
+- At least one review is approved
+- No requested changes remain
+
+## Getting Help
+
+- Check existing issues and PRs
+- Ask questions in PR comments
+- Review existing code for patterns
+- Check API.md and SECRETS_MANAGER.md for backend documentation
+
+## Code of Conduct
+
+Be respectful, inclusive, and collaborative. We're all learning together.
+
+---
+
+## Running tests with coverage
+
+CI publishes a coverage summary on every backend and frontend PR (see the "Backend CI" / "Frontend CI"
+job summaries in the Actions tab). Coverage there is **informational, not a hard gate** — it exists to
+support review, not to block valid changes because a generated or low-value file dragged the percentage
+down. To reproduce the same numbers locally:
+
+### Backend coverage
+
+```bash
+cd backend
+npm run test:coverage
+```
+
+Uses Jest's built-in V8 coverage collector (no extra dependency). Writes an HTML report and `lcov.info`
+to `backend/coverage/`; open `backend/coverage/lcov-report/index.html` in a browser for a file-by-file
+breakdown. `src/database/index.js` (a pure re-export barrel) and `src/database.js` (an unused legacy
+duplicate of `src/database/`, pre-existing on `main`) are excluded from collection since neither
+contains logic that a percentage should reflect.
+
+### Frontend coverage
+
+```bash
+cd frontend
+npm run test:coverage
+```
+
+Uses Vitest with `@vitest/coverage-v8`. Writes an HTML report and `lcov.info` to `frontend/coverage/`.
+Test files themselves, `src/main.tsx` (entrypoint), and config files are excluded from collection.
+
+Frontend unit/component tests run with [Vitest](https://vitest.dev/) + [React Testing
+Library](https://testing-library.com/react) — see `frontend/vitest.config.ts` and
+`frontend/src/test/setup.ts`. This is separate from the Playwright end-to-end suite under
+`frontend/e2e/` (`npm run test:e2e`), which is not coverage-instrumented.
+
+### Contract coverage
+
+Contract coverage is intentionally **not wired into CI** for now. `cargo-llvm-cov` requires a working
+`cargo test` build first, and as of this writing `cargo test --lib --features testutils` fails to
+compile on a fresh toolchain due to a transitive dependency skew: the resolved `derive_arbitrary`
+version generates code calling `Arbitrary::try_size_hint`, a method not present on the resolved
+`arbitrary` version pulled in by `soroban-env-common`/`stellar-xdr`. This reproduces with plain `cargo
+test`, independent of any coverage tooling, so it isn't something coverage instrumentation caused or can
+route around — see the pinned dependency versions with `cargo tree -p arbitrary` if you want to
+investigate a fix (likely a `Cargo.lock` pin or a `soroban-sdk` version bump, both larger changes than
+adding coverage tooling should make on their own). If your local toolchain doesn't hit this, you can
+still try it manually:
+
+```bash
+cargo install cargo-llvm-cov   # one-time
+cargo llvm-cov --lib --features testutils --html
+```
+
+Once the underlying build issue is resolved, wiring this into CI is a small addition (a `contract-ci.yml`
+job running the same command with `--summary-only` piped into `$GITHUB_STEP_SUMMARY`, mirroring the
+backend/frontend workflows).
 
 ---
 
@@ -245,3 +405,5 @@ These tests verify that unauthorized callers are correctly rejected. On Windows,
 - Run the full suite on Linux or macOS (or via WSL) to confirm correctness.
 - Do not remove the `#[cfg(not(target_os = "windows"))]` guard — it is intentional.
 - If you are adding a new auth rejection test, add the same cfg guard if you observe the same behavior.
+
+**Happy contributing!**

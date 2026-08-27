@@ -37,7 +37,25 @@ fi
 echo "▶ Target network : $NETWORK"
 echo "▶ Signing identity: $IDENTITY"
 
+FORCE=0
+for arg in "$@"; do
+  if [[ "$arg" == "--force" || "$arg" == "--ci" ]]; then
+    FORCE=1
+  fi
+done
+
 # ── Preflight checks ────────────────────────────────────────────────────────
+
+if [[ "$FORCE" -eq 0 ]]; then
+  echo ""
+  echo "⚠️  SECURITY CHECKLIST"
+  echo "Have you completed the Pre-Deploy Security Checklist in SECURITY.md? (y/N)"
+  read -r -p "> " confirm
+  if [[ ! "$confirm" =~ ^[Yy] ]]; then
+    echo "❌ Deployment aborted. Please complete the checklist in SECURITY.md first."
+    exit 1
+  fi
+fi
 
 command -v cargo >/dev/null 2>&1 || {
   echo "❌ cargo not found. Install Rust: https://rustup.rs"

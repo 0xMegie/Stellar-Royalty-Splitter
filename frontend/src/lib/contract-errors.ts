@@ -30,19 +30,46 @@ export interface ExtractedError {
 }
 
 /**
- * Numeric → user-friendly message map. Codes match the variants in
- * `src/errors.rs` of the contract. Anything missing falls through to
- * the generic message but keeps the code visible in the toast.
+ * Numeric → user-friendly message map. Codes match the `ContractError`
+ * variants defined in `src/lib.rs` of the on-chain contract (repr u32,
+ * starting at 1). See `docs/CONTRACT_ERRORS.md` for the full reference
+ * including trigger conditions and recommended client-side handling.
  */
 export const CONTRACT_ERROR_MESSAGES: Record<number, string> = {
-  1: "Contract is already initialized.",
-  2: "Caller is not the contract admin.",
-  3: "Collaborator address is duplicated in the share split.",
-  4: "Collaborator shares do not sum to 100%.",
-  5: "Token id has already been distributed.",
-  6: "Sale price must be greater than zero.",
-  7: "Secondary royalty bps exceeds the configured cap.",
-  8: "Contract is paused; please try again later.",
+  1:  "Contract has insufficient token balance to distribute.",
+  2:  "Contract has already been initialized.",
+  3:  "Collaborator list cannot be empty.",
+  4:  "Recipient count exceeds the maximum allowed.",
+  5:  "Collaborator and share lists must be the same length.",
+  6:  "Shares must sum to exactly 10,000 basis points (100%).",
+  7:  "Each collaborator must have a share greater than zero.",
+  8:  "Duplicate address found in recipient list.",
+  9:  "Share value exceeds 10,000 basis points.",
+  10: "Contract has not been initialized.",
+  11: "No collaborators are registered on this contract.",
+  12: "Share map is missing; the contract may need re-initialization.",
+  13: "Arithmetic overflow during payout calculation.",
+  14: "Royalty rate cannot be zero.",
+  15: "Royalty rate exceeds 10,000 basis points (100%).",
+  16: "Contract is paused; distributions are temporarily halted.",
+  17: "Withdrawal amount must be greater than zero.",
+  18: "Contract balance is insufficient for the requested withdrawal.",
+  19: "Recipient list is empty; configure recipients before distributing.",
+  20: "Balance is too small to distribute at least 1 stroop to each recipient.",
+  21: "Secondary royalty pool exceeds the contract's token balance.",
+  22: "No secondary royalties have been recorded to distribute.",
+  23: "No secondary royalty token has been set.",
+  24: "Address is not registered as a collaborator on this contract.",
+  25: "Updated shares would not sum to 10,000 basis points.",
+  26: "Sale price must be greater than zero.",
+  27: "Input exceeds the maximum allowed size.",
+  32: "Batch distribute cannot process more than the maximum allowed number of tokens in one call.",
+  33: "Royalty amount must be greater than zero.",
+  34: "No admin rotation is currently pending.",
+  35: "Admin rotation timelock has not elapsed yet.",
+  36: "Admin rotation timelock duration is outside the allowed range.",
+  37: "Contract is under emergency pause; distributions are halted until cleared.",
+  38: "Anomaly threshold must be greater than zero.",
 };
 
 /**

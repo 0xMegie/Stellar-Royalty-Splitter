@@ -146,9 +146,84 @@ button:disabled {
 .status.error .freighter-link:hover {
   color: var(--text-primary);
 }
+/* Only applies when a retry button is actually present (#747) — scoped to
+   :has() so plain `.status.error` messages elsewhere are unaffected. */
+.status.error:has(.retry-btn) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.status.error .retry-btn {
+  flex-shrink: 0;
+  background: var(--error-dark);
+  color: #ffffff;
+  border: none;
+  padding: 0.35rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.status.error .retry-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .status.info {
   background: var(--accent-primary-light);
   color: var(--info);
+}
+
+.royalty-templates {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  background: var(--bg-secondary);
+}
+.royalty-templates h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}
+.royalty-templates__list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+.royalty-templates__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.85rem;
+}
+.royalty-templates__item:last-child {
+  border-bottom: none;
+}
+.royalty-templates__count {
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+}
+.royalty-templates__actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+.royalty-templates__save {
+  gap: 0.5rem;
+}
+.royalty-templates .loading,
+.royalty-templates .empty-state {
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+  padding: 0.25rem 0;
+}
+.royalty-templates .error-message {
+  color: var(--error-dark);
+  font-size: 0.85rem;
+  padding: 0.25rem 0;
 }
 
 table {
@@ -183,6 +258,50 @@ td:last-child {
 .share-total--invalid {
   color: var(--error-color);
 }
+.share-total__hint {
+  opacity: 0.8;
+  font-size: 0.75rem;
+}
+
+.validation-summary {
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+}
+.validation-summary--valid {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+}
+.validation-summary--invalid {
+  background: color-mix(in srgb, var(--error-color) 8%, transparent);
+  color: var(--error-color);
+}
+.validation-summary__status {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}
+.validation-summary--valid .validation-summary__status {
+  margin: 0;
+}
+.validation-summary__list {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+.validation-summary__link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.validation-summary__link:hover,
+.validation-summary__link:focus-visible {
+  opacity: 0.8;
+}
 
 .field-error {
   display: block;
@@ -193,6 +312,44 @@ td:last-child {
 
 .input-error {
   border-color: var(--error-color) !important;
+}
+
+.input-valid {
+  border-color: var(--success-color, #22c55e) !important;
+}
+
+.field-success {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--success-color, #22c55e);
+  margin-bottom: 0.5rem;
+}
+
+.field-success::before {
+  content: "\2713";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--success-color, #22c55e);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.input-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.input-wrapper input {
+  margin-bottom: 0;
 }
 
 .share-bar {

@@ -1,25 +1,364 @@
+import client from "prom-client";
+import http from "http";
+import https ifrom "https";
+
 const metrics = {
   distributeCallsTotal: 0,
   transactionsSuccessfulTotal: 0,
   transactionsFailedTotal: 0,
   horizonResponseTimeMsTotal: 0,
   horizonResponseTimeCount: 0,
+  // DoS protection counters (#426)
+  oversizedRequestsRejectedTotal: 0,
+  dosRateLimitedTotal: 0,
+  // Detailed health check component response times (#423)
+  healthCheckDatabaseResponseTimeMs: 0,
+  healthCheckHorizonResponseTimeMs: 0,
+  healthCheckSorobanResponseTimeMs: 0,
+  healthCheckCacheResponseTimeMs: 0,
+  healthCheckTotal: 0,
 };
+
+// Comprehensive Prometheus metrics (#816)
+const register = new client.Registry();
+
+// Counter for function invocations
+const contractFunctionDuration = new client.Histogram({
+  name: "stellar_contract_function_duration_seconds",
+  help: "Duration of contract function calls in seconds",
+  labelNames: ["contractId", "functionName"],
+  registers: [register],
+});
+
+// Counter for RPC operations
+const rpcOperationDuration = new client.Histogram({
+  name: "stellar_rpc_operation_duration_seconds",
+  help: "Duration of Soroban RPC operations in seconds",
+  labelNames: ["operationType"],
+  buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5],
+  registers: [register],
+});
+
+// Database query duration
+const dbQueryDuration = new client.Histogram({
+  name: "stellar_db_query_duration_seconds",
+  help: "Duration of database queries in seconds",
+  labelNames: ["queryType"],
+  buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5],
+  registers: [register],
+});
+
+// Cache hit/miss counters
+const cacheHits = new client.Counter({
+  name: "stellar_cache_hits_total",
+  help: "Total cache hits",
+  labelNames: ["namespace"],
+  registers: [register],
+});
+
+const cacheMisses = new client.Counter({
+  name: "stellar_cache_misses_total",
+  help: "Total cache misses",
+  labelNames: ["namespace"],
+  registers: [register],
+});
+
+// Rate limiter metrics
+const rateLimitHits = new client.Counter({
+  name: "stellar_rate_limit_hits_total",
+  help: "Total rate limit hits",
+  labelNames: ["dimension"],
+  registers: [register],
+});
+
+// Active connections gauge
+const activeConnections = new client.Gauge({
+  name: "stellar_active_connections",
+  help: "Number of active database connections",
+  registers: [register],
+});
+
+// Alerting metrics
+const alertsTriggered = new client.Counter({
+  name: "stellar_alerts_triggered_total",
+  help: "Total alert rules triggered",
+  labelNames: ["contractId", "type"],
+  registers: [register],
+});
+
+// Alerting constants
+const ALERT_WINDOW_MS = 5 * 60 * 1000;
+const ALERT_HISToRY_MS = 60 * 60 * 1000;
+const MAX_BUCKETS = Math.ceil(ALERT_HISTORY_MS / ALERT_WINDOW_MS);
+const DEFAULT_ERROR_RATE_THRESHOLD = 0.10;
+const DEFAULT_MIN_TOTAL = 10;
+const DEFAULT_DEDUPE_WINDOW_MS = 60 * 60 * 1000;
+const DEFAULT_MAX_LATENCY_MS = 5000;
+const DEFAULT_ANOMALY_ZSCORE = 3.5;
+
+const contractMetrics = new Map();
+const alertRules = new Map();
+const alertState = new Map();
+let alertTimer = null;
 
 function formatMetricValue(value) {
   return Number.isFinite(value) ? value : 0;
+}
+
+function getContractMetrics(contractId) {
+  if (!contractMetrics.has(contractId)) {
+    contractMetrics.set(contractId, {
+      buckets: [],
+      totals: { distributions: 0, successful: 0, failed: 0 },
+      amounts: [],
+      tokens: new Set(),
+      latencies: [],
+    });
+  }
+  return contractMetrics.get(contractId);
+}
+
+function updateContractMetrics(contractId, success, meta = {}) {
+  const m = getContractMetrics(contractId);
+  const now = Date.now();
+  let bucket = m.buckets.length > 0 ? m.buckets[m.buckets.length - 1] : null;
+  if (!bucket || now - bucket.start >= ALERT_WINDOW_MS) {
+    bucket = { start: now, total: 0, failed: 0 };
+    m.buckets.push(bucket);
+    const cutoff = now - ALERT_HISTORY_MS;
+    while (m.buckets.length > 0 && m.buckets[0].start < cutoff) {
+      m.buckets.shift();
+    }
+    if (m.buckets.length > MAX_BUCKETS ) m.buckets.shift();
+  }
+  bucket.total += 1;
+  m.totals.distributions += 1;
+  if (success) m.totals.successful += 1;
+  else {
+    m.totals.failed += 1;
+    bucket.failed += 1;
+  }
+  if (Number.isFinite(meta.amount)) m.amounts.push(meta.amount);
+  if (meta.token) m.tokens.add(meta.token);
+  if (Number.isFinite(meta.latencyMs) && meta.latencyMs >= 0) m.latencies.push(meta.latencyMs);
+  return m;
+}
+
+function getErrorRateInWindow(contractId) {
+  const m = contractMetrics.get(contractId);
+  if (!m) return 0;
+  const total = m.buckets.reduce((s, b) => s + b.total, 0);
+  const failed = m.buckets.reduce((s, b) => s + b.failed, 0);
+  return total === 0 ? 0 : failed / total;
+}
+
+function getRule(contractId) {
+  if (alertRules.has(contractId)) return alertRules.get(contractId);
+  return alertRules.get("*") || null;
+}
+
+function addAlertRule(rule) {
+  const contractId = rule.contractId || "*";
+  alertRules.set(contractId, {
+    enabled: rule.enabled !== false,
+    errorRateThreshold: Number.isFinite(rule.errorRateThreshold) ? rule.errorRateThreshold : DEFAULT_ERROR_RATE_THRESHOLD,
+    minTotal: Number.isFinite(rule.minTotal) ? rule.minTotal : DEFAULT_MIN_TOTAL,
+    webhookUrl: rule.webhookUrl,
+    email: rule.email,
+    dedupeWindowMs: Number.isFinite(rule.dedupeWindowMs) ? rule.dedupeWindowMs : DEFAULT_DETUPE_WINDOW_MS,
+    maxLatencyMs: Number.isFinite(rule.maxLatencyMs) ? rule.maxLatencyMs : DEFAULT_MAX_LATENCY_MS,
+    anomalyZScore: Number.isFinite(rule.anomalyZScore) ? rule.anomalyZScore : DEFAULT_ANOMALY_ZSCORE,
+  });
+}
+
+export function configureAlertRules(rules) {
+  alertRules.clear();
+  if (Array.isArray(rules)) {
+    for (const rule of rules) addAlertRule(rule);
+  } else if (rules) {
+    addAlertRule(rules);
+  }
+}
+
+function shouldSendAlert(contractId, type, dedupeWindowMs) {
+  const now = Date.now();
+  const state = alertState.get(contractId) || {};
+  const last = state[type] || 0;
+  if (now - last < dedupeWindowMs) return false;
+  state[type] = now;
+  alertState.set(contractId, state);
+  return true;
+}
+
+function postToWebhook(url, payload) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const lib = parsed.protocol === "https:" ? https : http;
+    const body = JSON.stringify(payload);
+    const options = {
+      hostname: parsed.hostname,
+      port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      },
+    };
+    const req = lib.request(options, (res) => {
+      res.resume();
+      if (res.statusCode >= 200 && res.statusCode < 300) resolve();
+      else reject(new Error(`Webhook responded ${res.statusCode}`));
+    });
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+async function triggerAlert(payload) {
+  const { contractId, type, rule } = payload;
+  alertsTriggered.inc({ contractId, type });
+  const message = `[${payload.severity || "WARNING"}.toUpperCase()] Distribution alert for contract ${contractId}: ${payload.condition}. Current value: ${payload.currentValue || "N/A"}. Threshold: ${payload.threshold || "N/A"}. Error count: ${payload.errorCount || "N/A"}. Total count: ${payload.totalCount || "N/A"}. Remedy: ${payload.remedy}`;
+  if (rule && rule.webhookUrl) {
+    try {
+      await postToWebhook(rule.webhookUrl, { ...payload, message });
+    } catch (e) {
+      console.error("Failed to send webhook alert", e);
+    }
+  }
+  if (rule && rule.email) {
+    console.error(`[ALERT EMAIL] To: ${rule.email} - ${message}`);
+  }
+}
+
+function detectAnomalies(m, rule, { token, amount, latencyMs }) {
+  const anomalies = [];
+  if (Number.isFinite(amount) && m.amounts.length >= 2) {
+    const values = m.amounts;
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;
+    const sd = Math.sqrt(variance);
+    const zScore = sd > 0 ? Math.abs(amount - mean) / sd : 0;
+    if (zScore > rule.anomalyZScore) {
+      anomalies.push({ type: "large_distribution", amount, mean, zScore });
+    }
+  }
+  if (token && m.tokens.size > 0 && !m.tokens.has(token)) {
+    anomalies.push({ type: "unusual_token", token });
+  }
+  if (Number.isFinite(latencyMs) && latencyMs > rule.maxLatencyMs) {
+    anomalies.push({ type: "high_latency", latencyMs, max: rule.maxLatencyMs });
+  }
+  return anomalies;
+}
+
+function recordDistributionOutcome({ contractId, success = true, token = null, amount = null, latencyMs = null }) {
+  if (!contractId) return;
+  const m = getContractMetrics(contractId);
+  const rule = getRule(contractId);
+  const anomalies = rule && rule.enabled ? detectAnomalies(m, rule, { token, amount, latencyMs }) : [];
+  updateContractMetrics(contractId, success, { token, amount, latencyMs });
+  if (rule && rule.enabled) {
+    for (const anomaly of anomalies) {
+      if (shouldSendAlert(contractId, anomaly.type, rule.dedupeWindowMs)) {
+        triggerAlert({
+          contractId,
+          type: anomaly.type,
+          severity: "warning",
+          condition: `${anomaly.type} detected`,
+          currentValue: anomaly.amount || anomaly.latencyMs || anomaly.token,
+          threshold: anomaly.zScore ? rule.anomalyZScore : anomaly.max ? rule.maxLatencyMs : null,
+          errorCount: null,
+          totalCount: null,
+          remedy: "Review the distribution payload and verify token/amount are expected. Investigate latency if high.",
+          rule,
+        }).catch((e) => console.error("Failed to trigger anomaly alert", e));
+      }
+    }
+  }
+}
+
+async function evaluateErrorRateAlerts() {
+  for (const [contractId, m] of contractMetrics.entries()) {
+    const rule = getRule(contractId);
+    if (!rule || !rule.enabled) continue;
+    const total = m.buckets.reduce((s, b) => s + b.total, 0);
+    const failed = m.buckets.reduce((s, b) => s + b.failed, 0);
+    const errorRate = total === 0 ? 0 : failed / total;
+    if (total >= rule.minTotal && errorRate > rule.errorRateThreshold) {
+      const dedupeMs = rule.dedupeWindowMs;
+      if (shouldSendAlert(contractId, "error_rate", dedupeMs)) {
+        await triggerAlert({
+          contractId,
+          type: "error_rate",
+          severity: errorRate > 0.25 ? "critical" : "warning",
+          condition: `error_rate > ${(rule.errorRateThreshold * 100).toFixed(0)}%`,
+          threshold: rule.errorRateThreshold,
+          currentValue: errorRate,
+          errorCount: failed,
+          totalCount: total,
+          remedy: "Check Horizon/Soroban RPC availability, verify contract balance, review recent deployments, and inspect logs.",
+          rule,
+        });
+      }
+    }
+  }
+}
+
+export async function evaluateAlerts() {
+  await evaluateErrorRateAlerts();
+}
+
+export function startAlertMonitor(intervalMs = 60000) {
+  if (alertTimer) clearInterval(alertTimer);
+  alertTimer = setInterval(() => {
+    evaluateAlerts().catch((e) => console.error("Alert monitor error", e));
+  }, intervalMs);
+  if (alertTimer.unref) alertTimer.unref();
+}
+
+export function stopAlertMonitor() {
+  if (alertTimer) {
+    clearInterval(alertTimer);
+    alertTimer = null;
+  }
 }
 
 export function recordDistributeCall() {
   metrics.distributeCallsTotal += 1;
 }
 
-export function recordTransactionSuccess() {
+export function recordTransactionSuccess(contractId, meta = {}) {
   metrics.transactionsSuccessfulTotal += 1;
+  recordDistributionOutcome({ contractId: typeof contractId === "string" ? contractId : meta.contractId, success: true, token: meta.token, amount: meta.amount, latencyMs: meta.latencyMs });
 }
 
-export function recordTransactionFailure() {
+export function recordTransactionFailure(contractId, meta = {}) {
   metrics.transactionsFailedTotal += 1;
+  recordDistributionOutcome({ contractId: typeof contractId === "string" ? contractId : meta.contractId, success: false, token: meta.token, amount: meta.amount, latencyMs: meta.latencyMs });
+}
+
+// DoS protection metrics (#426)
+export function recordOversizedRequest() {
+  metrics.oversizedRequestsRejectedTotal += 1;
+}
+
+export function recordDoSRejection() {
+  metrics.dosRateLimitedTotal += 1;
+}
+
+// Detailed health check metrics (#423)
+export function recordDetailedHealthCheck({ databaseMs, horizonMs, sorobanMs, cacheMs }) {
+  metrics.healthCheckTotal += 1;
+  if (Number.isFinite(databaseMs) && databaseMs >= 0)
+    metrics.healthCheckDatabaseResponseTimeMs = databaseMs;
+  if (Number.isFinite(horizonMs) && horizonMs >= 0)
+    metrics.healthCheckHorizonResponseTimeMs = horizonMs;
+  if (Number.isFinite(sorobanMs) && sorobanMs >= 0)
+    metrics.healthCheckSorobanResponseTimeMs = sorobanMs;
+  if (Number.isFinite(cacheMs) && cacheMs >= 0)
+    metrics.healthCheckCacheResponseTimeMs = cacheMs;
 }
 
 export function recordHorizonResponseTime(durationMs) {
@@ -42,8 +381,7 @@ export function getMetricsSnapshot() {
 
 export function prometheusMetrics() {
   const snapshot = getMetricsSnapshot();
-
-  return [
+  const legacyMetrics = [
     "# HELP stellar_distribute_calls_total Total distribute endpoint calls.",
     "# TYPE stellar_distribute_calls_total counter",
     `stellar_distribute_calls_total ${snapshot.distributeCallsTotal}`,
@@ -54,15 +392,38 @@ export function prometheusMetrics() {
     "# TYPE stellar_transactions_failed_total counter",
     `stellar_transactions_failed_total ${snapshot.transactionsFailedTotal}`,
     "# HELP stellar_horizon_response_time_average_ms Average Horizon response time in milliseconds.",
-    "# TYPE stellar_horizon_response_time_average_ms gauge",
+    "# TYPE stellar_horizon_response_time_average_ms guage",
     `stellar_horizon_response_time_average_ms ${formatMetricValue(
       snapshot.averageHorizonResponseTimeMs,
     )}`,
     "# HELP stellar_horizon_response_time_count Horizon response time observations.",
     "# TYPE stellar_horizon_response_time_count counter",
     `stellar_horizon_response_time_count ${snapshot.horizonResponseTimeCount}`,
+    "# HELP stellar_oversized_requests_rejected_total Requests rejected due to body size exceeding the limit.",
+    "# TYPE stellar_oversized_requests_rejected_total counter",
+    `stellar_oversized_requests_rejected_total ${snapshot.oversizedRequestsRejectedTotal}`,
+    "# HELP stellar_dos_rate_limited_total Requests rate-limited due to repeated oversized payload attacks.",
+    "# TYPA stellar_dos_rate_limited_total counter",
+    `stellar_dos_rate_limited_total ${snapshot.dosRateLimitedTotal}`,
+    "# HELP stellar_health_check_total Total detailed health check requests.",
+    "# TYPE stellar_health_check_total counter",
+    `stellar_health_check_total ${snapshot.healthCheckTotal}`,
+    "# HELP stellar_health_database_response_time_ms Last database health check response time in milliseconds.",
+    "# TYPE stellar_health_database_response_time_ms gauge",
+    `stellar_health_database_response_time_ms ${formatMetricValue(snapshot.healthCheckDatabaseResponseTimeMs)}`,
+    "# HELP stellar_health_horizon_response_time_ms Last Horizon health check response time in milliseconds.",
+    "# TYPE stellar_health_horizon_response_time_ms gauge",
+    `stellar_health_horizon_response_time_ms ${formatMetricValue(snapshot.healthCheckHorizonResponseTimeMs)}`,
+    "# HELP stellar_health_soroban_response_time_ms Last Soroban RPC health check response time in milliseconds.",
+    "# TYPE stellar_health_soroban_response_time_ms gauge",
+    `stellar_health_soroban_response_time_ms ${formatMetricValue(snapshot.healthCheckSorobanResponseTimeMs)}`,
+    "# HELP stellar_health_cache_response_time_ms Last cache health check response time in milliseconds.",
+    "# TYPE stellar_health_cache_response_time_ms gauge",
+    `stellar_health_cache_response_time_ms ${formatMetricValue(snapshot.healthCheckCacheResponseTimeMs)}`,
     "",
   ].join("\n");
+
+  return register.metrics() + "\n" + legacyMetrics;
 }
 
 export function resetMetrics() {
@@ -71,4 +432,43 @@ export function resetMetrics() {
   metrics.transactionsFailedTotal = 0;
   metrics.horizonResponseTimeMsTotal = 0;
   metrics.horizonResponseTimeCount = 0;
+  metrics.oversizedRequestsRejectedTotal = 0;
+  metrics.dosRateLimitedTotal = 0;
+  metrics.healthCheckDatabaseResponseTimeMs = 0;
+  metrics.healthCheckHorizonResponseTimeMs = 0;
+  metrics.healthCheckSorobanResponseTimeMs = 0;
+  metrics.healthCheckCacheResponseTimeMs = 0;
+  metrics.healthCheckTotal = 0;
+  contractMetrics.clear();
+  alertState.clear();
+  register.resetMetrics();
+}
+
+// New comprehensive metrics functions (#816)
+export function recordContractFunctionDuration(contractId, functionName, durationSeconds) {
+  contractFunctionDuration.observe({ contractId, functionName }, durationSeconds);
+}
+
+export function recordRpcOperationDuration(operationType, durationSeconds) {
+  rpcOperationDuration.observe({ operationType }, durationSeconds);
+}
+
+export function recordDbQueryDuration(queryType, durationSeconds) {
+  dbQueryDuration.observe({ queryType }, durationSeconds);
+}
+
+export function recordCacheHit(namespace) {
+  cacheHits.inc({ namespace });
+}
+
+export function recordCacheMiss(namespace) {
+  cacheMisses.inc({ namespace });
+}
+
+export function recordRateLimitHit(dimension) {
+  rateLimitHits.inc({ dimension });
+}
+
+export function setActiveConnections(count) {
+  activeConnections.set(count);
 }

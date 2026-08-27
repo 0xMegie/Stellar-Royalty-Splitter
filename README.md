@@ -92,9 +92,31 @@ cargo build --target wasm32-unknown-unknown --release
 
 ## Test
 
+### Backend Tests (Node.js)
+
+```bash
+cd backend
+npm test
+```
+
+**Status:** ✅ **152/152 tests passing (100%)**
+
+### Frontend E2E Tests
+
+```bash
+cd frontend
+npm run test:e2e
+```
+
+**Status:** 📋 18 tests configured (requires Playwright browsers)
+
+### Rust Contract Tests
+
 ```bash
 cargo test
 ```
+
+**Status:** ❓ Requires Rust toolchain
 
 ---
 
@@ -140,6 +162,10 @@ Returns all registered collaborator addresses.
 
 Returns the basis-point share for a given collaborator address.
 
+### `is_collaborator(addr: Address) → bool`
+
+Returns `true` if `addr` is a registered collaborator, `false` otherwise. Unlike `get_share`/`get_collaborators`, this is safe to call before `initialize` — it returns `false` rather than panicking, so callers can use it as a quick existence check without a preceding `is_initialized` call.
+
 ### `update_wasm(wasm_hash: BytesN<32>)`
 
 Replaces the contract's executable WASM while preserving all instance storage (admin, collaborators, shares, balances, etc.). Requires admin authorization. The replacement Wasm must be uploaded to the network first via `stellar contract upload`; use the returned hash as `wasm_hash`.
@@ -183,6 +209,17 @@ stellar contract invoke \
   --network testnet \
   -- get_share \
   --collaborator GARTIST...
+```
+
+### Check whether an address is a registered collaborator
+
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --source anyone \
+  --network testnet \
+  -- is_collaborator \
+  --addr GARTIST...
 ```
 
 ### Upgrade contract WASM (admin only)
@@ -261,6 +298,8 @@ The frontend proxies `/api/*` to the backend automatically via the Vite config.
 
 The backend builds unsigned transaction XDR and returns it to the frontend. **Freighter signs and submits client-side — your private key never leaves the browser.**
 
+OpenAPI documentation is served by the backend at `GET /api/v1/docs` for Swagger UI and `GET /api/v1/docs/json` for the machine-readable OpenAPI 3.0 spec. Legacy aliases remain available at `/api/docs` and `/api/docs/json`.
+
 ---
 
 ### Backend shutdown
@@ -277,15 +316,15 @@ Copy `backend/.env.example` to `backend/.env`:
 cp backend/.env.example backend/.env
 ```
 
-| Variable            | Description                                                                             |
-| ------------------- | --------------------------------------------------------------------------------------- |
-| `PORT`              | Port the backend API listens on (default: `3001`)                                       |
-| `STELLAR_NETWORK`   | `testnet` or `mainnet`                                                                  |
-| `HORIZON_URL`       | Horizon REST endpoint for the chosen network                                            |
-| `SOROBAN_RPC_URL`   | Soroban RPC endpoint for simulating and preparing transactions                          |
-| `SERVER_SECRET_KEY` | Server-side keypair used for read-only simulations only — never signs user transactions |
-| `SIGNING_KEY_FILE` | Optional secrets-manager file path; takes precedence over `SERVER_SECRET_KEY` on load |
-| `ADMIN_ROTATE_TOKEN` | Bearer token for `POST /admin/rotate-key` hot-reload without redeploy (#293) |
+| Variable             | Description                                                                             |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| `PORT`               | Port the backend API listens on (default: `3001`)                                       |
+| `STELLAR_NETWORK`    | `testnet` or `mainnet`                                                                  |
+| `HORIZON_URL`        | Horizon REST endpoint for the chosen network                                            |
+| `SOROBAN_RPC_URL`    | Soroban RPC endpoint for simulating and preparing transactions                          |
+| `SERVER_SECRET_KEY`  | Server-side keypair used for read-only simulations only — never signs user transactions |
+| `SIGNING_KEY_FILE`   | Optional secrets-manager file path; takes precedence over `SERVER_SECRET_KEY` on load   |
+| `ADMIN_ROTATE_TOKEN` | Bearer token for `POST /admin/rotate-key` hot-reload without redeploy (#293)            |
 
 ---
 

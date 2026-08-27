@@ -86,6 +86,21 @@ export function initializeDatabase() {
         PRAGMA foreign_keys = ON;
       `,
     },
+    {
+      version: 3,
+      sql: `
+        CREATE TABLE IF NOT EXISTS contributor_onboarding (
+          walletAddress TEXT PRIMARY KEY,
+          email TEXT,
+          kycStatus TEXT DEFAULT 'pending' CHECK(kycStatus IN ('unverified', 'pending', 'verified')),
+          paymentPreferencesSet INTEGER DEFAULT 0,
+          payoutToken TEXT DEFAULT 'XLM',
+          taxInfoSubmitted INTEGER DEFAULT 0,
+          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `,
+    },
   ];
 
   const applied = db
@@ -159,6 +174,17 @@ export function initializeDatabase() {
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS contributor_onboarding (
+      walletAddress TEXT PRIMARY KEY,
+      email TEXT,
+      kycStatus TEXT DEFAULT 'pending' CHECK(kycStatus IN ('unverified', 'pending', 'verified')),
+      paymentPreferencesSet INTEGER DEFAULT 0,
+      payoutToken TEXT DEFAULT 'XLM',
+      taxInfoSubmitted INTEGER DEFAULT 0,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_transactions_contractId ON transactions(contractId);
     CREATE INDEX IF NOT EXISTS idx_transactions_txHash ON transactions(txHash);
     CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
@@ -168,6 +194,8 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_secondary_distributions_contractId ON secondary_royalty_distributions(contractId);
     CREATE INDEX IF NOT EXISTS idx_audit_contractId ON audit_log(contractId);
     CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+    CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_secondary_sales_dedup ON secondary_sales(contractId, nftId, previousOwner, newOwner, salePrice, saleToken);
   `);
 
@@ -270,6 +298,8 @@ export function getTransactionHistory(contractId, limit = 50, offset = 0) {
 }
 
 export function getTransactionDetails(txHash) {
+  if (!txHash) return null;
+
   const stmt = db.prepare(`
     SELECT 
       t.id,
@@ -287,28 +317,140 @@ export function getTransactionDetails(txHash) {
     WHERE t.txHash = ?
   `);
 
-  const transaction = stmt.get(txHash);
+  let transaction = stmt.get(txHash);
 
   if (!transaction) {
-    return null;
+    // Check contract_event_archive if transaction was archived
+    const archiveStmt = db.prepare(`
+      SELECT
+        originalTransactionId as id,
+        txHash,
+        contractId,
+        type,
+        initiatorAddress,
+        requestedAmount,
+        tokenId,
+        timestamp,
+        blockTime,
+        status,
+        errorMessage,
+        payoutsJson
+      FROM contract_event_archive
+      WHERE txHash = ?
+    `);
+
+    const archived = archiveStmt.get(txHash);
+    if (!archived) {
+      return null;
+    }
+
+    let rawPayouts = [];
+    try {
+      rawPayouts = JSON.parse(archived.payoutsJson || "[]");
+    } catch (_) {
+      rawPayouts = [];
+    }
+
+    transaction = {
+      ...archived,
+      payouts: rawPayouts,
+      payoutsJson: undefined,
+    };
+  } else {
+    const payoutsStmt = db.prepare(`
+      SELECT collaboratorAddress, amountReceived
+      FROM distribution_payouts
+      WHERE transactionId = ?
+    `);
+    transaction.payouts = payoutsStmt.all(transaction.id);
   }
 
-  const payoutsStmt = db.prepare(`
-    SELECT collaboratorAddress, amountReceived
-    FROM distribution_payouts
-    WHERE transactionId = ?
-  `);
+  // Calculate total payouts and share percentages per recipient
+  const totalPayoutNum = (transaction.payouts || []).reduce(
+    (acc, p) => acc + (parseFloat(p.amountReceived) || 0),
+    0
+  );
 
-  const payouts = payoutsStmt.all(transaction.id);
+  const payoutsWithShares = (transaction.payouts || []).map((p) => {
+    const amt = parseFloat(p.amountReceived) || 0;
+    const sharePercentage =
+      totalPayoutNum > 0 ? parseFloat(((amt / totalPayoutNum) * 100).toFixed(2)) : 0;
+    return {
+      ...p,
+      sharePercentage,
+    };
+  });
+
+  // Query edit history / audit log for this contract
+  let auditHistory = [];
+  try {
+    const auditStmt = db.prepare(`
+      SELECT id, contractId, action, user, details, timestamp
+      FROM audit_log
+      WHERE contractId = ?
+      ORDER BY timestamp DESC
+      LIMIT 20
+    `);
+    auditHistory = auditStmt.all(transaction.contractId).map((row) => {
+      let details = null;
+      try {
+        details = JSON.parse(row.details || "{}");
+      } catch (_) {
+        details = row.details;
+      }
+      return { ...row, details };
+    });
+  } catch (_) {
+    auditHistory = [];
+  }
+
+  // Construct structured Soroban contract events data
+  const contractEvents = [
+    {
+      id: `evt-${transaction.id}-invoked`,
+      type: "contract_invocation",
+      contractId: transaction.contractId,
+      topics: ["contract_call", transaction.type, transaction.contractId],
+      data: {
+        function: transaction.type,
+        initiator: transaction.initiatorAddress,
+        tokenId: transaction.tokenId || "XLM",
+        requestedAmount: transaction.requestedAmount || "0",
+        status: transaction.status,
+      },
+      timestamp: transaction.blockTime || transaction.timestamp,
+    },
+    {
+      id: `evt-${transaction.id}-payouts`,
+      type: "distribution_event",
+      contractId: transaction.contractId,
+      topics: ["royalty_split", "distribution_completed"],
+      data: {
+        totalDistributed: totalPayoutNum.toString(),
+        recipientCount: payoutsWithShares.length,
+        payoutsSummary: payoutsWithShares.map((p) => ({
+          address: p.collaboratorAddress,
+          amount: p.amountReceived,
+          share: `${p.sharePercentage}%`,
+        })),
+      },
+      timestamp: transaction.blockTime || transaction.timestamp,
+    },
+  ];
 
   return {
     ...transaction,
-    payouts,
+    payouts: payoutsWithShares,
+    totalPayout: totalPayoutNum.toString(),
+    auditHistory,
+    contractEvents,
   };
 }
 
-export function getAuditLog(contractId, limit = 100, offset = 0) {
-  const stmt = db.prepare(`
+export function getAuditLog(contractId, limit = 100, offset = 0, filters = {}) {
+  const { action, user, startDate, endDate, search } = filters;
+
+  let query = `
     SELECT 
       id,
       contractId,
@@ -318,11 +460,39 @@ export function getAuditLog(contractId, limit = 100, offset = 0) {
       timestamp
     FROM audit_log
     WHERE contractId = ?
-    ORDER BY timestamp DESC
-    LIMIT ? OFFSET ?
-  `);
+  `;
+  const params = [contractId];
 
-  return stmt.all(contractId, limit, offset).map((row) => {
+  if (action) {
+    query += ` AND action = ?`;
+    params.push(action);
+  }
+
+  if (user) {
+    query += ` AND user = ?`;
+    params.push(user);
+  }
+
+  if (startDate) {
+    query += ` AND timestamp >= ?`;
+    params.push(startDate);
+  }
+
+  if (endDate) {
+    query += ` AND timestamp <= ?`;
+    params.push(endDate);
+  }
+
+  if (search) {
+    query += ` AND (action LIKE ? OR user LIKE ? OR details LIKE ?)`;
+    const searchPattern = `%${search}%`;
+    params.push(searchPattern, searchPattern, searchPattern);
+  }
+
+  query += ` ORDER BY timestamp DESC LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
+
+  return db.prepare(query).all(...params).map((row) => {
     let details = null;
     try {
       details = JSON.parse(row.details || "{}");
@@ -331,6 +501,41 @@ export function getAuditLog(contractId, limit = 100, offset = 0) {
     }
     return { ...row, details };
   });
+}
+
+export function countAuditLog(contractId, filters = {}) {
+  const { action, user, startDate, endDate, search } = filters;
+
+  let query = `SELECT COUNT(*) as total FROM audit_log WHERE contractId = ?`;
+  const params = [contractId];
+
+  if (action) {
+    query += ` AND action = ?`;
+    params.push(action);
+  }
+
+  if (user) {
+    query += ` AND user = ?`;
+    params.push(user);
+  }
+
+  if (startDate) {
+    query += ` AND timestamp >= ?`;
+    params.push(startDate);
+  }
+
+  if (endDate) {
+    query += ` AND timestamp <= ?`;
+    params.push(endDate);
+  }
+
+  if (search) {
+    query += ` AND (action LIKE ? OR user LIKE ? OR details LIKE ?)`;
+    const searchPattern = `%${search}%`;
+    params.push(searchPattern, searchPattern, searchPattern);
+  }
+
+  return db.prepare(query).get(...params).total;
 }
 
 export function addAuditLog(contractId, action, user, details) {
@@ -638,4 +843,70 @@ export function getAnalyticsData(contractId, startDate, endDate) {
   return { summary, trends, topEarners, collaboratorStats };
 }
 
+// Contributor Onboarding database functions (#567)
+export function getContributorOnboarding(walletAddress) {
+  if (!walletAddress) return null;
+  const stmt = db.prepare(`SELECT * FROM contributor_onboarding WHERE walletAddress = ?`);
+  const record = stmt.get(walletAddress);
+
+  const payoutStmt = db.prepare(`SELECT COUNT(*) as count FROM distribution_payouts WHERE collaboratorAddress = ?`);
+  const payoutCount = payoutStmt.get(walletAddress)?.count || 0;
+  const firstDistributionReceived = payoutCount > 0 ? 1 : 0;
+
+  if (!record) {
+    return {
+      walletAddress,
+      email: "",
+      kycStatus: "pending",
+      paymentPreferencesSet: 0,
+      payoutToken: "XLM",
+      taxInfoSubmitted: 0,
+      firstDistributionReceived,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  return {
+    ...record,
+    firstDistributionReceived: record.firstDistributionReceived || firstDistributionReceived ? 1 : 0,
+  };
+}
+
+export function upsertContributorOnboarding(walletAddress, data = {}) {
+  if (!walletAddress) return null;
+
+  const existing = getContributorOnboarding(walletAddress);
+  const email = data.email !== undefined ? data.email : (existing?.email || "");
+  const kycStatus = data.kycStatus !== undefined ? data.kycStatus : (existing?.kycStatus || "pending");
+  const paymentPreferencesSet =
+    data.paymentPreferencesSet !== undefined
+      ? data.paymentPreferencesSet
+        ? 1
+        : 0
+      : existing?.paymentPreferencesSet || 0;
+  const payoutToken = data.payoutToken !== undefined ? data.payoutToken : (existing?.payoutToken || "XLM");
+  const taxInfoSubmitted =
+    data.taxInfoSubmitted !== undefined ? (data.taxInfoSubmitted ? 1 : 0) : existing?.taxInfoSubmitted || 0;
+
+  const stmt = db.prepare(`
+    INSERT INTO contributor_onboarding (
+      walletAddress, email, kycStatus, paymentPreferencesSet, payoutToken, taxInfoSubmitted, updatedAt
+    ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(walletAddress) DO UPDATE SET
+      email = excluded.email,
+      kycStatus = excluded.kycStatus,
+      paymentPreferencesSet = excluded.paymentPreferencesSet,
+      payoutToken = excluded.payoutToken,
+      taxInfoSubmitted = excluded.taxInfoSubmitted,
+      updatedAt = CURRENT_TIMESTAMP
+  `);
+
+  stmt.run(walletAddress, email, kycStatus, paymentPreferencesSet, payoutToken, taxInfoSubmitted);
+  countWrite();
+
+  return getContributorOnboarding(walletAddress);
+}
+
 export default db;
+

@@ -5,6 +5,14 @@
 # Node
 frontend/node_modules
 backend/node_modules
+shared/node_modules
+
+# Test coverage output
+backend/coverage
+frontend/coverage
+frontend/coverage-report
+Cargo-llvm-cov-target
+lcov.info
 
 # Env
 .env

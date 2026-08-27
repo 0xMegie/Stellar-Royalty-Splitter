@@ -5,11 +5,104 @@ Base URL: `http://localhost:3001` (default)
 All JSON POST bodies must use `Content-Type: application/json`.
 JSON request bodies are limited to `10kb`; oversized requests return `413 Payload Too Large`.
 
+## Error responses
+
+Every error response — validation failures, contract/RPC errors, rate limiting,
+and internal errors — uses the same JSON shape and is built by
+`backend/src/error-response.js`:
+
+```json
+{
+  "status": 400,
+  "code": "validation_failed",
+  "message": "Collaborators array must be non-empty",
+  "error": "Collaborators array must be non-empty",
+  "retryable": false,
+  "retryAfter": null,
+  "details_url": "docs/errors#validation_failed",
+  "details": [{ "field": "collaborators", "message": "Collaborators array must be non-empty" }]
+}
+```
+
+| Field | Description |
+| ----- | ----------- |
+| `status` | HTTP status code, duplicated in the body for clients that only inspect JSON |
+| `code` | Stable, machine-readable error code — safe to branch on in frontend/integration code. Never changes across releases for the same failure class. |
+| `message` | Human-readable message. Safe to display to end users. |
+| `error` | Same value as `message` — kept for backward compatibility with older clients that read `.error` |
+| `retryable` | Boolean indicating whether the request can be retried |
+| `retryAfter` | Suggested retry delay in seconds (null if not retryable) |
+| `details_url` | Link to error documentation in the error catalog |
+| `details` | Present only on validation errors; an array of `{ field, message }` issues |
+
+Stack traces and other internal details are never included in a response —
+they're written to the server-side logger (`backend/src/logger.js`) instead,
+keyed by request path/method so they can be correlated with the request log
+line.
+
+**Stable error codes**
+
+| Code | Typical status | Meaning |
+| ---- | ---- | ---- |
+| `validation_failed` | 400 | Request body/query failed schema or manual validation |
+| `bad_request` | 400 | Generic malformed request (fallback for unlisted 400s) |
+| `invalid_contract_id` | 400 | `contractId` is not a valid `C...` Soroban contract address |
+| `invalid_stellar_address` | 400 | A wallet address is not a valid `G...` Stellar address |
+| `invalid_query_parameter` | 400 | A query param (e.g. `limit`/`offset`) failed validation |
+| `unauthorized` | 401 | Missing or invalid authentication |
+| `forbidden` | 403 | Authenticated but not permitted (RBAC) |
+| `not_found` | 404 | Resource does not exist |
+| `already_initialized` | 409 | `initialize` called on a contract that's already initialized |
+| `conflict` | 409 | Generic conflict (fallback for unlisted 409s) |
+| `payload_too_large` | 413 | Request body (or a specific field) exceeds its size limit |
+| `unsupported_media_type` | 415 | POST without `Content-Type: application/json` |
+| `contract_simulation_failed` | 400 | Soroban simulation of a contract read/call failed |
+| `too_many_requests` | 429 | Rate limit exceeded (general, write, or admin limiter) |
+| `internal_server_error` | 500 | Unexpected server-side failure |
+| `service_unavailable` / `request_timeout` | 503 | Downstream (RPC) unavailable, or the request exceeded `REQUEST_TIMEOUT_MS` |
+
+Any status without a listed code above falls back to `error` via
+`normalizeErrorCode()` (`backend/src/error-response.js`) — this only happens
+for statuses not yet given a specific code and should be treated as a gap to
+fill, not a stable code to depend on.
+
 ## Health
+
+### `GET /health`
+
+Liveness probe — confirms the API process is running. Does not touch the
+database or Horizon, so it's safe to poll frequently (deployment platforms,
+uptime monitors). Always returns `200` if the process can respond at all.
+
+**Response**
+
+```json
+{ "status": "ok", "network": "Testnet", "uptime": 1234.5 }
+```
+
+### `GET /ready`
+
+Readiness probe — confirms the dependencies required to serve traffic
+(local SQLite database, Stellar Horizon) are reachable. Returns `503` when
+any dependency is down so orchestrators can hold traffic until the service
+recovers. Never runs contract transactions or expensive RPC calls.
+
+**Response**
+
+```json
+{
+  "status": "ready",
+  "dependencies": { "database": true, "horizon": true }
+}
+```
+
+`status` is `"not_ready"` and the HTTP status is `503` when any dependency
+in `dependencies` is `false`.
 
 ### `GET /api/v1/health`
 
-Operator health check for the backend and Stellar connectivity.
+Operator health check for the backend and Stellar connectivity — richer
+than `/health`, includes contract deployment status and DB metrics.
 
 **Response**
 
@@ -54,6 +147,30 @@ Build an unsigned `initialize` transaction XDR.
 **Body:** `{ contractId, walletAddress, collaborators, shares }`
 
 **Response:** `{ xdr, transactionId }`
+
+Initialize requests are rejected before contract processing when the request body is too large or when the serialized `collaborators` array exceeds the initialize payload guard.
+
+**Oversized payload response:** `413 Payload Too Large`
+
+```json
+{
+  "status": 413,
+  "code": "payload_too_large",
+  "message": "Payload too large",
+  "error": "Payload too large"
+}
+```
+
+Collaborator-specific payload limit responses use:
+
+```json
+{
+  "status": 413,
+  "code": "payload_too_large",
+  "message": "Collaborators payload too large",
+  "error": "Collaborators payload too large"
+}
+```
 
 ## Distribute
 
@@ -111,13 +228,33 @@ Dry-run the `distribute` call via Soroban simulation. Returns the expected fee, 
     { "address": "G...", "amount": "500" },
     { "address": "G...", "amount": "500" }
   ],
-  "contractError": null
+  "contractError": null,
+  "feeBreakdown": {
+    "base_fee": 100,
+    "priority_fee": 0,
+    "resource_fee": 0,
+    "total": 100
+  },
+  "perRecipientEffectiveFee": 50,
+  "feeScalingComparison": [
+    { "collaborators": 2, "estimated_total_fee": 110 },
+    { "collaborators": 5, "estimated_total_fee": 140 },
+    { "collaborators": 10, "estimated_total_fee": 190 },
+    { "collaborators": 20, "estimated_total_fee": 290 }
+  ]
 }
 ```
 
 - `fee`: The expected Soroban resource fee returned by simulation
 - `recipientAmounts`: Array of `{ address, amount }` entries decoded from simulated `dist` events. Amounts are strings to preserve integer precision. The array is empty if simulation fails before payouts are emitted.
 - `contractError`: Error message if simulation failed, otherwise `null`
+- `feeBreakdown`: Object containing fee components:
+  - `base_fee`: Stellar base fee (100 stroops)
+  - `priority_fee`: Additional fee for priority processing
+  - `resource_fee`: Soroban resource fee
+  - `total`: Sum of all fee components
+- `perRecipientEffectiveFee`: Total fee divided by number of recipients
+- `feeScalingComparison`: Array showing estimated fee growth for 2, 5, 10, and 20 collaborators
 
 The endpoint only calls Soroban RPC simulation. It does not submit the transaction, record a transaction row, or modify contract state.
 
@@ -129,9 +266,33 @@ Returns on-chain collaborator addresses and shares.
 
 ## Contract
 
+### `GET /api/v1/contract/state`
+
+Returns the configured contract's current state for frontend displays: admin address, royalty rate, recipient shares, token balance, and network details. Responses are cached for 30 seconds to reduce Soroban RPC calls.
+
+Uses `ROYALTY_CONTRACT_ID` or `CONTRACT_ID` by default. Pass `contractId` to override. Uses `ROYALTY_TOKEN_ID`, `TOKEN_CONTRACT_ID`, or `TOKEN_ID` by default for the balance token. Pass `tokenId` to override.
+
+**Response:**
+
+```json
+{
+  "contractId": "C...",
+  "adminAddress": "G...",
+  "royaltyRate": 500,
+  "recipients": [
+    { "address": "G...", "basisPoints": 5000 },
+    { "address": "G...", "basisPoints": 5000 }
+  ],
+  "balance": "10000000",
+  "tokenId": "C...",
+  "network": "Testnet",
+  "networkPassphrase": "Test SDF Network ; September 2015"
+}
+```
+
 ### `GET /api/v1/contract/info`
 
-Returns the configured contract's current on-chain state for frontend initialization and operator dashboards.
+Returns the configured contract's current on-chain state for frontend initialization and operator dashboards. This legacy endpoint is not cached.
 
 Uses `ROYALTY_CONTRACT_ID` or `CONTRACT_ID` by default. Pass `contractId` to override. Uses `ROYALTY_TOKEN_ID`, `TOKEN_CONTRACT_ID`, or `TOKEN_ID` by default for the balance token. Pass `tokenId` to override.
 
@@ -208,12 +369,185 @@ Required environment:
 
 ## Secondary royalty
 
-See route module `src/routes/secondary-royalty.js` for pool, sales, and distribution endpoints.
+### `GET /api/v1/secondary-royalty/sales/:contractId`
+
+Returns paginated secondary sale records for a contract with optional filtering.
+
+**Query params:**
+
+| Param | Type | Default | Min | Max | Description |
+| ----- | ---- | ------- | --- | --- | ----------- |
+| `limit` | integer | `50` | `1` | `100` | Number of sales to return |
+| `offset` | integer | `0` | `0` | — | Pagination offset |
+| `nftId` | string | — | — | — | Filter to a specific NFT ID |
+| `startDate` | ISO 8601 | — | — | — | Filter sales on or after this date |
+| `endDate` | ISO 8601 | — | — | — | Filter sales on or before this date |
+
+Returns `400` if `startDate` is after `endDate`, or if either date is not a valid ISO 8601 string.
+
+### `GET /api/v1/secondary-royalty/distributions/:contractId`
+
+Returns paginated secondary royalty distribution records for a contract.
+
+**Query params:**
+
+| Param | Type | Default | Min | Max | Description |
+| ----- | ---- | ------- | --- | --- | ----------- |
+| `limit` | integer | `10` | `1` | `100` | Number of distributions to return |
+| `offset` | integer | `0` | `0` | — | Pagination offset |
+
+**Response:**
+
+```json
+{
+  "distributions": [ /* distribution objects */ ],
+  "pagination": { "limit": 10, "offset": 0 }
+}
+```
+
+**Example:**
+
+```bash
+curl "http://localhost:3001/api/v1/secondary-royalty/distributions/C...?limit=20&offset=40"
+```
+
+See route module `src/routes/secondary-royalty.js` for pool, stats, and set-rate endpoints.
 
 ## History & analytics
 
 - `GET /api/v1/history/:contractId`
+- `GET /api/v1/archive/:contractId`
+- `GET /api/v1/archive/policy`
+- `POST /api/v1/archive/policy`
+- `POST /api/v1/archive/run`
 - `GET /api/v1/analytics/:contractId`
+
+All paginated read endpoints (`history`, `archive`, `audit`) share a common constraint model: `limit` is an integer between 1 and the endpoint-specific maximum; `offset` must be a non-negative integer. Invalid values return `400 Bad Request`.
+
+These endpoints are subject to a dedicated read rate limiter (default 30 req/min per IP, configurable via `RATE_LIMIT_READ_MAX`) in addition to the global limiter.
+
+Contract event archival moves `transactions` rows older than the configured retention period into `contract_event_archive`.
+The default policy is enabled with a 90 day retention period.
+
+### `GET /api/v1/history/:contractId`
+
+Returns paginated transaction history for a contract.
+
+**Query params:**
+
+| Param | Type | Default | Min | Max | Description |
+| ----- | ---- | ------- | --- | --- | ----------- |
+| `limit` | integer | `50` | `1` | `100` | Number of transactions to return |
+| `offset` | integer | `0` | `0` | — | Number of rows to skip (pagination offset) |
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": [ /* transaction objects */ ],
+  "pagination": { "limit": 50, "offset": 0, "total": 142 }
+}
+```
+
+**Example — page 2 with 20 results per page:**
+
+```bash
+curl "http://localhost:3001/api/v1/history/C...?limit=20&offset=20"
+```
+
+**Invalid pagination returns 400:**
+
+```bash
+curl "http://localhost:3001/api/v1/history/C...?limit=abc"
+# → 400 { "code": "invalid_query_parameter", "message": "limit must be a number" }
+
+curl "http://localhost:3001/api/v1/history/C...?limit=0"
+# → 400 { "code": "invalid_query_parameter", "message": "limit must be a number" }
+
+curl "http://localhost:3001/api/v1/history/C...?limit=101"
+# → limit is clamped to 100 (parsePagination clamps silently)
+
+curl "http://localhost:3001/api/v1/history/C...?offset=-1"
+# → offset is clamped to 0 (parsePagination clamps silently)
+```
+
+### `GET /api/v1/analytics/:contractId`
+
+Returns aggregated distribution analytics for a contract over a configurable date range.
+
+**Query params:**
+
+| Param | Type | Default | Constraints | Description |
+| ----- | ---- | ------- | ----------- | ----------- |
+| `start` | ISO 8601 string | 90 days ago | Valid date, must be ≤ `end` | Range start (inclusive) |
+| `end` | ISO 8601 string | now | Valid date, must be ≥ `start` | Range end (inclusive) |
+| `topLimit` | integer | `10` | 1–100 | Number of top earners to return |
+
+Invalid date formats or a `start` after `end` return `400 Bad Request`. Results are cached for 60 seconds per `contractId + start + end + topLimit` combination.
+
+**Example:**
+
+```bash
+# Default — last 90 days, top 10 earners
+curl "http://localhost:3001/api/v1/analytics/C..."
+
+# Custom range with 25 top earners
+curl "http://localhost:3001/api/v1/analytics/C...?start=2024-01-01&end=2024-06-30&topLimit=25"
+```
+
+**Invalid query returns 400:**
+
+```bash
+curl "http://localhost:3001/api/v1/analytics/C...?start=not-a-date"
+# → 400 { "code": "validation_failed", "message": "Invalid start date. Use ISO 8601 format." }
+
+curl "http://localhost:3001/api/v1/analytics/C...?start=2024-12-31&end=2024-01-01"
+# → 400 { "code": "validation_failed", "message": "start date must be before end date." }
+
+curl "http://localhost:3001/api/v1/analytics/C...?topLimit=0"
+# → 400 { "code": "validation_failed", "message": "topLimit must be at least 1" }
+```
+
+### `GET /api/v1/archive/:contractId`
+
+Query archived contract events for a contract.
+
+**Query params:**
+
+| Param | Type | Default | Min | Max | Description |
+| ----- | ---- | ------- | --- | --- | ----------- |
+| `limit` | integer | `50` | `1` | `200` | Number of archived events to return |
+| `offset` | integer | `0` | `0` | — | Pagination offset |
+
+### `GET /api/v1/archive/policy`
+
+Returns the current archive policy:
+
+```json
+{
+  "success": true,
+  "data": {
+    "enabled": true,
+    "retentionDays": 90,
+    "updatedAt": "2026-06-30 12:00:00"
+  }
+}
+```
+
+### `POST /api/v1/archive/policy`
+
+Update archive retention configuration.
+
+**Body:** `{ "enabled": true, "retentionDays": 90 }`
+
+### `POST /api/v1/archive/run`
+
+Runs one bounded archival batch. Events with `COALESCE(blockTime, timestamp)` older than the policy cutoff are copied into `contract_event_archive` with payout details and then removed from active `transactions`.
+
+**Body (optional):** `{ "batchSize": 500 }`
+
+**Response:** `{ "success": true, "data": { "archived": 12, "enabled": true, "retentionDays": 90, "cutoff": "2026-04-01T00:00:00.000Z", "durationMs": 8 } }`
 
 ## Transaction confirmation
 
@@ -321,6 +655,12 @@ environment variables:
 | `WEBHOOK_MAX_RETRIES` | `3` | Max delivery attempts per webhook (#295). |
 | `WEBHOOK_RETRY_BASE_MS` | `1000` | Base backoff for webhook retries (#295). |
 | `WEBHOOK_TIMEOUT_MS` | `10000` | Per-request timeout for webhook POST calls (#295). |
+| `RATE_LIMIT_MAX` | `100` | Max requests per window for unauthenticated (public) endpoints. |
+| `RATE_LIMIT_AUTH_MAX` | `1000` | Max requests per window for authenticated (`x-api-key`) requests. |
+| `RATE_LIMIT_WRITE_MAX` | `10` | Max requests per window for write/mutation endpoints (`initialize`, `distribute`, `secondary-royalty`, `webhooks`). |
+| `RATE_LIMIT_READ_MAX` | `30` | Max requests per window for read-heavy query endpoints (`analytics`, `history`, `archive`, `audit`) per IP or API key (#394). |
+| `RATE_LIMIT_ADMIN_MAX` | `5` | Max requests per window for admin routes (`/admin/*`). |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Sliding window duration for all rate limiters in milliseconds. |
 
 When the fee fetch fails the backend falls back to `BASE_FEE` (`100` stroops) so transaction submission keeps working.
 

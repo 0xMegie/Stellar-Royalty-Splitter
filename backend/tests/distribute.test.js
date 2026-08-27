@@ -1,6 +1,12 @@
 import { jest, describe, test, expect, beforeEach } from "@jest/globals";
 import request from "supertest";
 import express from "express";
+import {
+  buildDistributePayload,
+  VALID_CONTRACT_ID as CONTRACT,
+  VALID_TOKEN_ID as TOKEN,
+  VALID_WALLET_A as WALLET,
+} from "./test-helpers.js";
 
 const retryBuildTx = jest.fn();
 
@@ -46,22 +52,15 @@ await jest.unstable_mockModule("../src/database/index.js", () => ({
 
 const { distributeRouter } = await import("../src/routes/distribute.js");
 const { resetMetrics } = await import("../src/metrics.js");
+const { notFoundHandler, errorHandler } = await import("../src/error-response.js");
 
 const app = express();
 app.use(express.json({ limit: "10kb" }));
 app.use("/api/v1/distribute", distributeRouter);
-app.use((err, _req, res, _next) => {
-  if (err.type === "entity.too.large") {
-    return res.status(413).json({ error: "Payload too large" });
-  }
-  res.status(500).json({ error: err.message ?? "Internal server error" });
-});
+app.use(notFoundHandler);
+app.use(errorHandler);
 
-const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const WALLET   = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const TOKEN    = "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-
-const validBody = { contractId: CONTRACT, walletAddress: WALLET, tokenId: TOKEN };
+const validBody = buildDistributePayload({ contractId: CONTRACT, walletAddress: WALLET, tokenId: TOKEN });
 
 describe("POST /api/v1/distribute", () => {
   beforeEach(() => {

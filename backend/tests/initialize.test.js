@@ -1,5 +1,18 @@
 import { jest, describe, test, expect, beforeEach } from "@jest/globals";
+import express from "express";
 import request from "supertest";
+import {
+  INITIALIZE_COLLABORATORS_PAYLOAD_LIMIT_BYTES,
+  INITIALIZE_PAYLOAD_LIMIT_BYTES,
+} from "../src/validation.js";
+import { notFoundHandler, errorHandler } from "../src/error-response.js";
+import {
+  buildInitializePayload,
+  VALID_CONTRACT_ID as CONTRACT,
+  VALID_WALLET_A as WALLET,
+  VALID_WALLET_B as COLLAB1,
+  VALID_WALLET_C as COLLAB2,
+} from "./test-helpers.js";
 
 // Capture mock functions at factory time so we hold the same instances the route uses
 const retryBuildTx = jest.fn();
@@ -25,19 +38,15 @@ await jest.unstable_mockModule("../src/database/index.js", () => ({
   getMigrationVersion: jest.fn(() => 1),
 }));
 
-const { default: app } = await import("./app.js");
+const { initializeRouter } = await import("../src/routes/initialize.js");
 
-const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const WALLET   = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const COLLAB1  = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-const COLLAB2  = "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+const app = express();
+app.use(express.json({ limit: "10kb" }));
+app.use("/api/v1/initialize", initializeRouter);
+app.use(notFoundHandler);
+app.use(errorHandler);
 
-const validBody = {
-  contractId: CONTRACT,
-  walletAddress: WALLET,
-  collaborators: [COLLAB1, COLLAB2],
-  shares: [5000, 5000],
-};
+const validBody = buildInitializePayload({ walletAddress: WALLET, collaborators: [COLLAB1, COLLAB2] });
 
 describe("POST /api/v1/initialize", () => {
   beforeEach(() => jest.clearAllMocks());
@@ -62,12 +71,38 @@ describe("POST /api/v1/initialize", () => {
     expect(res.body.error).toMatch(/already initialized/i);
   });
 
-  test("400 when shares do not sum to 10000", async () => {
+  test("400 when shares do not sum to 10000 — error message shows actual and expected sums", async () => {
     const res = await request(app)
       .post("/api/v1/initialize")
       .send({ ...validBody, shares: [3000, 3000] });
 
     expect(res.status).toBe(400);
+    // Issue #356: error message must include the actual sum (6000) and expected (10000).
+    const details = JSON.stringify(res.body);
+    expect(details).toMatch(/6000/);
+    expect(details).toMatch(/10000/);
+  });
+
+  test("400 when shares sum to 9999 — error shows 9999 vs 10000", async () => {
+    const res = await request(app)
+      .post("/api/v1/initialize")
+      .send({ ...validBody, shares: [4999, 5000] });
+
+    expect(res.status).toBe(400);
+    const details = JSON.stringify(res.body);
+    expect(details).toMatch(/9999/);
+    expect(details).toMatch(/10000/);
+  });
+
+  test("400 when shares sum to 10001 — error shows 10001 vs 10000", async () => {
+    const res = await request(app)
+      .post("/api/v1/initialize")
+      .send({ ...validBody, shares: [5001, 5000] });
+
+    expect(res.status).toBe(400);
+    const details = JSON.stringify(res.body);
+    expect(details).toMatch(/10001/);
+    expect(details).toMatch(/10000/);
   });
 
   test("400 when collaborators and shares lengths differ", async () => {
@@ -78,17 +113,58 @@ describe("POST /api/v1/initialize", () => {
     expect(res.status).toBe(400);
   });
 
-  test("400 when required fields are missing", async () => {
+  test("400 when collaborators array is empty", async () => {
     const res = await request(app)
       .post("/api/v1/initialize")
-      .send({ contractId: CONTRACT });
+      .send({ ...validBody, collaborators: [], shares: [] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/collaborators array must be non-empty/i);
+  });
+
+  test("400 when required fields are missing", async () => {
+    const res = await request(app).post("/api/v1/initialize").send({ contractId: CONTRACT });
 
     expect(res.status).toBe(400);
   });
 
+  test("413 when initialize request body is too large", async () => {
+    const res = await request(app)
+      .post("/api/v1/initialize")
+      .send({ ...validBody, padding: "x".repeat(INITIALIZE_PAYLOAD_LIMIT_BYTES) });
+
+    expect(res.status).toBe(413);
+    expect(res.body.error).toBe("Payload too large");
+    expect(isContractInitialized).not.toHaveBeenCalled();
+    expect(retryBuildTx).not.toHaveBeenCalled();
+    expect(recordTransaction).not.toHaveBeenCalled();
+  });
+
+  test("413 when collaborators payload is too large", async () => {
+    const oversizedCollaborator = `G${"A".repeat(INITIALIZE_COLLABORATORS_PAYLOAD_LIMIT_BYTES)}`;
+
+    const res = await request(app)
+      .post("/api/v1/initialize")
+      .send({
+        ...validBody,
+        collaborators: [oversizedCollaborator],
+        shares: [10000],
+      });
+
+    expect(res.status).toBe(413);
+    expect(res.body.error).toBe("Collaborators payload too large");
+    expect(isContractInitialized).not.toHaveBeenCalled();
+    expect(retryBuildTx).not.toHaveBeenCalled();
+    expect(recordTransaction).not.toHaveBeenCalled();
+  });
+
+
   test("503 when Stellar RPC is unavailable", async () => {
     isContractInitialized.mockResolvedValue(false);
-    retryBuildTx.mockRejectedValue({ status: 503, message: "Stellar RPC is currently unavailable. Please try again later." });
+    retryBuildTx.mockRejectedValue({
+      status: 503,
+      message: "Stellar RPC is currently unavailable. Please try again later.",
+    });
     recordTransaction.mockReturnValue("tx-123");
 
     const res = await request(app).post("/api/v1/initialize").send(validBody);

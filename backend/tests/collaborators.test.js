@@ -2,8 +2,8 @@ import { jest, describe, test, expect, beforeEach } from "@jest/globals";
 import request from "supertest";
 
 const CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const COLLAB1  = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-const COLLAB2  = "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+const COLLAB1  = "GA7E6YDRQKJ2JNOG27UPSCQ3FQ6U4X3QQGJKHNGF23T7QCI2FM6E3W2P";
+const COLLAB2  = "GBOW474QUGZMHVHF6YDRQKJ2JNOG27UPUCY4FU7E6UDBOKBZJJNWYPSI";
 
 const mockSimulate = jest.fn();
 const mockIsSimError = jest.fn(() => false);
@@ -62,9 +62,12 @@ await jest.unstable_mockModule("../src/database/index.js", () => ({
 
 const { default: app } = await import("./app.js");
 const { SorobanRpc } = await import("@stellar/stellar-sdk");
+const { clearCache } = await import("../src/cache.js");
 
 describe("GET /api/v1/collaborators/:contractId", () => {
   beforeEach(() => {
+    // Clear the in-memory cache so each test starts cold (#683)
+    clearCache();
     mockSimulate.mockReset();
     mockIsSimError.mockReset();
     mockIsSimError.mockReturnValue(false);

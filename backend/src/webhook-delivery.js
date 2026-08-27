@@ -1,24 +1,19 @@
 /**
- * Deliver distribute-completion webhooks with retry logic (#295).
+ * Deliver distribute-completion webhooks (#295).
+ * Failed deliveries are persisted to the database for retry by the
+ * background retry job (retry-failed-webhooks.js).
  */
 
-import { listWebhooks } from "./database/webhooks.js";
+import { listWebhooks, updateWebhookRetryStateWithPayload, resetWebhookRetryCount, moveToDlq } from "./database/webhooks.js";
 import logger from "./logger.js";
+import { parsePositiveInt } from "./utils.js";
 
-function parsePositiveInt(value, fallback) {
-  const n = parseInt(value ?? "", 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
-const WEBHOOK_MAX_RETRIES = parsePositiveInt(process.env.WEBHOOK_MAX_RETRIES, 3);
-const WEBHOOK_RETRY_BASE_MS = parsePositiveInt(process.env.WEBHOOK_RETRY_BASE_MS, 1000);
 const WEBHOOK_TIMEOUT_MS = parsePositiveInt(process.env.WEBHOOK_TIMEOUT_MS, 10_000);
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const BACKOFF_MS = [60_000, 300_000, 900_000, 3_600_000];
+const MAX_WEBHOOK_RETRIES = 4;
 
-async function postWebhook(url, payload) {
+export async function postWebhook(url, payload) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), WEBHOOK_TIMEOUT_MS);
 
@@ -42,35 +37,10 @@ async function postWebhook(url, payload) {
   }
 }
 
-async function deliverWithRetry(url, payload) {
-  for (let attempt = 1; attempt <= WEBHOOK_MAX_RETRIES; attempt++) {
-    try {
-      await postWebhook(url, payload);
-      logger.info("Webhook delivered", { url, attempt });
-      return;
-    } catch (error) {
-      const isLastAttempt = attempt === WEBHOOK_MAX_RETRIES;
-      logger.warn("Webhook delivery failed", {
-        url,
-        attempt,
-        maxRetries: WEBHOOK_MAX_RETRIES,
-        error: error instanceof Error ? error.message : String(error),
-      });
-
-      if (isLastAttempt) {
-        logger.error("Webhook delivery exhausted retries", { url });
-        return;
-      }
-
-      const delay = WEBHOOK_RETRY_BASE_MS * Math.pow(2, attempt - 1);
-      await sleep(delay);
-    }
-  }
-}
-
 /**
  * Fire distribute-completion webhooks for a confirmed transaction.
  * Runs asynchronously; errors are logged but do not block the caller.
+ * Failed deliveries are persisted to the database for background retry.
  */
 export function deliverDistributeWebhooks(transaction) {
   const webhooks = listWebhooks(transaction.contractId);
@@ -92,18 +62,52 @@ export function deliverDistributeWebhooks(transaction) {
     timestamp: transaction.blockTime ?? transaction.timestamp,
   };
 
+  const now = new Date();
+
   for (const webhook of webhooks) {
-    deliverWithRetry(webhook.url, payload).catch((error) => {
-      logger.error("Unexpected webhook delivery error", {
-        url: webhook.url,
-        error: error instanceof Error ? error.message : String(error),
+    postWebhook(webhook.url, payload)
+      .then(() => {
+        logger.info("Webhook delivered", { url: webhook.url });
+        resetWebhookRetryCount(webhook.id);
+      })
+      .catch((error) => {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const retryCount = (webhook.retry_count ?? 0) + 1;
+        const nextRetryTime = new Date(now.getTime() + BACKOFF_MS[Math.min(retryCount - 1, BACKOFF_MS.length - 1)]);
+
+        logger.warn("Webhook delivery failed, scheduled for retry", {
+          url: webhook.url,
+          attempt: retryCount,
+          maxRetries: MAX_WEBHOOK_RETRIES,
+          nextRetryTime: nextRetryTime.toISOString(),
+          error: errorMessage,
+        });
+
+        updateWebhookRetryStateWithPayload(webhook.id, retryCount, nextRetryTime.toISOString(), JSON.stringify(payload));
+
+        if (retryCount >= MAX_WEBHOOK_RETRIES) {
+          logger.error("Webhook delivery exhausted all retries, moving to DLQ", {
+            url: webhook.url,
+            webhookId: webhook.id,
+            contractId: webhook.contractId,
+            retryCount,
+          });
+
+          try {
+            moveToDlq(webhook.id, webhook.url, webhook.contractId, JSON.stringify(payload), errorMessage, retryCount);
+          } catch (dlqErr) {
+            logger.error("Failed to move webhook to DLQ", {
+              webhookId: webhook.id,
+              error: dlqErr instanceof Error ? dlqErr.message : String(dlqErr),
+            });
+          }
+        }
       });
-    });
   }
 }
 
 export const _config = {
-  WEBHOOK_MAX_RETRIES,
-  WEBHOOK_RETRY_BASE_MS,
   WEBHOOK_TIMEOUT_MS,
+  MAX_WEBHOOK_RETRIES,
+  BACKOFF_MS,
 };

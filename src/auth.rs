@@ -8,6 +8,8 @@ pub mod msg {
     pub const SET_ROYALTY_RATE_ADMIN: &str = "set_royalty_rate: admin authorization required";
     pub const PAUSE_ADMIN: &str = "pause: admin authorization required";
     pub const UNPAUSE_ADMIN: &str = "unpause: admin authorization required";
+    pub const PAUSE_OPERATION_ADMIN: &str = "pause_operation: admin authorization required";
+    pub const UNPAUSE_OPERATION_ADMIN: &str = "unpause_operation: admin authorization required";
     pub const ADMIN_TRANSFER_ADMIN: &str = "admin_transfer: admin authorization required";
     pub const PROPOSE_ADMIN_ADMIN: &str =
         "propose_admin_transfer: admin authorization required";
@@ -19,6 +21,7 @@ pub mod msg {
     pub const DISTRIBUTE_ADMIN: &str = "distribute: admin authorization required";
     pub const DISTRIBUTE_OVERRIDE_ADMIN: &str =
         "distribute_with_override: admin authorization required";
+    pub const BATCH_DISTRIBUTE_ADMIN: &str = "batch_distribute: admin authorization required";
     pub const DISTRIBUTE_SECONDARY_ADMIN: &str =
         "distribute_secondary_royalties: admin authorization required";
     pub const UPDATE_SHARE_ADMIN: &str = "update_share: admin authorization required";
@@ -26,6 +29,24 @@ pub mod msg {
     pub const RECORD_SECONDARY_PAYER: &str =
         "record_secondary_royalty: payer authorization required";
     pub const SET_ADMINS_ADMIN: &str = "set_admins: admin authorization required";
+    pub const SET_INCENTIVES_ENABLED_ADMIN: &str =
+        "set_incentives_enabled: admin authorization required";
+    pub const DISTRIBUTE_INCENTIVES_ADMIN: &str =
+        "distribute_with_incentives: admin authorization required";
+    pub const INITIATE_ADMIN_ROTATION_ADMIN: &str =
+        "initiate_admin_rotation: admin authorization required";
+    pub const CANCEL_ADMIN_ROTATION_ADMIN: &str =
+        "cancel_admin_rotation: admin authorization required";
+    pub const SET_ADMIN_ROTATION_TIMELOCK_ADMIN: &str =
+        "set_admin_rotation_timelock: admin authorization required";
+    pub const DISTRIBUTE_RESILIENT_ADMIN: &str =
+        "distribute_resilient: admin authorization required";
+    pub const SET_ANOMALY_THRESHOLD_ADMIN: &str =
+        "set_anomaly_threshold: admin authorization required";
+    pub const TRIGGER_EMERGENCY_PAUSE_ADMIN: &str =
+        "trigger_emergency_pause: admin authorization required";
+    pub const CLEAR_EMERGENCY_PAUSE_ADMIN: &str =
+        "clear_emergency_pause: unanimous admin authorization required";
 }
 
 /// Requires admin authorization; panics with `message` if missing.

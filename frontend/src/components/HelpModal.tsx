@@ -1,15 +1,31 @@
+import { formatShortcut, type Shortcut } from "../hooks/useKeyboardShortcuts";
+
 interface Props {
   onClose: () => void;
+  /**
+   * Live list of registered shortcuts (#518). When provided, the help
+   * table is generated from this list so the modal can never drift out
+   * of sync with the actual handlers wired into the App.
+   *
+   * The previous hardcoded table is kept as a fallback for callers that
+   * don't pass shortcuts in, so existing rendering sites don't break.
+   */
+  shortcuts?: Shortcut[];
 }
 
-const SHORTCUTS = [
+const FALLBACK_SHORTCUTS: { keys: string; desc: string }[] = [
   { keys: "Ctrl+K", desc: "Focus contract ID input" },
   { keys: "Ctrl+D", desc: "Toggle dark mode" },
   { keys: "?", desc: "Show this help modal" },
   { keys: "Esc", desc: "Close this modal" },
 ];
 
-export default function HelpModal({ onClose }: Props) {
+export default function HelpModal({ onClose, shortcuts }: Props) {
+  const rows =
+    shortcuts && shortcuts.length > 0
+      ? shortcuts.map((s) => ({ keys: formatShortcut(s), desc: s.description }))
+      : FALLBACK_SHORTCUTS;
+
   return (
     <div
       className="modal-overlay"
@@ -33,10 +49,19 @@ export default function HelpModal({ onClose }: Props) {
         <h3 style={{ marginTop: "1rem" }}>Keyboard shortcuts</h3>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <tbody>
-            {SHORTCUTS.map(({ keys, desc }) => (
-              <tr key={keys}>
+            {rows.map(({ keys, desc }) => (
+              <tr key={keys + desc}>
                 <td style={{ padding: "0.25rem 0.5rem 0.25rem 0" }}>
-                  <kbd style={{ background: "var(--bg-secondary, #eee)", borderRadius: 4, padding: "0.1rem 0.4rem", fontFamily: "monospace" }}>{keys}</kbd>
+                  <kbd
+                    style={{
+                      background: "var(--bg-secondary, #eee)",
+                      borderRadius: 4,
+                      padding: "0.1rem 0.4rem",
+                      fontFamily: "monospace",
+                    }}
+                  >
+                    {keys}
+                  </kbd>
                 </td>
                 <td style={{ padding: "0.25rem 0" }}>{desc}</td>
               </tr>
