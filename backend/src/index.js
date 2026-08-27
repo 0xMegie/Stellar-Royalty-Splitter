@@ -1,6 +1,11 @@
 // dotenv is optional - load .env file if needed
 // import "dotenv/config";
 
+// OTel SDK must initialise before any other imports so auto-instrumentation
+// can patch http/express before they are loaded.
+import "./tracing.js";
+import { tracingMiddleware } from "./tracing.js";
+
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -21,8 +26,6 @@ import { closeDatabase, initializeDatabase } from "./database/index.js";
 import { createGracefulShutdownHandler } from "./shutdown.js";
 import { adminRouter } from "./routes/admin.js";
 import { metricsRouter } from "./routes/metrics.js";
-import { initializeDatabase } from "./database/index.js";
-import db from "./database/index.js";
 import { initializeSigningKey } from "./signing-key.js";
 
 // Initialize database on startup
@@ -48,6 +51,9 @@ app.use((req, res, next) => {
 
 // Security headers
 app.use(helmet());
+
+// Distributed tracing — creates per-request OTel spans, injects X-Trace-Id and X-Correlation-Id
+app.use(tracingMiddleware);
 
 const corsPreflightMaxAge = parseInt(process.env.CORS_PREFLIGHT_MAX_AGE ?? "86400", 10);
 

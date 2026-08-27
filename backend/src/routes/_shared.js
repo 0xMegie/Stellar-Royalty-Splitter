@@ -1,5 +1,6 @@
 import { retryBuildTx } from "../stellar.js";
 import { recordTransaction, addAuditLog } from "../database/index.js";
+import { startSpan } from "../tracing.js";
 
 /**
  * Shared pattern for transaction-building routes:
@@ -27,8 +28,16 @@ export async function buildAndRecordTransaction({
     transactionMetadata
   );
 
-  // Build the transaction XDR
-  const txXdr = await retryBuildTx(walletAddress, contractId, transactionType, scvlArgs);
+  // Build the transaction XDR (instrumented span for RPC call latency)
+  const txXdr = await startSpan(
+    `rpc.${transactionType}`,
+    {
+      "contract.id": contractId,
+      "wallet.address": walletAddress,
+      "operation.type": transactionType,
+    },
+    () => retryBuildTx(walletAddress, contractId, transactionType, scvlArgs)
+  );
 
   // Log the audit event
   addAuditLog(contractId, auditAction, walletAddress, {

@@ -11,6 +11,10 @@ export {
   countWrite,
   initializeDatabase,
   getMigrationVersion,
+  recordHealthSnapshot,
+  pruneHealthHistory,
+  getHealthHistory,
+  getSLAStats,
 } from "./core.js";
 
 // Transaction tracking

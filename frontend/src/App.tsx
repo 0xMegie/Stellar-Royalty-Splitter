@@ -17,6 +17,7 @@ import ResaleHistory from "./components/ResaleHistory";
 import { Skeleton } from "./components/Skeleton";
 import { CopyButton } from "./components/CopyButton";
 import { OnboardingWalkthrough } from "./components/OnboardingWalkthrough";
+import { HealthDashboard } from "./components/HealthDashboard";
 import { api } from "./api";
 
 
@@ -245,6 +246,8 @@ export default function App() {
             </div>
           </div>
         );
+      case "health":
+        return <HealthDashboard />;
       default:
         return null;
     }
@@ -354,6 +357,14 @@ export default function App() {
                     </button>
                   </>
                 )}
+                <button
+                  className={`quick-action-btn ${
+                    currentPage === "health" ? "active" : ""
+                  }`}
+                  onClick={() => handlePageChange("health")}
+                >
+                  Health
+                </button>
               </div>
             </div>
           )}
