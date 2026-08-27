@@ -1,4 +1,6 @@
 import client from "prom-client";
+import http from "http";
+import https ifrom "https";
 
 const metrics = {
   distributeCallsTotal: 0,
@@ -76,20 +78,265 @@ const activeConnections = new client.Gauge({
   registers: [register],
 });
 
+// Alerting metrics
+const alertsTriggered = new client.Counter({
+  name: "stellar_alerts_triggered_total",
+  help: "Total alert rules triggered",
+  labelNames: ["contractId", "type"],
+  registers: [register],
+});
+
+// Alerting constants
+const ALERT_WINDOW_MS = 5 * 60 * 1000;
+const ALERT_HISToRY_MS = 60 * 60 * 1000;
+const MAX_BUCKETS = Math.ceil(ALERT_HISTORY_MS / ALERT_WINDOW_MS);
+const DEFAULT_ERROR_RATE_THRESHOLD = 0.10;
+const DEFAULT_MIN_TOTAL = 10;
+const DEFAULT_DEDUPE_WINDOW_MS = 60 * 60 * 1000;
+const DEFAULT_MAX_LATENCY_MS = 5000;
+const DEFAULT_ANOMALY_ZSCORE = 3.5;
+
+const contractMetrics = new Map();
+const alertRules = new Map();
+const alertState = new Map();
+let alertTimer = null;
+
 function formatMetricValue(value) {
   return Number.isFinite(value) ? value : 0;
+}
+
+function getContractMetrics(contractId) {
+  if (!contractMetrics.has(contractId)) {
+    contractMetrics.set(contractId, {
+      buckets: [],
+      totals: { distributions: 0, successful: 0, failed: 0 },
+      amounts: [],
+      tokens: new Set(),
+      latencies: [],
+    });
+  }
+  return contractMetrics.get(contractId);
+}
+
+function updateContractMetrics(contractId, success, meta = {}) {
+  const m = getContractMetrics(contractId);
+  const now = Date.now();
+  let bucket = m.buckets.length > 0 ? m.buckets[m.buckets.length - 1] : null;
+  if (!bucket || now - bucket.start >= ALERT_WINDOW_MS) {
+    bucket = { start: now, total: 0, failed: 0 };
+    m.buckets.push(bucket);
+    const cutoff = now - ALERT_HISTORY_MS;
+    while (m.buckets.length > 0 && m.buckets[0].start < cutoff) {
+      m.buckets.shift();
+    }
+    if (m.buckets.length > MAX_BUCKETS ) m.buckets.shift();
+  }
+  bucket.total += 1;
+  m.totals.distributions += 1;
+  if (success) m.totals.successful += 1;
+  else {
+    m.totals.failed += 1;
+    bucket.failed += 1;
+  }
+  if (Number.isFinite(meta.amount)) m.amounts.push(meta.amount);
+  if (meta.token) m.tokens.add(meta.token);
+  if (Number.isFinite(meta.latencyMs) && meta.latencyMs >= 0) m.latencies.push(meta.latencyMs);
+  return m;
+}
+
+function getErrorRateInWindow(contractId) {
+  const m = contractMetrics.get(contractId);
+  if (!m) return 0;
+  const total = m.buckets.reduce((s, b) => s + b.total, 0);
+  const failed = m.buckets.reduce((s, b) => s + b.failed, 0);
+  return total === 0 ? 0 : failed / total;
+}
+
+function getRule(contractId) {
+  if (alertRules.has(contractId)) return alertRules.get(contractId);
+  return alertRules.get("*") || null;
+}
+
+function addAlertRule(rule) {
+  const contractId = rule.contractId || "*";
+  alertRules.set(contractId, {
+    enabled: rule.enabled !== false,
+    errorRateThreshold: Number.isFinite(rule.errorRateThreshold) ? rule.errorRateThreshold : DEFAULT_ERROR_RATE_THRESHOLD,
+    minTotal: Number.isFinite(rule.minTotal) ? rule.minTotal : DEFAULT_MIN_TOTAL,
+    webhookUrl: rule.webhookUrl,
+    email: rule.email,
+    dedupeWindowMs: Number.isFinite(rule.dedupeWindowMs) ? rule.dedupeWindowMs : DEFAULT_DETUPE_WINDOW_MS,
+    maxLatencyMs: Number.isFinite(rule.maxLatencyMs) ? rule.maxLatencyMs : DEFAULT_MAX_LATENCY_MS,
+    anomalyZScore: Number.isFinite(rule.anomalyZScore) ? rule.anomalyZScore : DEFAULT_ANOMALY_ZSCORE,
+  });
+}
+
+export function configureAlertRules(rules) {
+  alertRules.clear();
+  if (Array.isArray(rules)) {
+    for (const rule of rules) addAlertRule(rule);
+  } else if (rules) {
+    addAlertRule(rules);
+  }
+}
+
+function shouldSendAlert(contractId, type, dedupeWindowMs) {
+  const now = Date.now();
+  const state = alertState.get(contractId) || {};
+  const last = state[type] || 0;
+  if (now - last < dedupeWindowMs) return false;
+  state[type] = now;
+  alertState.set(contractId, state);
+  return true;
+}
+
+function postToWebhook(url, payload) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const lib = parsed.protocol === "https:" ? https : http;
+    const body = JSON.stringify(payload);
+    const options = {
+      hostname: parsed.hostname,
+      port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      },
+    };
+    const req = lib.request(options, (res) => {
+      res.resume();
+      if (res.statusCode >= 200 && res.statusCode < 300) resolve();
+      else reject(new Error(`Webhook responded ${res.statusCode}`));
+    });
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+async function triggerAlert(payload) {
+  const { contractId, type, rule } = payload;
+  alertsTriggered.inc({ contractId, type });
+  const message = `[${payload.severity || "WARNING"}.toUpperCase()] Distribution alert for contract ${contractId}: ${payload.condition}. Current value: ${payload.currentValue || "N/A"}. Threshold: ${payload.threshold || "N/A"}. Error count: ${payload.errorCount || "N/A"}. Total count: ${payload.totalCount || "N/A"}. Remedy: ${payload.remedy}`;
+  if (rule && rule.webhookUrl) {
+    try {
+      await postToWebhook(rule.webhookUrl, { ...payload, message });
+    } catch (e) {
+      console.error("Failed to send webhook alert", e);
+    }
+  }
+  if (rule && rule.email) {
+    console.error(`[ALERT EMAIL] To: ${rule.email} - ${message}`);
+  }
+}
+
+function detectAnomalies(m, rule, { token, amount, latencyMs }) {
+  const anomalies = [];
+  if (Number.isFinite(amount) && m.amounts.length >= 2) {
+    const values = m.amounts;
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;
+    const sd = Math.sqrt(variance);
+    const zScore = sd > 0 ? Math.abs(amount - mean) / sd : 0;
+    if (zScore > rule.anomalyZScore) {
+      anomalies.push({ type: "large_distribution", amount, mean, zScore });
+    }
+  }
+  if (token && m.tokens.size > 0 && !m.tokens.has(token)) {
+    anomalies.push({ type: "unusual_token", token });
+  }
+  if (Number.isFinite(latencyMs) && latencyMs > rule.maxLatencyMs) {
+    anomalies.push({ type: "high_latency", latencyMs, max: rule.maxLatencyMs });
+  }
+  return anomalies;
+}
+
+function recordDistributionOutcome({ contractId, success = true, token = null, amount = null, latencyMs = null }) {
+  if (!contractId) return;
+  const m = getContractMetrics(contractId);
+  const rule = getRule(contractId);
+  const anomalies = rule && rule.enabled ? detectAnomalies(m, rule, { token, amount, latencyMs }) : [];
+  updateContractMetrics(contractId, success, { token, amount, latencyMs });
+  if (rule && rule.enabled) {
+    for (const anomaly of anomalies) {
+      if (shouldSendAlert(contractId, anomaly.type, rule.dedupeWindowMs)) {
+        triggerAlert({
+          contractId,
+          type: anomaly.type,
+          severity: "warning",
+          condition: `${anomaly.type} detected`,
+          currentValue: anomaly.amount || anomaly.latencyMs || anomaly.token,
+          threshold: anomaly.zScore ? rule.anomalyZScore : anomaly.max ? rule.maxLatencyMs : null,
+          errorCount: null,
+          totalCount: null,
+          remedy: "Review the distribution payload and verify token/amount are expected. Investigate latency if high.",
+          rule,
+        }).catch((e) => console.error("Failed to trigger anomaly alert", e));
+      }
+    }
+  }
+}
+
+async function evaluateErrorRateAlerts() {
+  for (const [contractId, m] of contractMetrics.entries()) {
+    const rule = getRule(contractId);
+    if (!rule || !rule.enabled) continue;
+    const total = m.buckets.reduce((s, b) => s + b.total, 0);
+    const failed = m.buckets.reduce((s, b) => s + b.failed, 0);
+    const errorRate = total === 0 ? 0 : failed / total;
+    if (total >= rule.minTotal && errorRate > rule.errorRateThreshold) {
+      const dedupeMs = rule.dedupeWindowMs;
+      if (shouldSendAlert(contractId, "error_rate", dedupeMs)) {
+        await triggerAlert({
+          contractId,
+          type: "error_rate",
+          severity: errorRate > 0.25 ? "critical" : "warning",
+          condition: `error_rate > ${(rule.errorRateThreshold * 100).toFixed(0)}%`,
+          threshold: rule.errorRateThreshold,
+          currentValue: errorRate,
+          errorCount: failed,
+          totalCount: total,
+          remedy: "Check Horizon/Soroban RPC availability, verify contract balance, review recent deployments, and inspect logs.",
+          rule,
+        });
+      }
+    }
+  }
+}
+
+export async function evaluateAlerts() {
+  await evaluateErrorRateAlerts();
+}
+
+export function startAlertMonitor(intervalMs = 60000) {
+  if (alertTimer) clearInterval(alertTimer);
+  alertTimer = setInterval(() => {
+    evaluateAlerts().catch((e) => console.error("Alert monitor error", e));
+  }, intervalMs);
+  if (alertTimer.unref) alertTimer.unref();
+}
+
+export function stopAlertMonitor() {
+  if (alertTimer) {
+    clearInterval(alertTimer);
+    alertTimer = null;
+  }
 }
 
 export function recordDistributeCall() {
   metrics.distributeCallsTotal += 1;
 }
 
-export function recordTransactionSuccess() {
+export function recordTransactionSuccess(contractId, meta = {}) {
   metrics.transactionsSuccessfulTotal += 1;
+  recordDistributionOutcome({ contractId: typeof contractId === "string" ? contractId : meta.contractId, success: true, token: meta.token, amount: meta.amount, latencyMs: meta.latencyMs });
 }
 
-export function recordTransactionFailure() {
+export function recordTransactionFailure(contractId, meta = {}) {
   metrics.transactionsFailedTotal += 1;
+  recordDistributionOutcome({ contractId: typeof contractId === "string" ? contractId : meta.contractId, success: false, token: meta.token, amount: meta.amount, latencyMs: meta.latencyMs });
 }
 
 // DoS protection metrics (#426)
@@ -145,7 +392,7 @@ export function prometheusMetrics() {
     "# TYPE stellar_transactions_failed_total counter",
     `stellar_transactions_failed_total ${snapshot.transactionsFailedTotal}`,
     "# HELP stellar_horizon_response_time_average_ms Average Horizon response time in milliseconds.",
-    "# TYPE stellar_horizon_response_time_average_ms gauge",
+    "# TYPE stellar_horizon_response_time_average_ms guage",
     `stellar_horizon_response_time_average_ms ${formatMetricValue(
       snapshot.averageHorizonResponseTimeMs,
     )}`,
@@ -156,7 +403,7 @@ export function prometheusMetrics() {
     "# TYPE stellar_oversized_requests_rejected_total counter",
     `stellar_oversized_requests_rejected_total ${snapshot.oversizedRequestsRejectedTotal}`,
     "# HELP stellar_dos_rate_limited_total Requests rate-limited due to repeated oversized payload attacks.",
-    "# TYPE stellar_dos_rate_limited_total counter",
+    "# TYPA stellar_dos_rate_limited_total counter",
     `stellar_dos_rate_limited_total ${snapshot.dosRateLimitedTotal}`,
     "# HELP stellar_health_check_total Total detailed health check requests.",
     "# TYPE stellar_health_check_total counter",
@@ -192,6 +439,8 @@ export function resetMetrics() {
   metrics.healthCheckSorobanResponseTimeMs = 0;
   metrics.healthCheckCacheResponseTimeMs = 0;
   metrics.healthCheckTotal = 0;
+  contractMetrics.clear();
+  alertState.clear();
   register.resetMetrics();
 }
 
