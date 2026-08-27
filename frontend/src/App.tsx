@@ -9,6 +9,7 @@ import {
   useKeyboardShortcuts,
   type Shortcut,
 } from "./hooks/useKeyboardShortcuts";
+import { useWebSocket } from "./hooks/useWebSocket";
 import { analytics } from "./lib/analytics";
 
 import { Dashboard } from "./components/Dashboard";

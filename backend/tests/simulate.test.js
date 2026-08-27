@@ -124,7 +124,7 @@ describe("POST /api/v1/simulate", () => {
     const res = await request(app).post("/api/v1/simulate").send(validBody);
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
+    expect(res.body).toMatchObject({
       fee: 34567,
       recipientAmounts: [
         { address: WALLET, amount: "600" },
@@ -135,6 +135,9 @@ describe("POST /api/v1/simulate", () => {
       ],
       contractError: null,
     });
+    expect(res.body.feeBreakdown).toBeDefined();
+    expect(res.body.perRecipientEffectiveFee).toBeDefined();
+    expect(res.body.feeScalingComparison).toBeDefined();
     expect(simulateTransaction).toHaveBeenCalledTimes(1);
     expect(contractCall).toHaveBeenCalledWith("distribute", TOKEN);
   });
@@ -148,11 +151,14 @@ describe("POST /api/v1/simulate", () => {
     const res = await request(app).post("/api/v1/simulate").send(validBody);
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
+    expect(res.body).toMatchObject({
       fee: 100,
       recipientAmounts: [],
       contractError: "HostError: Error(Contract, #1)",
     });
+    expect(res.body.feeBreakdown).toBeDefined();
+    expect(res.body.perRecipientEffectiveFee).toBe(0);
+    expect(res.body.feeScalingComparison).toBeDefined();
     expect(simulateTransaction).toHaveBeenCalledTimes(1);
   });
 

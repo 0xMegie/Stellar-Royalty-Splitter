@@ -52,6 +52,8 @@ import { recordApiKeyRequest } from "./database/rate-limit.js";
 import { createMetricsPusher } from "./metrics-pushgateway.js";
 import { transactionFinalityRouter } from "./routes/transaction-finality.js";
 import { startFinalityCleanupScheduler } from "./jobs/finality-cleanup-job.js";
+import { startPaymentScheduleJob } from "./jobs/payment-schedule-job.js";
+import { setupGraphQL } from "./graphql.js";
 
 // Initialize database on startup
 initializeDatabase();
@@ -376,72 +378,89 @@ app.use(notFoundHandler);
 // Central error handler — must be mounted last.
 app.use(errorHandler);
 
-const PORT = process.env.PORT ?? 3001;
-const server = app.listen(PORT, () => logger.info(`API listening on http://localhost:${PORT}`));
+async function startServer() {
+  // GraphQL API (#809)
+  await setupGraphQL(app, "/api/v1/graphql");
 
-// Initialize WebSocket for real-time notifications (#594)
-const wss = initializeWebSocket(server);
+  const PORT = process.env.PORT ?? 3001;
+  const server = app.listen(PORT, () => logger.info(`API listening on http://localhost:${PORT}`));
 
-// Start the snapshot scheduler (#613)
-const snapshotScheduler = startSnapshotScheduler();
+  // Initialize WebSocket for real-time notifications (#594)
+  const wss = initializeWebSocket(server);
 
-// Start the webhook retry scheduler (#743)
-const webhookRetryScheduler = startWebhookRetryScheduler();
+  // Start the snapshot scheduler (#613)
+  const snapshotScheduler = startSnapshotScheduler();
 
-// Start the finality cleanup scheduler (#finality)
-const finalityCleanupScheduler = startFinalityCleanupScheduler();
-const metricsPusher = createMetricsPusher();
-metricsPusher.start();
+  // Start the webhook retry scheduler (#743)
+  const webhookRetryScheduler = startWebhookRetryScheduler();
 
-// Start weekly email digest scheduler if email is configured
-let digestInterval = null;
-if (isEmailConfigured()) {
-  const DIGEST_CHECK_INTERVAL_MS = parseInt(process.env.DIGEST_CHECK_INTERVAL_MS ?? "60000", 10);
-  digestInterval = setInterval(async () => {
-    try {
-      const result = await sendWeeklyDigests();
-      if (result.sent > 0 || result.failed > 0) {
-        logger.info("Weekly digest run completed", result);
+  // Start the finality cleanup scheduler (#finality)
+  const finalityCleanupScheduler = startFinalityCleanupScheduler();
+
+  // Start the payment schedule job (#599)
+  const paymentScheduleJob = startPaymentScheduleJob();
+
+  const metricsPusher = createMetricsPusher();
+  metricsPusher.start();
+
+  // Start weekly email digest scheduler if email is configured
+  let digestInterval = null;
+  if (isEmailConfigured()) {
+    const DIGEST_CHECK_INTERVAL_MS = parseInt(process.env.DIGEST_CHECK_INTERVAL_MS ?? "60000", 10);
+    digestInterval = setInterval(async () => {
+      try {
+        const result = await sendWeeklyDigests();
+        if (result.sent > 0 || result.failed > 0) {
+          logger.info("Weekly digest run completed", result);
+        }
+      } catch (error) {
+        logger.error("Weekly digest scheduler error", { error: error.message });
       }
-    } catch (error) {
-      logger.error("Weekly digest scheduler error", { error: error.message });
-    }
-  }, DIGEST_CHECK_INTERVAL_MS);
-  digestInterval.unref();
-  logger.info("Weekly email digest scheduler started", { intervalMs: DIGEST_CHECK_INTERVAL_MS });
-} else {
-  logger.info("Email not configured; weekly digest scheduler disabled");
+    }, DIGEST_CHECK_INTERVAL_MS);
+    digestInterval.unref();
+    logger.info("Weekly email digest scheduler started", { intervalMs: DIGEST_CHECK_INTERVAL_MS });
+  } else {
+    logger.info("Email not configured; weekly digest scheduler disabled");
+  }
+
+  // Prevent hung connections from exhausting the connection pool
+  server.keepAliveTimeout = parseInt(process.env.KEEP_ALIVE_TIMEOUT_MS ?? "35000");
+  server.headersTimeout = parseInt(process.env.HEADERS_TIMEOUT_MS ?? "40000");
+
+  const handleShutdown = createGracefulShutdownHandler({
+    server,
+    closeDatabase,
+    logger,
+    onShutdown: () => {
+      if (wss) {
+        wss.close();
+        logger.info("WebSocket server closed");
+      }
+      if (digestInterval) {
+        clearInterval(digestInterval);
+        digestInterval = null;
+      }
+      if (snapshotScheduler) {
+        snapshotScheduler.stop();
+      }
+      if (webhookRetryScheduler) {
+        webhookRetryScheduler.stop();
+      }
+      if (finalityCleanupScheduler) {
+        finalityCleanupScheduler.stop();
+      }
+      if (paymentScheduleJob) {
+        paymentScheduleJob.stop();
+      }
+      metricsPusher.stop();
+    },
+  });
+
+  process.once("SIGTERM", () => handleShutdown("SIGTERM"));
+  process.once("SIGINT", () => handleShutdown("SIGINT"));
 }
 
-// Prevent hung connections from exhausting the connection pool
-server.keepAliveTimeout = parseInt(process.env.KEEP_ALIVE_TIMEOUT_MS ?? "35000");
-server.headersTimeout = parseInt(process.env.HEADERS_TIMEOUT_MS ?? "40000");
-
-const handleShutdown = createGracefulShutdownHandler({
-  server,
-  closeDatabase,
-  logger,
-  onShutdown: () => {
-    if (wss) {
-      wss.close();
-      logger.info("WebSocket server closed");
-    }
-    if (digestInterval) {
-      clearInterval(digestInterval);
-      digestInterval = null;
-    }
-    if (snapshotScheduler) {
-      snapshotScheduler.stop();
-    }
-    if (webhookRetryScheduler) {
-      webhookRetryScheduler.stop();
-    }
-    if (finalityCleanupScheduler) {
-      finalityCleanupScheduler.stop();
-    }
-    metricsPusher.stop();
-  },
+startServer().catch((error) => {
+  logger.error("Failed to start server", { error: error.message });
+  process.exit(1);
 });
-
-process.once("SIGTERM", () => handleShutdown("SIGTERM"));
-process.once("SIGINT", () => handleShutdown("SIGINT"));
