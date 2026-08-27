@@ -255,14 +255,37 @@ contractRouter.get("/state", async (req, res, next) => {
 
     const { contractId, tokenId } = stateRequest;
     const key = cacheKey("contractState", contractId, tokenId);
-    const cached = warmCacheGet(key);
 
-    if (cached !== undefined) {
-      return res.json(cached);
+    // Check for collaborator pagination params
+    const loadFull = req.query.loadFull === "true";
+    const hasOffsetLimit = req.query.offset !== undefined || req.query.limit !== undefined;
+
+    let state = warmCacheGet(key);
+    if (state === undefined) {
+      state = await readContractState(contractId, tokenId);
+      warmCacheSet(key, state, contractId, tokenId);
     }
 
-    const state = await readContractState(contractId, tokenId);
-    warmCacheSet(key, state, contractId, tokenId);
+    // If requesting a subset of collaborators, slice the recipients array
+    if (!loadFull && hasOffsetLimit && state.recipients) {
+      const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+      const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 100);
+      const totalCollaborators = state.recipients.length;
+      const sliced = state.recipients.slice(offset, offset + limit);
+
+      return res.json({
+        ...state,
+        recipients: sliced,
+        collaborators_pagination: {
+          offset,
+          limit,
+          total: totalCollaborators,
+          hasNextPage: offset + limit < totalCollaborators,
+          hasPrevPage: offset > 0,
+        },
+      });
+    }
+
     res.json(state);
   } catch (err) {
     if (err.status) {
@@ -278,9 +301,35 @@ contractRouter.get("/info", async (req, res, next) => {
     if (!stateRequest) return;
 
     const { contractId, tokenId } = stateRequest;
-    const state = await readContractState(contractId, tokenId);
+    const key = cacheKey("contractState", contractId, tokenId);
+
+    let state = warmCacheGet(key);
+    if (state === undefined) {
+      state = await readContractState(contractId, tokenId);
+      warmCacheSet(key, state, contractId, tokenId);
+    }
+
     const info = { ...state };
     delete info.networkPassphrase;
+
+    // Apply collaborator pagination if requested
+    const loadFull = req.query.loadFull === "true";
+    const hasOffsetLimit = req.query.offset !== undefined || req.query.limit !== undefined;
+
+    if (!loadFull && hasOffsetLimit && info.recipients) {
+      const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+      const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 100);
+      const totalCollaborators = info.recipients.length;
+      info.recipients = info.recipients.slice(offset, offset + limit);
+      info.collaborators_pagination = {
+        offset,
+        limit,
+        total: totalCollaborators,
+        hasNextPage: offset + limit < totalCollaborators,
+        hasPrevPage: offset > 0,
+      };
+    }
+
     res.json(info);
   } catch (err) {
     if (err.status) {

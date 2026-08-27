@@ -149,6 +149,80 @@ export function getTransactionHistory(contractId, limit = 50, offset = 0, filter
   return stmt.all(...params, limit, offset);
 }
 
+/**
+ * Cursor-based pagination for transaction history.
+ * Uses keyset pagination on (timestamp DESC, id DESC) for efficient deep paging.
+ * @param {string} contractId
+ * @param {number} limit
+ * @param {{ timestamp: string, id: number } | null} cursor
+ * @param {object} filters
+ * @returns {{ data: Array, nextCursor: string | null }}
+ */
+export function getTransactionHistoryCursor(contractId, limit, cursor, filters = {}) {
+  const conditions = ["t.contractId = ?"];
+  const params = [contractId];
+
+  if (filters.type) {
+    conditions.push("t.type = ?");
+    params.push(filters.type);
+  }
+
+  if (filters.recipient) {
+    conditions.push(
+      "EXISTS (SELECT 1 FROM distribution_payouts dp2 WHERE dp2.transactionId = t.id AND dp2.collaboratorAddress LIKE ?)"
+    );
+    params.push(`%${filters.recipient}%`);
+  }
+
+  if (filters.startDate) {
+    conditions.push("t.timestamp >= ?");
+    params.push(filters.startDate);
+  }
+
+  if (filters.endDate) {
+    conditions.push("t.timestamp <= ?");
+    params.push(filters.endDate);
+  }
+
+  if (cursor) {
+    conditions.push("(t.timestamp < ? OR (t.timestamp = ? AND t.id < ?))");
+    params.push(cursor.timestamp, cursor.timestamp, cursor.id);
+  }
+
+  const stmt = db.prepare(`
+    SELECT
+      t.id,
+      t.txHash,
+      t.contractId,
+      t.type,
+      t.initiatorAddress,
+      t.requestedAmount,
+      t.tokenId,
+      t.timestamp,
+      t.blockTime,
+      t.status,
+      t.errorMessage,
+      t.retry_count,
+      t.last_retry_time,
+      COUNT(dp.id) as payoutCount
+    FROM transactions t
+    LEFT JOIN distribution_payouts dp ON t.id = dp.transactionId
+    WHERE ${conditions.join(" AND ")}
+    GROUP BY t.id
+    ORDER BY t.timestamp DESC, t.id DESC
+    LIMIT ?
+  `);
+
+  const data = stmt.all(...params, limit + 1);
+  const hasMore = data.length > limit;
+  const rows = hasMore ? data.slice(0, limit) : data;
+  const nextCursor = hasMore && rows.length > 0
+    ? { timestamp: rows[rows.length - 1].timestamp, id: rows[rows.length - 1].id }
+    : null;
+
+  return { data: rows, nextCursor };
+}
+
 export function getTransactionById(transactionId) {
   const stmt = db.prepare(`
     SELECT
