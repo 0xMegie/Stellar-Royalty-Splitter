@@ -10,13 +10,25 @@ import { registerServiceWorker } from "./lib/registerServiceWorker";
 import "./modern-styles.css";
 import "./index.css";
 
-// #522 — register the offline-mode service worker. The helper resolves
-// to null in environments without the SW API, so this is a no-op for
-// jsdom tests and older browsers. `import.meta.env.PROD` is Vite's
-// build-time replacement for production detection (no `process` global
-// in browser-targeted builds).
-if (typeof window !== "undefined" && import.meta.env.PROD) {
-  void registerServiceWorker();
+// #830 — register the offline-mode service worker in all environments that
+// support it. Previously this was gated to PROD only; removing that gate
+// lets developers experience and test offline behaviour locally.
+// `registerServiceWorker` already tolerates missing SW APIs (jsdom, old
+// browsers) by returning null — so this is safe to call unconditionally.
+if (typeof window !== "undefined") {
+  void registerServiceWorker().then((reg) => {
+    if (!reg) return;
+    // Once the SW is ready, ask it for the current queue count so the
+    // OfflineIndicator can show any persisted pending writes immediately
+    // (e.g. after a page reload that happened while offline).
+    void navigator.serviceWorker.ready.then(() => {
+      if (navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: "srs-get-queue-size",
+        });
+      }
+    });
+  });
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
