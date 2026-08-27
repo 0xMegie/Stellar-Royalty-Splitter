@@ -298,32 +298,22 @@ export function initializeDatabase() {
         `,
       },
       {
-        // #824: Database index optimization for high-traffic query paths
+        // #818: Dead Letter Queue for failed webhooks
         version: 13,
         sql: `
-          -- Composite index for history queries: WHERE contractId = ? ORDER BY timestamp DESC, id DESC
-          CREATE INDEX IF NOT EXISTS idx_transactions_contractId_timestamp
-            ON transactions(contractId, timestamp DESC, id DESC);
-
-          -- Composite index for status-filtered analytics: WHERE contractId = ? AND status = ?
-          CREATE INDEX IF NOT EXISTS idx_transactions_contractId_status
-            ON transactions(contractId, status);
-
-          -- Composite index for type-filtered history: WHERE contractId = ? AND type = ?
-          CREATE INDEX IF NOT EXISTS idx_transactions_contractId_type
-            ON transactions(contractId, type);
-
-          -- Index for distribution_payouts join: LEFT JOIN ON transactionId
-          CREATE INDEX IF NOT EXISTS idx_distribution_payouts_transactionId
-            ON distribution_payouts(transactionId);
-
-          -- Index for collaborator lookups in multi-contract analytics
-          CREATE INDEX IF NOT EXISTS idx_distribution_payouts_collaboratorAddress
-            ON distribution_payouts(collaboratorAddress);
-
-          -- Composite index for secondary royalty queries: WHERE contractId = ? JOIN transactionId
-          CREATE INDEX IF NOT EXISTS idx_secondary_royalty_distributions_contractId
-            ON secondary_royalty_distributions(contractId, transactionId);
+          CREATE TABLE IF NOT EXISTS webhook_dlq (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            webhook_id INTEGER NOT NULL,
+            url TEXT NOT NULL,
+            contract_id TEXT NOT NULL,
+            payload TEXT,
+            error TEXT,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX IF NOT EXISTS idx_webhook_dlq_webhook_id ON webhook_dlq(webhook_id);
+          CREATE INDEX IF NOT EXISTS idx_webhook_dlq_contract_id ON webhook_dlq(contract_id);
+          CREATE INDEX IF NOT EXISTS idx_webhook_dlq_created_at ON webhook_dlq(created_at);
         `,
       },
   ];
@@ -337,5 +327,52 @@ export function initializeDatabase() {
       });
       apply();
     }
+  }
+}
+
+/**
+ * Get the current migration version.
+ */
+export function getMigrationVersion() {
+  try {
+    if (!db.open) return 0;
+    return db.prepare("SELECT MAX(version) as v FROM schema_migrations").get()?.v ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Quick database health check — returns connection status, response time,
+ * migration version, WAL mode, and table count.
+ */
+export function checkDatabase() {
+  const start = Date.now();
+  try {
+    if (!db.open) {
+      return { connected: false, responseTimeMs: Date.now() - start, error: "Database is closed" };
+    }
+
+    // Verify the connection is alive with a simple query
+    db.prepare("SELECT 1").get();
+
+    const responseTimeMs = Date.now() - start;
+    const version = db.prepare("SELECT MAX(version) as v FROM schema_migrations").get()?.v ?? 0;
+    const walMode = db.pragma("journal_mode", { simple: true }) === "wal";
+    const tableCount = db.prepare("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table'").get()?.c ?? 0;
+
+    return {
+      connected: true,
+      responseTimeMs,
+      version,
+      walMode,
+      tableCount,
+    };
+  } catch (err) {
+    return {
+      connected: false,
+      responseTimeMs: Date.now() - start,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getMigrationVersion } from "../database/index.js";
+import { getMigrationVersion, checkDatabase } from "../database/index.js";
 import * as database from "../database/index.js";
 
 import {
@@ -11,6 +11,7 @@ import {
   getCacheStatus,
 } from "../stellar.js";
 import logger from "../logger.js";
+import { recordDetailedHealthCheck } from "../metrics.js";
 
 export const healthRouter = Router();
 
@@ -96,21 +97,31 @@ healthRouter.get("/", async (_req, res, next) => {
 // ── Detailed health check ─────────────────────────────────────────────────
 
 const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 5_000;
+const DEFAULT_HEALTH_DEGRADED_THRESHOLD_MS = 5_000;
 
 /**
  * Run a single component check with a per-call timeout.
  * Timeout is read dynamically from HEALTH_CHECK_TIMEOUT_MS so tests can
  * override it without reloading the module.
  *
+ * Returns one of three statuses:
+ *   - "ok":       component is healthy and responding within threshold
+ *   - "degraded":  component is healthy but responding slowly (above threshold)
+ *   - "error":     component is unhealthy or timed out
+ *
  * @param {string} name - Human label used in timeout error messages.
  * @param {() => Promise<object>} fn - The check to run.
  * @param {(result: object) => boolean} [isHealthy] - Custom health predicate.
  *   Defaults to: result.connected !== false && !result.error
- * @returns {{ status: "ok"|"error", responseTimeMs: number, [key: string]: any }}
+ * @returns {{ status: "ok"|"degraded"|"error", responseTimeMs: number, [key: string]: any }}
  */
 async function runCheck(name, fn, isHealthy) {
   const timeoutMs = parseInt(
     process.env.HEALTH_CHECK_TIMEOUT_MS ?? String(DEFAULT_HEALTH_CHECK_TIMEOUT_MS),
+    10
+  );
+  const degradedThresholdMs = parseInt(
+    process.env.HEALTH_DEGRADED_THRESHOLD_MS ?? String(DEFAULT_HEALTH_DEGRADED_THRESHOLD_MS),
     10
   );
   const start = Date.now();
@@ -127,15 +138,18 @@ async function runCheck(name, fn, isHealthy) {
     const responseTimeMs = Date.now() - start;
     const defaultHealthy = (r) => r.connected !== false && !r.error;
     const healthy = (isHealthy ?? defaultHealthy)(result);
-    // Strip the raw component `status` field so our synthesised "ok"/"error"
-    // is always the authoritative top-level signal (e.g. Soroban returns
+    // Strip the raw component `status` field so our synthesised statuses
+    // are always the authoritative top-level signal (e.g. Soroban returns
     // status: "healthy", contract returns status: "initialized", etc.).
     const { status: _raw, ...rest } = result;
-    return {
-      status: healthy ? "ok" : "error",
-      responseTimeMs,
-      ...rest,
-    };
+
+    if (!healthy) {
+      return { status: "error", responseTimeMs, ...rest };
+    }
+    if (responseTimeMs > degradedThresholdMs) {
+      return { status: "degraded", responseTimeMs, ...rest };
+    }
+    return { status: "ok", responseTimeMs, ...rest };
   } catch (err) {
     return {
       status: "error",
@@ -188,17 +202,34 @@ healthRouter.get("/detailed", async (_req, res, next) => {
       cacheMs: cache.responseTimeMs,
     });
 
-    // Critical: database, horizon, soroban must all be ok.
-    const criticalOk =
-      database.status === "ok" && horizon.status === "ok" && soroban.status === "ok";
+    // Critical: database, horizon, soroban must all be ok or degraded.
+    const criticalComponents = [database, horizon, soroban];
+    const hasCriticalError = criticalComponents.some((c) => c.status === "error");
+    const hasCriticalDegraded = criticalComponents.some((c) => c.status === "degraded");
 
     // Contract is critical only when configured; not_configured is fine.
     const contractOk = !contract.configured || contract.status === "ok";
+    const contractError = contract.configured && contract.status === "error";
+    const contractDegraded = contract.configured && contract.status === "degraded";
 
-    const ok = criticalOk && contractOk;
+    // Compute overall status:
+    //   - "unhealthy" when any critical component errors or contract errors
+    //   - "degraded" when any critical component or contract is degraded
+    //   - "healthy" when everything is ok
+    let status;
+    if (hasCriticalError || contractError) {
+      status = "unhealthy";
+    } else if (hasCriticalDegraded || contractDegraded) {
+      status = "degraded";
+    } else {
+      status = "healthy";
+    }
+
+    const ok = status !== "unhealthy";
 
     const body = {
       ok,
+      status,
       network: getNetworkLabel(),
       checkedAt: new Date().toISOString(),
       components: { database, horizon, soroban, contract, cache },

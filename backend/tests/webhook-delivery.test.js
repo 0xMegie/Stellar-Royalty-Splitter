@@ -3,11 +3,13 @@ import { jest, describe, test, expect, beforeEach, afterEach } from "@jest/globa
 const listWebhooks = jest.fn();
 const updateWebhookRetryStateWithPayload = jest.fn();
 const resetWebhookRetryCount = jest.fn();
+const moveToDlq = jest.fn();
 
 await jest.unstable_mockModule("../src/database/webhooks.js", () => ({
   listWebhooks,
   updateWebhookRetryStateWithPayload,
   resetWebhookRetryCount,
+  moveToDlq,
 }));
 
 await jest.unstable_mockModule("../src/database/core.js", () => ({

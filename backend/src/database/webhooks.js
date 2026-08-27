@@ -85,6 +85,17 @@ export function getWebhooksDueForRetry(now = new Date()) {
   return stmt.all(nowIso);
 }
 
+export function moveToDlq(webhookId, url, contractId, payload, error, retryCount) {
+  const stmt = db.prepare(`
+    INSERT INTO webhook_dlq (webhook_id, url, contract_id, payload, error, retry_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  const result = stmt.run(webhookId, url, contractId, payload, error, retryCount);
+  countWrite();
+  return result.lastInsertRowid;
+}
+
 export function resetWebhookRetryCount(webhookId) {
   const stmt = db.prepare(`
     UPDATE webhooks
