@@ -2,6 +2,7 @@ import express from "express";
 import {
   getTransactionHistory,
   getTransactionCount,
+  getTransactionHistoryCursor,
   getTransactionDetails,
   getTransactionById,
   getAuditLog,
@@ -18,6 +19,8 @@ import {
   validateContractId,
   validateContractIdMiddleware,
   parsePagination,
+  parseCursorPagination,
+  encodeCursor,
 } from "../validation.js";
 import { sendError } from "../error-response.js";
 import { pollHorizonTransaction } from "../stellar.js";
@@ -38,10 +41,6 @@ router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
   try {
     const { contractId } = req.params;
     if (!validateContractId(contractId, res)) return;
-
-    const pagination = parsePagination(req.query, res, 50, 100);
-    if (!pagination) return;
-    const { limit, offset } = pagination;
 
     const { type, recipient, startDate, endDate } = req.query;
 
@@ -78,6 +77,35 @@ router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
     if (startDate) filters.startDate = startDate;
     if (endDate) filters.endDate = endDate;
 
+    // Support cursor-based pagination via `cursor` param; fall back to offset/limit
+    if (req.query.cursor) {
+      const cursorPag = parseCursorPagination(req.query, res, 50, 100);
+      if (!cursorPag) return;
+
+      const { data, nextCursor } = getTransactionHistoryCursor(
+        contractId, cursorPag.limit, cursorPag.cursor, filters
+      );
+
+      const body = {
+        success: true,
+        data,
+        pagination: {
+          limit: cursorPag.limit,
+          nextCursor: nextCursor ? encodeCursor(nextCursor.timestamp, nextCursor.id) : null,
+          hasMore: nextCursor !== null,
+        },
+      };
+
+      const key = cacheKey("history", contractId, cursorPag.limit, req.query.cursor, JSON.stringify(filters));
+      cacheSet(key, body, TTL.history);
+      return res.json(body);
+    }
+
+    // Legacy offset/limit pagination (deprecated)
+    const pagination = parsePagination(req.query, res, 50, 100);
+    if (!pagination) return;
+    const { limit, offset } = pagination;
+
     const history = getTransactionHistory(contractId, limit, offset, filters);
     const total = getTransactionCount(contractId, filters);
 
@@ -91,6 +119,7 @@ router.get("/history/:contractId", validateContractIdMiddleware, (req, res) => {
         hasNextPage: offset + limit < total,
         hasPrevPage: offset > 0,
       },
+      _deprecated: "Use cursor-based pagination: pass `cursor` from previous response's nextCursor",
     };
 
     const key = cacheKey("history", contractId, limit, offset, JSON.stringify(filters));

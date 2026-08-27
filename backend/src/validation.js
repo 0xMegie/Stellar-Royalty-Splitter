@@ -436,3 +436,40 @@ export function parsePagination(query, res, defaultLimit = 50, maxLimit = 100) {
   const offset = Math.max(parseInt(query.offset) || 0, 0);
   return { limit, offset };
 }
+
+/**
+ * Parse cursor-based pagination params.
+ * Accepts `cursor` (base64-encoded JSON {timestamp, id}) and `limit`.
+ * Returns { limit, cursor: {timestamp, id} | null } or sends 400 and returns null.
+ */
+export function parseCursorPagination(query, res, defaultLimit = 50, maxLimit = 100) {
+  if (query.limit !== undefined && isNaN(parseInt(query.limit))) {
+    sendError(res, 400, "invalid_query_parameter", "limit must be a number");
+    return null;
+  }
+  const limit = Math.min(Math.max(parseInt(query.limit) || defaultLimit, 1), maxLimit);
+
+  let cursor = null;
+  if (query.cursor) {
+    try {
+      const decoded = JSON.parse(Buffer.from(query.cursor, "base64").toString("utf8"));
+      if (!decoded.timestamp || !decoded.id) {
+        sendError(res, 400, "invalid_query_parameter", "Invalid cursor format");
+        return null;
+      }
+      cursor = { timestamp: decoded.timestamp, id: decoded.id };
+    } catch {
+      sendError(res, 400, "invalid_query_parameter", "Invalid cursor format");
+      return null;
+    }
+  }
+
+  return { limit, cursor };
+}
+
+/**
+ * Encode a cursor value from timestamp and id for the next page.
+ */
+export function encodeCursor(timestamp, id) {
+  return Buffer.from(JSON.stringify({ timestamp, id })).toString("base64");
+}

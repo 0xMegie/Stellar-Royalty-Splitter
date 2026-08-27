@@ -297,6 +297,35 @@ export function initializeDatabase() {
             ON transaction_finality(submission_at);
         `,
       },
+      {
+        // #824: Database index optimization for high-traffic query paths
+        version: 13,
+        sql: `
+          -- Composite index for history queries: WHERE contractId = ? ORDER BY timestamp DESC, id DESC
+          CREATE INDEX IF NOT EXISTS idx_transactions_contractId_timestamp
+            ON transactions(contractId, timestamp DESC, id DESC);
+
+          -- Composite index for status-filtered analytics: WHERE contractId = ? AND status = ?
+          CREATE INDEX IF NOT EXISTS idx_transactions_contractId_status
+            ON transactions(contractId, status);
+
+          -- Composite index for type-filtered history: WHERE contractId = ? AND type = ?
+          CREATE INDEX IF NOT EXISTS idx_transactions_contractId_type
+            ON transactions(contractId, type);
+
+          -- Index for distribution_payouts join: LEFT JOIN ON transactionId
+          CREATE INDEX IF NOT EXISTS idx_distribution_payouts_transactionId
+            ON distribution_payouts(transactionId);
+
+          -- Index for collaborator lookups in multi-contract analytics
+          CREATE INDEX IF NOT EXISTS idx_distribution_payouts_collaboratorAddress
+            ON distribution_payouts(collaboratorAddress);
+
+          -- Composite index for secondary royalty queries: WHERE contractId = ? JOIN transactionId
+          CREATE INDEX IF NOT EXISTS idx_secondary_royalty_distributions_contractId
+            ON secondary_royalty_distributions(contractId, transactionId);
+        `,
+      },
   ];
 
   for (const migration of migrations) {
