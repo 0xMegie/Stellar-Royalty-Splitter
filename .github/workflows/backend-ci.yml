@@ -35,5 +35,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests
+      - name: Run unit + integration tests
         run: npm test
+
+      - name: Run chaos tests (#782)
+        # Chaos suite exercises retryBuildTx, withTimeout, Horizon
+        # connectivity under adversarial conditions (cascading failures,
+        # timeouts, 429 rate-limits, concurrent lock release on failure).
+        # Runs after unit tests so failures are clearly attributable.
+        run: node --experimental-vm-modules node_modules/jest/bin/jest.js --testPathPatterns="tests/chaos"
