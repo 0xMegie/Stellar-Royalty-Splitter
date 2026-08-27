@@ -199,15 +199,14 @@ describe("Group 1 — Cascading RPC failures with recovery", () => {
       );
       stubFetchFallback();
 
-      jest.useFakeTimers();
+      // No fake timers — let real backoff delays run (~3s total)
       const stellar = await import("../src/stellar.js");
       stellar._resetFeeCache();
       stellar._resetAccountBuildLocks();
 
-      const promise = stellar.retryBuildTx("GCALLER", "CCONTRACT", "noop", []);
-      await jest.advanceTimersByTimeAsync(5_000);
-
-      await expect(promise).rejects.toMatchObject({ status: 503 });
+      await expect(
+        stellar.retryBuildTx("GCALLER", "CCONTRACT", "noop", [])
+      ).rejects.toMatchObject({ status: 503 });
       expect(prepareTransaction).toHaveBeenCalledTimes(3);
     },
   );
@@ -312,15 +311,14 @@ describe("Group 1 — Cascading RPC failures with recovery", () => {
       );
       stubFetchFallback();
 
-      jest.useFakeTimers();
+      // No fake timers — let real backoff delays run (~3s total)
       const stellar = await import("../src/stellar.js");
       stellar._resetFeeCache();
       stellar._resetAccountBuildLocks();
 
-      const promise = stellar.retryBuildTx("GCALLER", "CCONTRACT", "noop", []);
-      await jest.advanceTimersByTimeAsync(5_000);
-
-      await expect(promise).rejects.toMatchObject({ status: 504 });
+      await expect(
+        stellar.retryBuildTx("GCALLER", "CCONTRACT", "noop", [])
+      ).rejects.toMatchObject({ status: 504 });
       expect(prepareTransaction).toHaveBeenCalledTimes(3);
     },
   );

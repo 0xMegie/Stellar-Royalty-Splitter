@@ -141,25 +141,19 @@ describe("GET /api/v1/health", () => {
   });
 
   test("components.horizon.color is yellow when latency > 3000ms", async () => {
-    // Override checkHorizonConnectivity to delay enough to push latencyMs over 3000
-    // We mock Date.now to simulate high latency without actually waiting
-    const realDateNow = Date.now;
-    let callCount = 0;
-    jest.spyOn(Date, "now").mockImplementation(() => {
-      callCount++;
-      // First call = horizonStart, second call = after await = +3001ms
-      return callCount === 1 ? 1000 : 4002;
-    });
+    // Make the Horizon check slow enough to push latencyMs > 3000
+    checkHorizonConnectivity.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({
+        connected: true,
+        url: "https://horizon-testnet.stellar.org",
+      }), 3100))
+    );
 
     clearHealthCache();
 
     const res = await request(app).get("/api/v1/health");
     expect(res.body.components.horizon.color).toBe("yellow");
     expect(res.body.components.horizon.status).toBe("degraded");
-
-    Date.now.mockRestore();
-    jest.spyOn(Date, "now").mockImplementation(realDateNow);
-    Date.now.mockRestore();
   });
 
   test("caches responses within TTL", async () => {
