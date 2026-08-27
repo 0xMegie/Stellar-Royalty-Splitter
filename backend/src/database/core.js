@@ -71,6 +71,22 @@ export function initializeDatabase() {
       `,
     },
     {
+      version: 4,
+      sql: `
+        CREATE TABLE IF NOT EXISTS health_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+          overall_ok INTEGER NOT NULL DEFAULT 1,
+          horizon_connected INTEGER NOT NULL DEFAULT 1,
+          horizon_latency_ms INTEGER,
+          contract_status TEXT NOT NULL DEFAULT 'unknown',
+          db_ok INTEGER NOT NULL DEFAULT 1,
+          details TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_health_history_timestamp ON health_history(timestamp);
+      `,
+    },
+    {
       // #133: enforce FK constraints on existing databases by recreating
       // distribution_payouts and secondary_royalty_distributions with
       // ON DELETE CASCADE. SQLite doesn't support ADD CONSTRAINT, so we
@@ -353,6 +369,89 @@ export function checkDatabase() {
       return { connected: false, responseTimeMs: Date.now() - start, error: "Database is closed" };
     }
 
+/**
+ * Delete health_history records older than 90 days.
+ */
+export function pruneHealthHistory() {
+  if (!db.open) return;
+  db.prepare(
+    "DELETE FROM health_history WHERE timestamp < datetime('now', '-90 days')"
+  ).run();
+}
+
+/**
+ * Insert a health snapshot into health_history.
+ */
+export function recordHealthSnapshot({ ok, horizonConnected, horizonLatencyMs, contractStatus, dbOk, details }) {
+  if (!db.open) return;
+  return db.prepare(`
+    INSERT INTO health_history (overall_ok, horizon_connected, horizon_latency_ms, contract_status, db_ok, details)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    ok ? 1 : 0,
+    horizonConnected ? 1 : 0,
+    horizonLatencyMs ?? null,
+    contractStatus ?? "unknown",
+    dbOk ? 1 : 0,
+    details ? JSON.stringify(details) : null
+  );
+}
+
+/**
+ * Return up to 500 health snapshots from the past `hours` hours, newest first.
+ */
+export function getHealthHistory(hours = 24) {
+  if (!db.open) return [];
+  return db.prepare(`
+    SELECT * FROM health_history
+    WHERE timestamp > datetime('now', ? || ' hours')
+    ORDER BY timestamp DESC
+    LIMIT 500
+  `).all(`-${hours}`);
+}
+
+/**
+ * Return SLA statistics for the past `days` days.
+ */
+export function getSLAStats(days = 30) {
+  if (!db.open) {
+    return {
+      periodDays: days,
+      totalSnapshots: 0,
+      healthySnapshots: 0,
+      uptimePercent: 100.0,
+      avgLatencyMs: null,
+      minLatencyMs: null,
+      maxLatencyMs: null,
+    };
+  }
+  const rows = db.prepare(`
+    SELECT
+      COUNT(*) as total,
+      SUM(overall_ok) as healthy_count,
+      AVG(horizon_latency_ms) as avg_latency_ms,
+      MIN(horizon_latency_ms) as min_latency_ms,
+      MAX(horizon_latency_ms) as max_latency_ms
+    FROM health_history
+    WHERE timestamp > datetime('now', ? || ' days')
+  `).get(`-${days}`);
+
+  const total = rows?.total ?? 0;
+  const healthyCount = rows?.healthy_count ?? 0;
+  const uptimePct = total > 0 ? ((healthyCount / total) * 100).toFixed(3) : "100.000";
+
+  return {
+    periodDays: days,
+    totalSnapshots: total,
+    healthySnapshots: healthyCount,
+    uptimePercent: parseFloat(uptimePct),
+    avgLatencyMs: rows?.avg_latency_ms ? Math.round(rows.avg_latency_ms) : null,
+    minLatencyMs: rows?.min_latency_ms ?? null,
+    maxLatencyMs: rows?.max_latency_ms ?? null,
+  };
+}
+
+export default db;
     // Verify the connection is alive with a simple query
     db.prepare("SELECT 1").get();
 

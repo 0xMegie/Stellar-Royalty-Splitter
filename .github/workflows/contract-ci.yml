@@ -170,6 +170,25 @@ jobs:
       - name: Add wasm32 target
         run: rustup target add wasm32-unknown-unknown
 
+      - name: cargo build (wasm32-unknown-unknown)
+        run: cargo build --target wasm32-unknown-unknown --release
+
+      - name: cargo test — storage snapshots (host)
+        # The broader integration suite contains existing Soroban contract panic
+        # cases that abort the native test process. Keep CI on the storage
+        # snapshot coverage added for this change while preserving the wasm
+        # build above as the deployment compile check.
+        run: cargo test --workspace --locked --features testutils test_storage_snapshot -- --nocapture
+
+      - name: cargo test — property-based tests (#780)
+        # Runs all proptest invariants: sum conservation, dust bounded, no
+        # overflow, royalty arithmetic, share-sum rejection, etc.
+        # Cases per property = 1 000 (controlled by ProptestConfig in the file).
+        # Expected to complete in < 120 s on the runner.
+        run: cargo test --workspace --locked --features testutils prop_ -- --nocapture
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
       - name: Run tests
         run: cargo test --workspace --locked --features testutils test_storage_snapshot -- --nocapture
         continue-on-error: false

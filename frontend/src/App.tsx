@@ -28,6 +28,9 @@ import { Skeleton } from "./components/Skeleton";
 import { CopyButton } from "./components/CopyButton";
 import { api, SESSION_EXPIRED_EVENT } from "./api";
 import { OnboardingWalkthrough } from "./components/OnboardingWalkthrough";
+import { HealthDashboard } from "./components/HealthDashboard";
+import { api } from "./api";
+
 
 import "./App.css";
 
@@ -572,6 +575,8 @@ export default function App() {
           />,
           "Onboarding Checklist",
         );
+      case "health":
+        return <HealthDashboard />;
       default:
         return null;
     }
@@ -660,6 +665,14 @@ export default function App() {
                     size="sm"
                   />
                 )}
+                <button
+                  className={`quick-action-btn ${
+                    currentPage === "health" ? "active" : ""
+                  }`}
+                  onClick={() => handlePageChange("health")}
+                >
+                  Health
+                </button>
               </div>
               {contractIdError && (
                 <p className="contract-input-error">{contractIdError}</p>

@@ -1,3 +1,11 @@
+// dotenv is optional - load .env file if needed
+// import "dotenv/config";
+
+// OTel SDK must initialise before any other imports so auto-instrumentation
+// can patch http/express before they are loaded.
+import "./tracing.js";
+import { tracingMiddleware } from "./tracing.js";
+
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -88,6 +96,8 @@ app.use(shutdownMiddleware);
 // Security headers
 app.use(helmet());
 
+// Distributed tracing — creates per-request OTel spans, injects X-Trace-Id and X-Correlation-Id
+app.use(tracingMiddleware);
 // #766: gzip/deflate compress responses over 1KB (analytics payloads, CSV/JSON
 // exports, etc). Clients can opt out with `x-no-compression` for debugging.
 app.use(

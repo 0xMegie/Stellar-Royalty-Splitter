@@ -48,6 +48,7 @@ export const Navigation: React.FC<NavigationProps> = ({
     { id: "initialize", label: "Initialize", icon: "⚙️" },
     { id: "distribute", label: "Distribute", icon: "💰" },
     { id: "secondary", label: "Secondary", icon: "🔄" },
+    { id: "health", label: "Health", icon: "🏥" },
     { id: "bulk-import", label: "Bulk Import", icon: "📥" },
     { id: "tax-info", label: "Tax Info", icon: "📋" },
     { id: "payment-holds", label: "Payment Holds", icon: "⏸️" },
