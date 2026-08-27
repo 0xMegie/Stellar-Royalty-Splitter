@@ -58,6 +58,59 @@ pub enum OperationType {
     SecondaryDistribution,
 }
 
+/// Lifecycle state of a dispute (#841).
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DisputeStatus {
+    Open,
+    Resolved,
+    ClawedBack,
+}
+
+/// An admin-recorded dispute against a past distribution (#841). Stored as an
+/// on-chain audit trail; `resolve_dispute` / `clawback` transition it out of
+/// `Open`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Dispute {
+    /// Off-chain transaction / distribution identifier the dispute concerns.
+    pub transaction_id: u64,
+    pub reason: String,
+    /// Disputed amount, in the token's smallest unit.
+    pub amount: i128,
+    pub status: DisputeStatus,
+    pub opened_by: Address,
+    pub opened_at: u64,
+    pub resolved_at: u64,
+}
+
+/// What a governance proposal changes (#842). Extensible — only rate changes
+/// are wired to auto-execution for now.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProposalKind {
+    RoyaltyRateChange,
+}
+
+/// A governance proposal (#842). Votes are weighted by the collaborator's
+/// share (basis points), so approval means `yes_weight` is a strict majority
+/// of the total share weight *and* the voting window is still open.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Proposal {
+    pub id: u64,
+    pub kind: ProposalKind,
+    /// Proposed new royalty rate (basis points) for `RoyaltyRateChange`.
+    pub new_rate: u32,
+    pub proposer: Address,
+    pub created_at: u64,
+    pub deadline: u64,
+    pub yes_weight: u32,
+    pub no_weight: u32,
+    pub executed: bool,
+    pub rejected: bool,
+}
+
 /// Typed storage keys.
 ///
 /// Instance storage keys: small, frequently accessed values (Admin, Paused, etc.).
@@ -87,7 +140,13 @@ pub enum StorageKey {
     AdminRotationTimelock,
     EmergencyPaused,
     AnomalyThreshold,
+    ProposalCount,
     // Persistent storage
+    ApprovedTokens,
+    Disputes,
+    DisputeCount,
+    Proposals,
+    ProposalVotes,
     Collaborators,
     ShareMap,
     DefaultRecipients,
@@ -161,6 +220,18 @@ pub const MAX_ADMIN_ROTATION_TIMELOCK: u64 = 2_592_000;
 /// Maximum number of tokens accepted per `batch_distribute` call.
 pub const MAX_BATCH_TOKENS: u32 = 50;
 
+/// Maximum number of tokens in the approved-token whitelist (#840).
+pub const MAX_APPROVED_TOKENS: u32 = 25;
+
+/// Minimum governance proposal voting window, seconds (#842). 1 hour.
+pub const MIN_PROPOSAL_DURATION: u64 = 3_600;
+
+/// Maximum governance proposal voting window, seconds (#842). 14 days.
+pub const MAX_PROPOSAL_DURATION: u64 = 1_209_600;
+
+/// Total collaborator share weight — proposals need a strict majority of this.
+pub const TOTAL_SHARE_WEIGHT: u32 = 10_000;
+
 /// Backward-compatible alias for integration tests and external references.
 pub type DataKey = StorageKey;
 
@@ -210,6 +281,15 @@ pub enum ContractError {
     InvalidTimelockDuration = 36,
     EmergencyContractPaused = 37,
     InvalidAnomalyThreshold = 38,
+    TokenNotApproved = 39,
+    DisputeNotFound = 40,
+    DisputeAlreadyResolved = 41,
+    ProposalNotFound = 42,
+    ProposalVotingClosed = 43,
+    ProposalStillOpen = 44,
+    ProposalAlreadyExecuted = 45,
+    AlreadyVoted = 46,
+    InvalidProposalDuration = 47,
 }
 
 #[contract]
@@ -818,6 +898,7 @@ impl RoyaltySplitter {
         if Self::is_blocked(&env, OperationType::PrimaryDistribution) {
             return Err(ContractError::ContractPaused);
         }
+        Self::require_approved_token(&env, &token)?; // #840
 
         let token_client = token::Client::new(&env, &token);
         let amount = token_client.balance(&env.current_contract_address());
@@ -1071,6 +1152,9 @@ impl RoyaltySplitter {
         if tokens.len() > MAX_BATCH_TOKENS {
             return Err(ContractError::TooManyBatchTokens);
         }
+        for t in tokens.iter() {
+            Self::require_approved_token(&env, &t)?; // #840
+        }
 
         if Self::is_emergency_paused_flag(&env) {
             return Err(ContractError::EmergencyContractPaused);
@@ -1206,6 +1290,7 @@ impl RoyaltySplitter {
         if royalty_amount <= 0 {
             return Err(ContractError::RoyaltyAmountNotPositive);
         }
+        Self::require_approved_token(&env, &token)?; // #840
 
         let token_client = token::Client::new(&env, &token);
 
@@ -2026,6 +2111,452 @@ impl RoyaltySplitter {
             .expect("not initialized");
         auth::require_admin(env, &admin, message);
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // #840 — Token whitelist
+    //
+    // Whitelist (not blacklist): the contract's threat model is "accept only
+    // tokens the admin has vetted", so an allow-list fails closed for unknown
+    // tokens. An empty list means "no restriction" so the feature is opt-in
+    // and existing deployments/tests are unaffected until an admin calls
+    // `set_approved_tokens`.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Admin: replace the approved-token whitelist. An empty `tokens` list
+    /// disables the restriction (all tokens accepted).
+    pub fn set_approved_tokens(env: Env, tokens: Vec<Address>) -> Result<(), ContractError> {
+        storage::extend_instance_ttl(&env);
+        Self::check_admin_auth(&env, auth::msg::SET_APPROVED_TOKENS_ADMIN);
+
+        if tokens.len() > MAX_APPROVED_TOKENS {
+            return Err(ContractError::InputTooLarge);
+        }
+        // Reject duplicates so `is_token_approved` stays O(n) and small.
+        let mut seen: Map<Address, bool> = Map::new(&env);
+        for t in tokens.iter() {
+            if seen.contains_key(t.clone()) {
+                return Err(ContractError::DuplicateRecipient);
+            }
+            seen.set(t, true);
+        }
+
+        storage::persistent_set(&env, &StorageKey::ApprovedTokens, &tokens);
+        env.events().publish(
+            (symbol_short!("token"), symbol_short!("approved")),
+            tokens.len(),
+        );
+        Ok(())
+    }
+
+    /// The current approved-token whitelist (empty = no restriction).
+    pub fn get_approved_tokens(env: Env) -> Vec<Address> {
+        storage::extend_instance_ttl(&env);
+        storage::persistent_get::<Vec<Address>>(&env, &StorageKey::ApprovedTokens)
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Whether `token` may be used with the contract. `true` when the
+    /// whitelist is empty (unset) or contains `token`.
+    pub fn is_token_approved(env: Env, token: Address) -> bool {
+        Self::token_is_approved(&env, &token)
+    }
+
+    fn token_is_approved(env: &Env, token: &Address) -> bool {
+        let list: Vec<Address> =
+            storage::persistent_get::<Vec<Address>>(env, &StorageKey::ApprovedTokens)
+                .unwrap_or(Vec::new(env));
+        if list.is_empty() {
+            return true;
+        }
+        for t in list.iter() {
+            if &t == token {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn require_approved_token(env: &Env, token: &Address) -> Result<(), ContractError> {
+        if Self::token_is_approved(env, token) {
+            Ok(())
+        } else {
+            Err(ContractError::TokenNotApproved)
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // #841 — Dispute resolution & clawback
+    //
+    // A true on-chain "reverse the transfer" is impossible without the
+    // recipient's authorization — the contract cannot pull tokens from an
+    // arbitrary address. `clawback` therefore requires each `from` address to
+    // sign; it is the enforcement mechanism for an off-chain
+    // legal/compliance resolution, and `record_dispute` is the auditable
+    // on-chain trail that a dispute was opened. Where a recipient will not
+    // cooperate, the dispute stays `Resolved` (not `ClawedBack`) and recovery
+    // is an off-chain matter.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Admin: open a dispute against a past distribution. Returns the new id.
+    pub fn record_dispute(
+        env: Env,
+        transaction_id: u64,
+        reason: String,
+        amount: i128,
+    ) -> Result<u64, ContractError> {
+        storage::extend_instance_ttl(&env);
+        Self::check_admin_auth(&env, auth::msg::RECORD_DISPUTE_ADMIN);
+
+        if amount <= 0 {
+            return Err(ContractError::AmountNotPositive);
+        }
+
+        let opener: Address = Self::require_admin_address(&env)?;
+        let now = env.ledger().timestamp();
+
+        let mut disputes: Map<u64, Dispute> =
+            storage::persistent_get::<Map<u64, Dispute>>(&env, &StorageKey::Disputes)
+                .unwrap_or(Map::new(&env));
+        let next_id: u64 = storage::persistent_get::<u64>(&env, &StorageKey::DisputeCount)
+            .unwrap_or(0)
+            + 1;
+
+        let dispute = Dispute {
+            transaction_id,
+            reason,
+            amount,
+            status: DisputeStatus::Open,
+            opened_by: opener,
+            opened_at: now,
+            resolved_at: 0,
+        };
+        disputes.set(next_id, dispute);
+        storage::persistent_set(&env, &StorageKey::Disputes, &disputes);
+        storage::persistent_set(&env, &StorageKey::DisputeCount, &next_id);
+
+        env.events().publish(
+            (symbol_short!("dispute"), symbol_short!("opened")),
+            (next_id, transaction_id, amount),
+        );
+        Ok(next_id)
+    }
+
+    /// All disputes recorded on the contract.
+    pub fn get_disputes(env: Env) -> Vec<Dispute> {
+        storage::extend_instance_ttl(&env);
+        let disputes: Map<u64, Dispute> =
+            storage::persistent_get::<Map<u64, Dispute>>(&env, &StorageKey::Disputes)
+                .unwrap_or(Map::new(&env));
+        let mut out: Vec<Dispute> = Vec::new(&env);
+        for (_, d) in disputes.iter() {
+            out.push_back(d);
+        }
+        out
+    }
+
+    /// Admin: close a dispute without moving funds (off-chain resolution).
+    pub fn resolve_dispute(env: Env, dispute_id: u64) -> Result<(), ContractError> {
+        storage::extend_instance_ttl(&env);
+        Self::check_admin_auth(&env, auth::msg::RESOLVE_DISPUTE_ADMIN);
+        Self::close_dispute(&env, dispute_id, DisputeStatus::Resolved)
+    }
+
+    /// Admin: reverse a distribution by pulling `amounts[i]` of `token` back
+    /// from `from[i]` into the contract. Each `from[i]` must authorize the
+    /// transfer (Soroban cannot force a pull). Marks the dispute `ClawedBack`.
+    pub fn clawback(
+        env: Env,
+        dispute_id: u64,
+        token: Address,
+        from: Vec<Address>,
+        amounts: Vec<i128>,
+    ) -> Result<(), ContractError> {
+        storage::extend_instance_ttl(&env);
+        Self::check_admin_auth(&env, auth::msg::CLAWBACK_ADMIN);
+
+        if from.len() != amounts.len() {
+            return Err(ContractError::LengthMismatch);
+        }
+        if from.len() > MAX_RECIPIENTS {
+            return Err(ContractError::TooManyRecipients);
+        }
+
+        let contract = env.current_contract_address();
+        let token_client = token::Client::new(&env, &token);
+        for i in 0..from.len() {
+            let addr = from.get(i).unwrap_optimized();
+            let amount = amounts.get(i).unwrap_optimized();
+            if amount <= 0 {
+                return Err(ContractError::AmountNotPositive);
+            }
+            addr.require_auth();
+            token_client.transfer(&addr, &contract, &amount);
+        }
+
+        Self::close_dispute(&env, dispute_id, DisputeStatus::ClawedBack)?;
+        env.events().publish(
+            (symbol_short!("dispute"), symbol_short!("clawback")),
+            (dispute_id, token),
+        );
+        Ok(())
+    }
+
+    fn close_dispute(
+        env: &Env,
+        dispute_id: u64,
+        status: DisputeStatus,
+    ) -> Result<(), ContractError> {
+        let mut disputes: Map<u64, Dispute> =
+            storage::persistent_get::<Map<u64, Dispute>>(env, &StorageKey::Disputes)
+                .ok_or(ContractError::DisputeNotFound)?;
+        let mut d = disputes
+            .get(dispute_id)
+            .ok_or(ContractError::DisputeNotFound)?;
+        if d.status != DisputeStatus::Open {
+            return Err(ContractError::DisputeAlreadyResolved);
+        }
+        d.status = status;
+        d.resolved_at = env.ledger().timestamp();
+        disputes.set(dispute_id, d);
+        storage::persistent_set(env, &StorageKey::Disputes, &disputes);
+        env.events().publish(
+            (symbol_short!("dispute"), symbol_short!("resolved")),
+            dispute_id,
+        );
+        Ok(())
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // #842 — Governance: propose / vote / execute royalty-rate changes
+    //
+    // Votes are weighted by the collaborator's share (basis points). A
+    // proposal passes when `yes_weight` exceeds half of TOTAL_SHARE_WEIGHT
+    // (a strict majority of *all* share, so abstentions count against) and
+    // the deadline has passed; it fails otherwise. Execution is
+    // permissionless (`execute_proposal`) and applies the same validation
+    // `set_royalty_rate` does.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// A collaborator proposes a new royalty rate. `duration` is the voting
+    /// window in seconds. Returns the proposal id.
+    pub fn propose_rate_change(
+        env: Env,
+        proposer: Address,
+        new_rate: u32,
+        duration: u64,
+    ) -> Result<u64, ContractError> {
+        storage::extend_instance_ttl(&env);
+        proposer.require_auth();
+
+        let share_map: Map<Address, u32> = storage::persistent_get::<Map<Address, u32>>(&env, &StorageKey::ShareMap).ok_or(ContractError::NoShareMap)?;
+        if !share_map.contains_key(proposer.clone()) {
+            return Err(ContractError::CollaboratorNotFound);
+        }
+        if new_rate == 0 {
+            return Err(ContractError::RoyaltyRateZero);
+        }
+        if new_rate > 10_000 {
+            return Err(ContractError::RoyaltyRateTooHigh);
+        }
+        if duration < MIN_PROPOSAL_DURATION || duration > MAX_PROPOSAL_DURATION {
+            return Err(ContractError::InvalidProposalDuration);
+        }
+
+        let now = env.ledger().timestamp();
+        let id: u64 = storage::instance_get::<u64>(&env, &StorageKey::ProposalCount)
+            .unwrap_or(0)
+            + 1;
+
+        let proposal = Proposal {
+            id,
+            kind: ProposalKind::RoyaltyRateChange,
+            new_rate,
+            proposer: proposer.clone(),
+            created_at: now,
+            deadline: now.saturating_add(duration),
+            yes_weight: 0,
+            no_weight: 0,
+            executed: false,
+            rejected: false,
+        };
+
+        let mut proposals: Map<u64, Proposal> =
+            storage::persistent_get::<Map<u64, Proposal>>(&env, &StorageKey::Proposals)
+                .unwrap_or(Map::new(&env));
+        proposals.set(id, proposal);
+        storage::persistent_set(&env, &StorageKey::Proposals, &proposals);
+        storage::instance_set(&env, &StorageKey::ProposalCount, &id);
+
+        env.events().publish(
+            (symbol_short!("gov"), symbol_short!("proposed")),
+            (id, new_rate, now.saturating_add(duration)),
+        );
+        Ok(id)
+    }
+
+    /// A collaborator casts a share-weighted vote. One vote per collaborator
+    /// per proposal.
+    pub fn vote(
+        env: Env,
+        voter: Address,
+        proposal_id: u64,
+        support: bool,
+    ) -> Result<(), ContractError> {
+        storage::extend_instance_ttl(&env);
+        voter.require_auth();
+
+        let share_map: Map<Address, u32> = storage::persistent_get::<Map<Address, u32>>(&env, &StorageKey::ShareMap).ok_or(ContractError::NoShareMap)?;
+        let weight = share_map
+            .get(voter.clone())
+            .ok_or(ContractError::CollaboratorNotFound)?;
+
+        let mut proposals: Map<u64, Proposal> =
+            storage::persistent_get::<Map<u64, Proposal>>(&env, &StorageKey::Proposals)
+                .ok_or(ContractError::ProposalNotFound)?;
+        let mut proposal = proposals
+            .get(proposal_id)
+            .ok_or(ContractError::ProposalNotFound)?;
+
+        if proposal.executed || proposal.rejected {
+            return Err(ContractError::ProposalAlreadyExecuted);
+        }
+        if env.ledger().timestamp() >= proposal.deadline {
+            return Err(ContractError::ProposalVotingClosed);
+        }
+
+        let mut votes: Map<u64, Map<Address, bool>> =
+            storage::persistent_get::<Map<u64, Map<Address, bool>>>(
+                &env,
+                &StorageKey::ProposalVotes,
+            )
+            .unwrap_or(Map::new(&env));
+        let mut proposal_votes: Map<Address, bool> =
+            votes.get(proposal_id).unwrap_or(Map::new(&env));
+        if proposal_votes.contains_key(voter.clone()) {
+            return Err(ContractError::AlreadyVoted);
+        }
+        proposal_votes.set(voter.clone(), support);
+        votes.set(proposal_id, proposal_votes);
+        storage::persistent_set(&env, &StorageKey::ProposalVotes, &votes);
+
+        if support {
+            proposal.yes_weight = proposal.yes_weight.saturating_add(weight);
+        } else {
+            proposal.no_weight = proposal.no_weight.saturating_add(weight);
+        }
+        proposals.set(proposal_id, proposal.clone());
+        storage::persistent_set(&env, &StorageKey::Proposals, &proposals);
+
+        env.events().publish(
+            (symbol_short!("gov"), symbol_short!("voted")),
+            (proposal_id, voter, support, weight),
+        );
+        Ok(())
+    }
+
+    /// Permissionless: finalize a proposal once its deadline has passed.
+    /// Applies the rate change on a majority-yes, otherwise marks it rejected.
+    pub fn execute_proposal(env: Env, proposal_id: u64) -> Result<(), ContractError> {
+        storage::extend_instance_ttl(&env);
+
+        let mut proposals: Map<u64, Proposal> =
+            storage::persistent_get::<Map<u64, Proposal>>(&env, &StorageKey::Proposals)
+                .ok_or(ContractError::ProposalNotFound)?;
+        let mut proposal = proposals
+            .get(proposal_id)
+            .ok_or(ContractError::ProposalNotFound)?;
+
+        if proposal.executed || proposal.rejected {
+            return Err(ContractError::ProposalAlreadyExecuted);
+        }
+        if env.ledger().timestamp() < proposal.deadline {
+            return Err(ContractError::ProposalStillOpen);
+        }
+
+        // Strict majority of the *whole* collaborator share weight.
+        let passed = proposal.yes_weight > TOTAL_SHARE_WEIGHT / 2
+            && proposal.yes_weight > proposal.no_weight;
+
+        if !passed {
+            // Rejection is a persisted terminal outcome, not an error — an
+            // `Err` return would roll back this write.
+            proposal.rejected = true;
+            proposals.set(proposal_id, proposal.clone());
+            storage::persistent_set(&env, &StorageKey::Proposals, &proposals);
+            env.events().publish(
+                (symbol_short!("gov"), symbol_short!("rejected")),
+                proposal_id,
+            );
+            return Ok(());
+        }
+
+        // Apply — mirrors set_royalty_rate's storage + history.
+        let old_rate: u32 = storage::instance_get::<u32>(&env, &StorageKey::RoyaltyRate).unwrap_or(0);
+        storage::instance_set(&env, &StorageKey::RoyaltyRate, &proposal.new_rate);
+
+        let mut history: Vec<RoyaltyRateChange> =
+            storage::persistent_get::<Vec<RoyaltyRateChange>>(&env, &StorageKey::RoyaltyRateHistory)
+                .unwrap_or(Vec::new(&env));
+        if history.len() >= RATE_HISTORY_CAP {
+            let mut trimmed: Vec<RoyaltyRateChange> = Vec::new(&env);
+            for i in 1..history.len() {
+                trimmed.push_back(history.get(i).unwrap());
+            }
+            history = trimmed;
+        }
+        history.push_back(RoyaltyRateChange {
+            old_rate,
+            new_rate: proposal.new_rate,
+            timestamp: env.ledger().timestamp(),
+            caller: proposal.proposer.clone(),
+        });
+        storage::persistent_set(&env, &StorageKey::RoyaltyRateHistory, &history);
+
+        proposal.executed = true;
+        proposals.set(proposal_id, proposal.clone());
+        storage::persistent_set(&env, &StorageKey::Proposals, &proposals);
+
+        env.events().publish(
+            (symbol_short!("gov"), symbol_short!("executed")),
+            (proposal_id, proposal.new_rate),
+        );
+        Ok(())
+    }
+
+    /// A single proposal by id.
+    pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, ContractError> {
+        storage::extend_instance_ttl(&env);
+        storage::persistent_get::<Map<u64, Proposal>>(&env, &StorageKey::Proposals)
+            .ok_or(ContractError::ProposalNotFound)?
+            .get(proposal_id)
+            .ok_or(ContractError::ProposalNotFound)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // #844 — M-of-N multi-sig for critical admin functions
+    //
+    // Already enforced by `check_admin_auth`: when `AdminList` is non-empty
+    // it calls `require_auth()` on the first `AdminThreshold` entries, so
+    // every admin-gated function (pause, admin_transfer, set_royalty_rate,
+    // withdraw, distribute*, …) needs M signatures in the transaction's auth.
+    // Soroban's host aggregates the M authorizations; there is no partial
+    // on-chain signature accumulation to store or replay-protect. This view
+    // exposes the active configuration.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// `(signers, threshold)` for the M-of-N admin policy. `signers` is empty
+    /// when the contract is still on the single-key admin.
+    pub fn get_admin_config(env: Env) -> (Vec<Address>, u32) {
+        storage::extend_instance_ttl(&env);
+        let signers: Vec<Address> = storage::instance_get::<Vec<Address>>(&env, &StorageKey::AdminList)
+            .unwrap_or(Vec::new(&env));
+        let threshold: u32 = if signers.is_empty() {
+            1
+        } else {
+            storage::instance_get::<u32>(&env, &StorageKey::AdminThreshold).unwrap_or(1)
+        };
+        (signers, threshold)
+    }
 }
 
 #[cfg(test)]
@@ -2433,5 +2964,365 @@ mod emergency_pause_tests {
 
         client.clear_emergency_pause();
         assert!(!client.is_emergency_paused());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// #840 — Token whitelist
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod approved_token_tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::token::StellarAssetClient;
+
+    fn setup(env: &Env) -> (Address, RoyaltySplitterClient<'_>) {
+        let contract_id = env.register_contract(None, RoyaltySplitter);
+        let client = RoyaltySplitterClient::new(env, &contract_id);
+        let a = Address::generate(env);
+        let b = Address::generate(env);
+        client.initialize(
+            &Vec::from_array(env, [a, b]),
+            &Vec::from_array(env, [6_000u32, 4_000u32]),
+        );
+        (contract_id, client)
+    }
+
+    fn asset(env: &Env, to: &Address, amount: i128) -> Address {
+        let token = env.register_stellar_asset_contract(Address::generate(env));
+        StellarAssetClient::new(env, &token).mint(to, &amount);
+        token
+    }
+
+    #[test]
+    fn empty_whitelist_means_no_restriction() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, client) = setup(&env);
+        let token = asset(&env, &contract_id, 10_000);
+
+        assert!(client.get_approved_tokens().is_empty());
+        assert!(client.is_token_approved(&token));
+        client.distribute(&token); // unaffected
+        assert_eq!(client.get_distribute_count(), 1);
+    }
+
+    #[test]
+    fn distribute_rejects_unapproved_token_once_whitelist_is_set() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, client) = setup(&env);
+        let approved = asset(&env, &contract_id, 10_000);
+        let other = asset(&env, &contract_id, 10_000);
+
+        client.set_approved_tokens(&Vec::from_array(&env, [approved.clone()]));
+        assert!(client.is_token_approved(&approved));
+        assert!(!client.is_token_approved(&other));
+
+        assert_eq!(
+            client.try_distribute(&other),
+            Err(Ok(ContractError::TokenNotApproved))
+        );
+        client.distribute(&approved); // approved one still works
+    }
+
+    #[test]
+    fn whitelist_rejects_duplicates_and_oversized_lists() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, client) = setup(&env);
+        let t = Address::generate(&env);
+        assert_eq!(
+            client.try_set_approved_tokens(&Vec::from_array(&env, [t.clone(), t])),
+            Err(Ok(ContractError::DuplicateRecipient))
+        );
+    }
+
+    #[test]
+    fn whitelist_can_be_cleared() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, client) = setup(&env);
+        let token = asset(&env, &contract_id, 10_000);
+        client.set_approved_tokens(&Vec::from_array(&env, [Address::generate(&env)]));
+        assert!(!client.is_token_approved(&token));
+        client.set_approved_tokens(&Vec::new(&env));
+        assert!(client.is_token_approved(&token));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// #841 — Dispute resolution & clawback
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod dispute_tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
+
+    fn setup(env: &Env) -> (Address, RoyaltySplitterClient<'_>) {
+        let contract_id = env.register_contract(None, RoyaltySplitter);
+        let client = RoyaltySplitterClient::new(env, &contract_id);
+        client.initialize(
+            &Vec::from_array(env, [Address::generate(env), Address::generate(env)]),
+            &Vec::from_array(env, [6_000u32, 4_000u32]),
+        );
+        (contract_id, client)
+    }
+
+    #[test]
+    fn record_then_resolve_dispute() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, client) = setup(&env);
+
+        let id = client.record_dispute(&42u64, &String::from_str(&env, "chargeback"), &500i128);
+        assert_eq!(id, 1);
+        let disputes = client.get_disputes();
+        assert_eq!(disputes.len(), 1);
+        assert_eq!(disputes.get(0).unwrap().status, DisputeStatus::Open);
+
+        client.resolve_dispute(&id);
+        assert_eq!(
+            client.get_disputes().get(0).unwrap().status,
+            DisputeStatus::Resolved
+        );
+        assert_eq!(
+            client.try_resolve_dispute(&id),
+            Err(Ok(ContractError::DisputeAlreadyResolved))
+        );
+    }
+
+    #[test]
+    fn record_dispute_rejects_non_positive_amount() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, client) = setup(&env);
+        assert_eq!(
+            client.try_record_dispute(&1u64, &String::from_str(&env, "x"), &0i128),
+            Err(Ok(ContractError::AmountNotPositive))
+        );
+    }
+
+    #[test]
+    fn clawback_pulls_funds_back_and_marks_dispute() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, client) = setup(&env);
+
+        let token = env.register_stellar_asset_contract(Address::generate(&env));
+        let recipient = Address::generate(&env);
+        StellarAssetClient::new(&env, &token).mint(&recipient, &800);
+
+        let id = client.record_dispute(&7u64, &String::from_str(&env, "fraud"), &800i128);
+        client.clawback(
+            &id,
+            &token,
+            &Vec::from_array(&env, [recipient.clone()]),
+            &Vec::from_array(&env, [800i128]),
+        );
+
+        assert_eq!(TokenClient::new(&env, &token).balance(&recipient), 0);
+        assert_eq!(TokenClient::new(&env, &token).balance(&contract_id), 800);
+        assert_eq!(
+            client.get_disputes().get(0).unwrap().status,
+            DisputeStatus::ClawedBack
+        );
+    }
+
+    #[test]
+    fn clawback_rejects_length_mismatch() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, client) = setup(&env);
+        let token = env.register_stellar_asset_contract(Address::generate(&env));
+        let id = client.record_dispute(&1u64, &String::from_str(&env, "x"), &10i128);
+        assert_eq!(
+            client.try_clawback(
+                &id,
+                &token,
+                &Vec::from_array(&env, [Address::generate(&env)]),
+                &Vec::new(&env),
+            ),
+            Err(Ok(ContractError::LengthMismatch))
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// #842 — Governance: propose / vote / execute
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod governance_tests {
+    use super::*;
+    use soroban_sdk::testutils::{Address as _, Ledger};
+
+    fn setup(env: &Env) -> (Address, Address, Address, RoyaltySplitterClient<'_>) {
+        let contract_id = env.register_contract(None, RoyaltySplitter);
+        let client = RoyaltySplitterClient::new(env, &contract_id);
+        let a = Address::generate(env);
+        let b = Address::generate(env);
+        client.initialize(
+            &Vec::from_array(env, [a.clone(), b.clone()]),
+            &Vec::from_array(env, [6_000u32, 4_000u32]),
+        );
+        (contract_id, a, b, client)
+    }
+
+    #[test]
+    fn majority_yes_executes_rate_change() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, a, _b, client) = setup(&env);
+
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+        let id = client.propose_rate_change(&a, &750u32, &MIN_PROPOSAL_DURATION);
+        client.vote(&a, &id, &true); // 6000 weight yes
+
+        assert_eq!(
+            client.try_execute_proposal(&id),
+            Err(Ok(ContractError::ProposalStillOpen))
+        );
+
+        env.ledger()
+            .with_mut(|l| l.timestamp = 1_000 + MIN_PROPOSAL_DURATION);
+        client.execute_proposal(&id);
+
+        assert_eq!(client.get_royalty_rate(), 750);
+        assert!(client.get_proposal(&id).executed);
+    }
+
+    #[test]
+    fn rejected_when_yes_weight_below_half() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _a, b, client) = setup(&env);
+
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+        let id = client.propose_rate_change(&b, &750u32, &MIN_PROPOSAL_DURATION);
+        client.vote(&b, &id, &true); // only 4000 weight
+
+        env.ledger()
+            .with_mut(|l| l.timestamp = 1_000 + MIN_PROPOSAL_DURATION);
+        client.execute_proposal(&id);
+        assert!(client.get_proposal(&id).rejected);
+        assert!(!client.get_proposal(&id).executed);
+        assert_eq!(client.get_royalty_rate(), 0); // unchanged (never set)
+
+        // A finalized proposal cannot be re-run.
+        assert_eq!(
+            client.try_execute_proposal(&id),
+            Err(Ok(ContractError::ProposalAlreadyExecuted))
+        );
+    }
+
+    #[test]
+    fn double_voting_is_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, a, _b, client) = setup(&env);
+        let id = client.propose_rate_change(&a, &750u32, &MIN_PROPOSAL_DURATION);
+        client.vote(&a, &id, &true);
+        assert_eq!(
+            client.try_vote(&a, &id, &false),
+            Err(Ok(ContractError::AlreadyVoted))
+        );
+    }
+
+    #[test]
+    fn non_collaborator_cannot_propose_or_vote() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, a, _b, client) = setup(&env);
+        let stranger = Address::generate(&env);
+        assert_eq!(
+            client.try_propose_rate_change(&stranger, &750u32, &MIN_PROPOSAL_DURATION),
+            Err(Ok(ContractError::CollaboratorNotFound))
+        );
+        let id = client.propose_rate_change(&a, &750u32, &MIN_PROPOSAL_DURATION);
+        assert_eq!(
+            client.try_vote(&stranger, &id, &true),
+            Err(Ok(ContractError::CollaboratorNotFound))
+        );
+    }
+
+    #[test]
+    fn proposal_duration_is_bounded() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, a, _b, client) = setup(&env);
+        assert_eq!(
+            client.try_propose_rate_change(&a, &750u32, &(MIN_PROPOSAL_DURATION - 1)),
+            Err(Ok(ContractError::InvalidProposalDuration))
+        );
+        assert_eq!(
+            client.try_propose_rate_change(&a, &750u32, &(MAX_PROPOSAL_DURATION + 1)),
+            Err(Ok(ContractError::InvalidProposalDuration))
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// #844 — M-of-N multi-sig admin policy
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod multisig_admin_tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    fn setup(env: &Env, n: usize) -> (Vec<Address>, RoyaltySplitterClient<'_>) {
+        let contract_id = env.register_contract(None, RoyaltySplitter);
+        let client = RoyaltySplitterClient::new(env, &contract_id);
+        client.initialize(
+            &Vec::from_array(env, [Address::generate(env), Address::generate(env)]),
+            &Vec::from_array(env, [6_000u32, 4_000u32]),
+        );
+        let mut signers = Vec::new(env);
+        for _ in 0..n {
+            signers.push_back(Address::generate(env));
+        }
+        (signers, client)
+    }
+
+    #[test]
+    fn default_config_is_single_key() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, client) = setup(&env, 0);
+        let (signers, threshold) = client.get_admin_config();
+        assert!(signers.is_empty());
+        assert_eq!(threshold, 1);
+    }
+
+    #[test]
+    fn m_of_n_2_of_3() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (signers, client) = setup(&env, 3);
+        client.set_admins(&signers, &2u32);
+
+        let (stored, threshold) = client.get_admin_config();
+        assert_eq!(stored.len(), 3);
+        assert_eq!(threshold, 2);
+
+        // A critical function now runs under the M-of-N policy.
+        client.set_royalty_rate(&500u32);
+        assert_eq!(client.get_royalty_rate(), 500);
+    }
+
+    #[test]
+    fn m_of_n_3_of_5() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (signers, client) = setup(&env, 5);
+        client.set_admins(&signers, &3u32);
+
+        let (stored, threshold) = client.get_admin_config();
+        assert_eq!(stored.len(), 5);
+        assert_eq!(threshold, 3);
+
+        client.pause();
+        assert!(client.is_paused());
+        client.unpause();
     }
 }
