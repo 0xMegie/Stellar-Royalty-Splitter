@@ -159,3 +159,17 @@ Secrets are encrypted at rest when `SECRETS_ENCRYPTION_KEY` is configured.
 
 *This policy follows the [responsible disclosure guidelines](https://cheatsheetseries.owasp.org/cheatsheets/Vulnerability_Disclosure_Cheat_Sheet.html)
 published by OWASP and is inspired by [GitHub's security advisory best practices](https://docs.github.com/en/code-security/security-advisories).*
+
+---
+
+## Pre-Deploy Security Checklist
+
+Before deploying the Stellar Royalty Splitter to mainnet, the deployer MUST manually verify and sign off on the following security checklist:
+
+1. [ ] **Dependency Audit**: `cargo audit` returns no critical or high vulnerabilities.
+2. [ ] **Linting**: The contract compiles with zero clippy warnings (`cargo clippy --all-targets -- -D warnings`).
+3. [ ] **Authorization**: All endpoints that mutate state use `require_auth` or `require_admin`.
+4. [ ] **Environment Variables**: `.env` does not contain production secrets; AWS Secrets Manager or HashiCorp Vault is configured for the backend.
+5. [ ] **Admin Key**: The deployer address (the first address in `collaborators`) is securely stored and requires multi-sig or a hardware wallet for production.
+6. [ ] **Basis Points**: Total shares configured in initialization perfectly sum to 10,000 (100%).
+

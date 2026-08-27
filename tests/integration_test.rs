@@ -5,12 +5,12 @@ use soroban_sdk::{
     token::{Client as TokenClient, StellarAssetClient},
     vec, Address, BytesN, Env, IntoVal, Map, String, TryFromVal, Val, Vec as SorobanVec,
 };
-use stellar_royalty_splitter::{
-    auth, ContractError, DataKey, OperationType, Recipient, RoyaltySplitterClient, StorageKey,
+use stellar_royalty_splitter::{RATE_HISTORY_CAP, 
+    auth, ContractError, DataKey, OperationType, Recipient, RoyaltySplitterClient, StorageKey, RoyaltyRateChange,
     MIN_TTL, VERSION,
 };
 
-fn setup(env: &Env) -> (Address, RoyaltySplitterClient) {
+fn setup(env: &Env) -> (Address, RoyaltySplitterClient<'_>) {
     let contract_id = env.register_contract(None, stellar_royalty_splitter::RoyaltySplitter);
     let client = RoyaltySplitterClient::new(env, &contract_id);
     (contract_id, client)
@@ -87,7 +87,7 @@ fn test_distribute_zero_balance_returns_underfunded_error() {
     client.initialize(&vec![&env, a, b], &vec![&env, 5000_u32, 5000_u32]);
     // contract balance is 0 - must return the typed underfunded error
     let result = client.try_distribute(&token);
-    assert_eq!(result, Err(Ok(ContractError::Underfunded)));
+    assert_eq!(result, Err(Ok(ContractError::Underfunded.into())));
 }
 
 #[test]
@@ -401,7 +401,7 @@ fn test_failed_initialize_does_not_write_any_storage() {
         &vec![&env, admin.clone(), b.clone()],
         &vec![&env, 5000_u32, 4000_u32],
     );
-    assert_eq!(result, Err(Ok(ContractError::InvalidShareTotal)));
+    assert_eq!(result, Err(Ok(ContractError::InvalidShareTotal.into())));
 
     env.as_contract(&contract_id, || {
         assert!(!env.storage().instance().has(&StorageKey::Admin));
@@ -428,7 +428,7 @@ fn test_failed_update_share_does_not_change_share_map() {
 
     // 5000 -> 7000 makes the total 12,000; must be rejected.
     let result = client.try_update_share(&admin, &7000_u32);
-    assert_eq!(result, Err(Ok(ContractError::InvalidUpdatedShareTotal)));
+    assert_eq!(result, Err(Ok(ContractError::InvalidUpdatedShareTotal.into())));
 
     assert_eq!(client.get_share(&admin), 5000);
     assert_eq!(client.get_share(&b), 5000);
@@ -455,7 +455,7 @@ fn test_failed_distribute_does_not_change_counters_or_balances() {
 
     // Contract balance is 0 — distribute must fail without touching state.
     let result = client.try_distribute(&token);
-    assert_eq!(result, Err(Ok(ContractError::Underfunded)));
+    assert_eq!(result, Err(Ok(ContractError::Underfunded.into())));
 
     assert_eq!(client.get_distribute_count(), 0);
     assert!(client.get_last_distribution().is_none());
@@ -630,9 +630,9 @@ fn test_set_royalty_rate_emits_event() {
     assert!(found, "rate_set event not emitted");
 }
 
-/// Events — distribute_secondary_royalties emits a ("royalty", "sec_dist") event.
+/// Events — distribute_secondary emits a ("royalty", "sec_dist") event.
 #[test]
-fn test_distribute_secondary_royalties_emits_event() {
+fn test_distribute_secondary_emits_event() {
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
     let (contract_id, client) = setup(&env);
@@ -650,7 +650,7 @@ fn test_distribute_secondary_royalties_emits_event() {
     let pool_amount: i128 = 500;
     mint(&env, &token, &admin, pool_amount);
     client.record_secondary_royalty(&token, &admin, &pool_amount);
-    client.distribute_secondary_royalties();
+    client.distribute_secondary();
 
     let events = env.events().all();
     let found = events.iter().any(|(cid, topics, data)| {
@@ -780,7 +780,7 @@ fn test_distribute_blocked_when_paused() {
     client.distribute(&token);
 }
 
-/// Issue #160 — pause blocks distribute_secondary_royalties.
+/// Issue #160 — pause blocks distribute_secondary.
 #[test]
 #[should_panic]
 fn test_distribute_secondary_blocked_when_paused() {
@@ -804,7 +804,7 @@ fn test_distribute_secondary_blocked_when_paused() {
 
     client.pause();
     // Must panic with "contract is paused"
-    client.distribute_secondary_royalties();
+    client.distribute_secondary();
 }
 
 /// Issue #160 — unpause re-enables distribute.
@@ -872,7 +872,7 @@ fn test_royalty_rate_boundary_zero() {
     );
 
     let result = client.try_set_royalty_rate(&0_u32);
-    assert_eq!(result, Err(Ok(ContractError::RoyaltyRateZero)));
+    assert_eq!(result, Err(Ok(ContractError::RoyaltyRateZero.into())));
     assert_eq!(client.get_royalty_rate(), 0);
 }
 
@@ -907,7 +907,7 @@ fn test_royalty_rate_above_max_rejected() {
     );
 
     let result = client.try_set_royalty_rate(&10_001_u32);
-    assert_eq!(result, Err(Ok(ContractError::RoyaltyRateTooHigh)));
+    assert_eq!(result, Err(Ok(ContractError::RoyaltyRateTooHigh.into())));
     assert_eq!(client.get_royalty_rate(), 0);
 }
 
@@ -1155,7 +1155,7 @@ fn test_record_secondary_sale_overflow_returns_typed_error() {
 
     let result = client.try_record_secondary_sale(&i128::MAX);
 
-    assert_eq!(result, Err(Ok(ContractError::ArithmeticOverflow)));
+    assert_eq!(result, Err(Ok(ContractError::ArithmeticOverflow.into())));
 }
 
 #[test]
@@ -1176,7 +1176,7 @@ fn test_distribute_payout_overflow_returns_typed_error_without_state_change() {
 
     let result = client.try_distribute(&token);
 
-    assert_eq!(result, Err(Ok(ContractError::ArithmeticOverflow)));
+    assert_eq!(result, Err(Ok(ContractError::ArithmeticOverflow.into())));
     assert_eq!(
         TokenClient::new(&env, &token).balance(&contract_id),
         i128::MAX
@@ -1277,7 +1277,7 @@ fn test_distribute_secondary_fuzz_style() {
         client.initialize(&soroban_addrs, &soroban_shares);
         mint(&env, &token, &addrs[0], pool_amount);
         client.record_secondary_royalty(&token, &addrs[0], &pool_amount);
-        client.distribute_secondary_royalties();
+        client.distribute_secondary();
 
         let mut total_paid: i128 = 0;
         for addr in &addrs {
@@ -1693,7 +1693,7 @@ fn test_set_default_recipients_invalid_basis_points_rejected() {
     let recipients = vec![&env, recipient];
 
     let result = client.try_set_default_recipients(&recipients);
-    assert_eq!(result, Err(Ok(ContractError::InvalidBasisPoints)));
+    assert_eq!(result, Err(Ok(ContractError::InvalidBasisPoints.into())));
 }
 
 /// Test that set_default_recipients rejects duplicate addresses
@@ -1721,7 +1721,7 @@ fn test_set_default_recipients_duplicate_address_returns_typed_error() {
     let recipients = vec![&env, recipient1, recipient2];
 
     let result = client.try_set_default_recipients(&recipients);
-    assert_eq!(result, Err(Ok(ContractError::DuplicateRecipient)));
+    assert_eq!(result, Err(Ok(ContractError::DuplicateRecipient.into())));
 
     let defaults = client.get_default_recipients();
     assert_eq!(defaults.len(), 0);
@@ -3127,7 +3127,7 @@ fn test_distribute_zero_balance() {
     assert_eq!(TokenClient::new(&env, &token).balance(&b), 0);
 
     let result = client.try_distribute(&token);
-    assert_eq!(result, Err(Ok(ContractError::Underfunded)));
+    assert_eq!(result, Err(Ok(ContractError::Underfunded.into())));
 
     assert_eq!(TokenClient::new(&env, &token).balance(&contract_id), 0);
     assert_eq!(TokenClient::new(&env, &token).balance(&admin), 0);
@@ -3751,7 +3751,7 @@ fn test_distribute_fails_with_error_when_paused() {
 
     // Verify distribute fails with the correct error
     let result = client.try_distribute(&token);
-    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused.into())));
 }
 
 /// Test that distribute() succeeds after unpause.
@@ -3775,7 +3775,7 @@ fn test_distribute_succeeds_after_unpause_with_balances() {
     // Pause and verify distribute fails
     client.pause();
     let result = client.try_distribute(&token);
-    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused.into())));
 
     // Unpause
     client.unpause();
@@ -3903,7 +3903,7 @@ fn test_unpause_requires_specific_admin_auth() {
     assert!(!client.is_paused());
 }
 
-/// Test that distribute_secondary_royalties() fails with ContractPaused error when paused.
+/// Test that distribute_secondary() fails with ContractPaused error when paused.
 #[test]
 fn test_distribute_secondary_fails_with_error_when_paused() {
     let env = Env::default();
@@ -3928,12 +3928,12 @@ fn test_distribute_secondary_fails_with_error_when_paused() {
     // Pause the contract
     client.pause();
 
-    // Verify distribute_secondary_royalties fails with the correct error
-    let result = client.try_distribute_secondary_royalties();
-    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+    // Verify distribute_secondary fails with the correct error
+    let result = client.try_distribute_secondary();
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused.into())));
 }
 
-/// Test that distribute_secondary_royalties() succeeds after unpause.
+/// Test that distribute_secondary() succeeds after unpause.
 #[test]
 fn test_distribute_secondary_succeeds_after_unpause() {
     let env = Env::default();
@@ -3955,17 +3955,17 @@ fn test_distribute_secondary_succeeds_after_unpause() {
     mint(&env, &token, &admin, pool_amount);
     client.record_secondary_royalty(&token, &admin, &pool_amount);
 
-    // Pause and verify distribute_secondary_royalties fails
+    // Pause and verify distribute_secondary fails
     client.pause();
-    let result = client.try_distribute_secondary_royalties();
-    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+    let result = client.try_distribute_secondary();
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused.into())));
 
     // Unpause
     client.unpause();
     assert!(!client.is_paused());
 
     // Distribute secondary royalties should now succeed
-    client.distribute_secondary_royalties();
+    client.distribute_secondary();
 
     // Verify balances were distributed correctly
     assert_eq!(TokenClient::new(&env, &token).balance(&admin), 250);
@@ -4044,7 +4044,7 @@ fn test_paused_state_persists() {
     // Distribute should still fail
     mint(&env, &token, &contract_id, 1000);
     let result = client.try_distribute(&token);
-    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused.into())));
 }
 
 /// Test that read-only operations work when paused.
@@ -4249,7 +4249,7 @@ fn test_batch_distribute_fails_when_paused() {
     client.pause();
 
     let result = client.try_batch_distribute(&vec![&env, token1]);
-    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused.into())));
 }
 
 /// Test that batch_distribute succeeds after unpause.
@@ -4331,7 +4331,7 @@ fn test_batch_distribute_fails_on_zero_balance() {
     // token2 has zero balance
 
     let result = client.try_batch_distribute(&vec![&env, token1, token2]);
-    assert_eq!(result, Err(Ok(ContractError::NoBalance)));
+    assert_eq!(result, Err(Ok(ContractError::NoBalance.into())));
 }
 
 /// Test that batch_distribute handles dust correctly for each token.
@@ -4514,7 +4514,7 @@ fn test_batch_distribute_fails_on_amount_too_small() {
     mint(&env, &token2, &contract_id, 1); // Only 1 stroop, but 2 recipients
 
     let result = client.try_batch_distribute(&vec![&env, token1, token2]);
-    assert_eq!(result, Err(Ok(ContractError::AmountTooSmall)));
+    assert_eq!(result, Err(Ok(ContractError::AmountTooSmall.into())));
 }
 
 /// Test batch_distribute with large number of tokens.
@@ -4625,7 +4625,7 @@ fn test_batch_distribute_rejects_too_many_tokens() {
 //
 // Fills gaps left by the existing auth tests: some protected operations only
 // had an authorized-path test, some only had an unauthorized-path test, and a
-// few (record_secondary_royalty, update_share, distribute_secondary_royalties)
+// few (record_secondary_royalty, update_share, distribute_secondary)
 // had neither a dedicated authorized nor unauthorized auth test. Every test
 // below uses `try_*` client methods so a rejected call surfaces as `Err`
 // instead of unwinding, and asserts contract state is unchanged afterwards.
@@ -4924,10 +4924,10 @@ fn test_update_share_rejects_non_admin_caller() {
     assert_eq!(client.get_share(&b), 5000);
 }
 
-/// distribute_secondary_royalties: authorized admin succeeds via a
+/// distribute_secondary: authorized admin succeeds via a
 /// function-specific mock auth (not the blanket mock_all_auths).
 #[test]
-fn test_distribute_secondary_royalties_specific_admin_auth_succeeds() {
+fn test_distribute_secondary_specific_admin_auth_succeeds() {
     let env = Env::default();
     let (contract_id, client) = setup(&env);
 
@@ -4948,19 +4948,19 @@ fn test_distribute_secondary_royalties_specific_admin_auth_succeeds() {
         address: &admin,
         invoke: &MockAuthInvoke {
             contract: &contract_id,
-            fn_name: "distribute_secondary_royalties",
+            fn_name: "distribute_secondary",
             args: ().into_val(&env),
             sub_invokes: &[],
         },
     }]);
-    client.distribute_secondary_royalties();
+    client.distribute_secondary();
     assert_eq!(client.get_secondary_pool(), 0);
 }
 
-/// distribute_secondary_royalties: no authorization at all must be rejected
+/// distribute_secondary: no authorization at all must be rejected
 /// and must not drain the secondary pool.
 #[test]
-fn test_distribute_secondary_royalties_rejects_missing_auth() {
+fn test_distribute_secondary_rejects_missing_auth() {
     let env = Env::default();
     let (_, client) = setup(&env);
 
@@ -4978,18 +4978,18 @@ fn test_distribute_secondary_royalties_rejects_missing_auth() {
     client.record_secondary_royalty(&token, &admin, &500_i128);
 
     env.mock_auths(&[]);
-    let result = client.try_distribute_secondary_royalties();
+    let result = client.try_distribute_secondary();
     assert!(
         result.is_err(),
-        "distribute_secondary_royalties must require admin auth"
+        "distribute_secondary must require admin auth"
     );
     assert_eq!(client.get_secondary_pool(), 500);
 }
 
-/// distribute_secondary_royalties: a non-admin caller's own signature must
+/// distribute_secondary: a non-admin caller's own signature must
 /// not satisfy the admin authorization requirement.
 #[test]
-fn test_distribute_secondary_royalties_rejects_non_admin_caller() {
+fn test_distribute_secondary_rejects_non_admin_caller() {
     let env = Env::default();
     let (contract_id, client) = setup(&env);
 
@@ -5010,15 +5010,15 @@ fn test_distribute_secondary_royalties_rejects_non_admin_caller() {
         address: &b,
         invoke: &MockAuthInvoke {
             contract: &contract_id,
-            fn_name: "distribute_secondary_royalties",
+            fn_name: "distribute_secondary",
             args: ().into_val(&env),
             sub_invokes: &[],
         },
     }]);
-    let result = client.try_distribute_secondary_royalties();
+    let result = client.try_distribute_secondary();
     assert!(
         result.is_err(),
-        "distribute_secondary_royalties must reject a non-admin caller"
+        "distribute_secondary must reject a non-admin caller"
     );
     assert_eq!(client.get_secondary_pool(), 500);
 }
@@ -5474,7 +5474,7 @@ fn test_batch_distribute_emits_per_recipient_dist_events_tagged_batch() {
 /// event carrying (address, amount, token, "secondary") — distinct from the
 /// ("royalty", "sec_dist") pool-level summary event.
 #[test]
-fn test_distribute_secondary_royalties_emits_per_recipient_events_with_metadata() {
+fn test_distribute_secondary_emits_per_recipient_events_with_metadata() {
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
     let (contract_id, client) = setup(&env);
@@ -5490,7 +5490,7 @@ fn test_distribute_secondary_royalties_emits_per_recipient_events_with_metadata(
     );
     mint(&env, &token, &admin, 500);
     client.record_secondary_royalty(&token, &admin, &500_i128);
-    client.distribute_secondary_royalties();
+    client.distribute_secondary();
 
     let events = env.events().all();
     let found = events.iter().any(|(cid, topics, data)| {
@@ -5602,7 +5602,7 @@ fn test_distribute_fails_zero_balance_no_state_change() {
 
     // No mint — balance is zero
     let result = client.try_distribute(&token);
-    assert_eq!(result, Err(Ok(ContractError::Underfunded)));
+    assert_eq!(result, Err(Ok(ContractError::Underfunded.into())));
 
     // Neither counter nor timestamp must be written
     env.as_contract(&contract_id, || {
@@ -5619,10 +5619,22 @@ fn test_distribute_fails_zero_balance_no_state_change() {
 /// alter state or payout any funds.
 #[test]
 fn test_distribute_fails_when_contract_is_paused() {
-    // 1 stroop < 2 recipients — must reject with AmountTooSmall
-    mint(&env, &token, &contract_id, 1);
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (contract_id, client) = setup(&env);
+    let admin = Address::generate(&env);
+    let b = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = make_token(&env, &token_admin);
+
+    client.initialize(
+        &vec![&env, admin.clone(), b.clone()],
+        &vec![&env, 5000_u32, 5000_u32],
+    );
+    mint(&env, &token, &contract_id, 1000);
+    client.pause();
     let result = client.try_distribute(&token);
-    assert_eq!(result, Err(Ok(ContractError::AmountTooSmall)));
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused.into())));
 }
 
 /// #654 — Minimum viable distribution: exactly 2 stroops for 2 recipients.
@@ -5648,7 +5660,7 @@ fn test_distribute_minimum_viable_amount_two_recipients() {
     assert!(client.is_paused());
 
     let result = client.try_distribute(&token);
-    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused.into())));
 
     // Funds must remain in the contract; collaborators receive nothing
     assert_eq!(TokenClient::new(&env, &token).balance(&contract_id), 1_000);
@@ -5761,7 +5773,7 @@ fn test_secondary_royalty_accumulates_across_multiple_records() {
 
     assert_eq!(client.get_secondary_pool(), 300);
 
-    client.distribute_secondary_royalties();
+    client.distribute_secondary();
 
     // Pool must be cleared
     assert_eq!(client.get_secondary_pool(), 0);
@@ -5791,8 +5803,8 @@ fn test_secondary_distribution_clears_pool() {
     );
 
     // No secondary royalties recorded — pool is 0
-    let result = client.try_distribute_secondary_royalties();
-    assert_eq!(result, Err(Ok(ContractError::NoSecondaryRoyalties)));
+    let result = client.try_distribute_secondary();
+    assert_eq!(result, Err(Ok(ContractError::NoSecondaryRoyalties.into())));
 
     // Secondary pool must stay at 0 (not written as negative or garbage)
     assert_eq!(client.get_secondary_pool(), 0);
@@ -5809,10 +5821,10 @@ fn test_secondary_distribution_clears_pool() {
 
 /// Helper: build a split with `n` collaborators from a pre-computed share list.
 /// Returns (contract_id, client, list_of_addresses, token).
-fn setup_split(
-    env: &Env,
-    shares: &[u32],
-) -> (Address, RoyaltySplitterClient<'_>, SorobanVec<Address>, Address) {
+fn setup_split<'a>(
+    env: &'a Env,
+    shares: &'a [u32],
+) -> (Address, RoyaltySplitterClient<'a>, SorobanVec<Address>, Address) {
     let contract_id = env.register_contract(None, stellar_royalty_splitter::RoyaltySplitter);
     let client = RoyaltySplitterClient::new(env, &contract_id);
 
@@ -5994,7 +6006,7 @@ fn test_invariant_shares_unchanged_after_distribution() {
 // ─── Operation-level pause (#749) ──────────────────────────────────────────
 
 /// Pausing only PrimaryDistribution blocks distribute() but leaves
-/// distribute_secondary_royalties() working.
+/// distribute_secondary() working.
 #[test]
 fn test_pause_primary_only_blocks_primary_distribution() {
     let env = Env::default();
@@ -6024,15 +6036,15 @@ fn test_pause_primary_only_blocks_primary_distribution() {
 
     // Primary distribution is blocked.
     let result = client.try_distribute(&token);
-    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused.into())));
 
     // Secondary distribution still works.
-    client.distribute_secondary_royalties();
+    client.distribute_secondary();
     assert_eq!(TokenClient::new(&env, &token).balance(&admin), 250);
     assert_eq!(TokenClient::new(&env, &token).balance(&b), 250);
 }
 
-/// Pausing only SecondaryDistribution blocks distribute_secondary_royalties()
+/// Pausing only SecondaryDistribution blocks distribute_secondary()
 /// but leaves distribute() working.
 #[test]
 fn test_pause_secondary_only_blocks_secondary_distribution() {
@@ -6061,8 +6073,8 @@ fn test_pause_secondary_only_blocks_secondary_distribution() {
     assert!(!client.is_paused(), "global pause flag must be untouched");
 
     // Secondary distribution is blocked.
-    let result = client.try_distribute_secondary_royalties();
-    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+    let result = client.try_distribute_secondary();
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused.into())));
 
     // Primary distribution still works.
     client.distribute(&token);
@@ -6090,7 +6102,7 @@ fn test_unpause_operation_reenables_distribution() {
 
     client.pause_operation(&OperationType::PrimaryDistribution);
     let blocked = client.try_distribute(&token);
-    assert_eq!(blocked, Err(Ok(ContractError::ContractPaused)));
+    assert_eq!(blocked, Err(Ok(ContractError::ContractPaused.into())));
 
     client.unpause_operation(&OperationType::PrimaryDistribution);
     assert!(!client.is_operation_paused(&OperationType::PrimaryDistribution));
@@ -6131,14 +6143,14 @@ fn test_global_pause_still_blocks_both_operations() {
     client.pause();
 
     let primary_result = client.try_distribute(&token);
-    assert_eq!(primary_result, Err(Ok(ContractError::ContractPaused)));
+    assert_eq!(primary_result, Err(Ok(ContractError::ContractPaused.into())));
 
-    let secondary_result = client.try_distribute_secondary_royalties();
-    assert_eq!(secondary_result, Err(Ok(ContractError::ContractPaused)));
+    let secondary_result = client.try_distribute_secondary();
+    assert_eq!(secondary_result, Err(Ok(ContractError::ContractPaused.into())));
 
     client.unpause();
     client.distribute(&token);
-    client.distribute_secondary_royalties();
+    client.distribute_secondary();
 }
 
 /// pause_operation/unpause_operation require admin authorization, matching
