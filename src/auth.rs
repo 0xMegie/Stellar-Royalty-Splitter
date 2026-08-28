@@ -47,6 +47,13 @@ pub mod msg {
         "trigger_emergency_pause: admin authorization required";
     pub const CLEAR_EMERGENCY_PAUSE_ADMIN: &str =
         "clear_emergency_pause: unanimous admin authorization required";
+    pub const SET_APPROVED_TOKENS_ADMIN: &str =
+        "set_approved_tokens: admin authorization required";
+    pub const RECORD_DISPUTE_ADMIN: &str =
+        "record_dispute: admin authorization required";
+    pub const RESOLVE_DISPUTE_ADMIN: &str =
+        "resolve_dispute: admin authorization required";
+    pub const CLAWBACK_ADMIN: &str = "clawback: admin authorization required";
 }
 
 /// Requires admin authorization; panics with `message` if missing.
