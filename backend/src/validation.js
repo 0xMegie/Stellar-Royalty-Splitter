@@ -57,8 +57,16 @@ export const INITIALIZE_COLLABORATORS_PAYLOAD_LIMIT_BYTES = 8 * 1024;
 // Named size limits — kept in sync with on-chain MAX_COLLABORATORS / MAX_RECIPIENTS constants.
 export const MAX_COLLABORATORS_BACKEND = 20;
 
+// `.finite()` is load-bearing, not defensive: z.number().positive() is a plain
+// `> 0` test, and Infinity satisfies it. Without this the schema accepts
+// Infinity as a distribution amount, which then reaches BigInt() in
+// i128ToScVal and throws deep in transaction construction rather than being
+// rejected at the API boundary. Found by the property-based fuzz suite (#866).
 export const amountSchema = z.union([
-  z.number().positive("Distribution amount must be positive"),
+  z
+    .number()
+    .finite("Distribution amount must be a finite number")
+    .positive("Distribution amount must be positive"),
   z.string().regex(/^[1-9]\d*$/, "Distribution amount must be a positive integer"),
 ]);
 
@@ -304,7 +312,10 @@ export function validateInitializePayloadSize(req, res, next) {
  */
 export function validateContractIdMiddleware(req, res, next) {
   const contractId = req.params.contractId;
-  if (!contractId || !/^C[A-Z2-7]{55}$/.test(contractId)) {
+  // Guard on the type before the regex: RegExp.test() coerces its argument to
+  // a string, and that coercion throws a TypeError for a symbol. Any throw
+  // here would surface as a 500 for what is really a malformed request (#866).
+  if (typeof contractId !== "string" || !/^C[A-Z2-7]{55}$/.test(contractId)) {
     return sendError(res, 400, "invalid_contract_id", "Invalid contract ID format");
   }
   next();
@@ -315,7 +326,9 @@ export function validateContractIdMiddleware(req, res, next) {
  * Returns true if valid, otherwise sends a 400 and returns false.
  */
 export function validateContractId(contractId, res) {
-  if (!/^C[A-Z2-7]{55}$/.test(contractId)) {
+  // Same type guard as validateContractIdMiddleware — the two must agree, or
+  // whichever route uses the looser one becomes a validation bypass (#866).
+  if (typeof contractId !== "string" || !/^C[A-Z2-7]{55}$/.test(contractId)) {
     sendError(res, 400, "invalid_contract_id", "Invalid contract ID format");
     return false;
   }
@@ -327,7 +340,7 @@ export function validateContractId(contractId, res) {
  * Returns true if valid, otherwise sends a 400 and returns false.
  */
 export function validateStellarAddress(address, res) {
-  if (!address || !isValidStellarAccountAddress(address)) {
+  if (typeof address !== "string" || !isValidStellarAccountAddress(address)) {
     sendError(res, 400, "invalid_stellar_address", "Invalid Stellar address format");
     return false;
   }
