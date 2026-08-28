@@ -720,8 +720,22 @@ export function u32ToScVal(n) {
   return xdr.ScVal.scvU32(n);
 }
 
+// i128 range. Values outside it must be rejected here rather than passed to
+// nativeToScVal, which wraps them silently: 2^127 encodes as -2^127, producing
+// valid XDR carrying the wrong amount with no error raised anywhere. Found by
+// the property-based fuzz suite (#866).
+export const I128_MAX = 2n ** 127n - 1n;
+export const I128_MIN = -(2n ** 127n);
+
 export function i128ToScVal(n) {
-  return nativeToScVal(BigInt(n), { type: "i128" });
+  const value = BigInt(n);
+  if (value > I128_MAX || value < I128_MIN) {
+    throw new RangeError(
+      `Amount ${value} is outside the i128 range supported by Soroban ` +
+        `[${I128_MIN}, ${I128_MAX}]`
+    );
+  }
+  return nativeToScVal(value, { type: "i128" });
 }
 
 export function vecToScVal(items) {
