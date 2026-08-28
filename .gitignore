@@ -21,3 +21,7 @@ frontend/.env
 
 # Deployed contract ID
 .contract-id
+
+# Disaster recovery exercise scratch directory (#865). Reports worth keeping
+# are committed to docs/dr-exercises/ deliberately.
+.dr-test/
