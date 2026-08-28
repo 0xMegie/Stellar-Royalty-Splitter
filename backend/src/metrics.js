@@ -13,6 +13,15 @@ const metrics = {
   healthCheckSorobanResponseTimeMs: 0,
   healthCheckCacheResponseTimeMs: 0,
   healthCheckTotal: 0,
+  // Connection health monitoring (#496)
+  connectionHealthTotalChecks: 0,
+  connectionHealthTotalFailures: 0,
+  connectionHealthConsecutiveFailures: 0,
+  connectionHealthLastCheckDurationMs: 0,
+  connectionHealthReconnectionsAttempted: 0,
+  connectionHealthReconnectionsSucceeded: 0,
+  connectionHealthReconnectionsFailed: 0,
+  connectionHealthPoolUtilization: 0,
 };
 
 function formatMetricValue(value) {
@@ -113,8 +122,44 @@ export function prometheusMetrics() {
     "# HELP stellar_health_cache_response_time_ms Last cache health check response time in milliseconds.",
     "# TYPE stellar_health_cache_response_time_ms gauge",
     `stellar_health_cache_response_time_ms ${formatMetricValue(snapshot.healthCheckCacheResponseTimeMs)}`,
+    // Connection health monitoring (#496)
+    "# HELP stellar_db_health_checks_total Total connection health checks performed.",
+    "# TYPE stellar_db_health_checks_total counter",
+    `stellar_db_health_checks_total ${snapshot.connectionHealthTotalChecks}`,
+    "# HELP stellar_db_health_failures_total Total connection health check failures.",
+    "# TYPE stellar_db_health_failures_total counter",
+    `stellar_db_health_failures_total ${snapshot.connectionHealthTotalFailures}`,
+    "# HELP stellar_db_health_consecutive_failures Current consecutive connection failures.",
+    "# TYPE stellar_db_health_consecutive_failures gauge",
+    `stellar_db_health_consecutive_failures ${snapshot.connectionHealthConsecutiveFailures}`,
+    "# HELP stellar_db_health_check_duration_ms Last connection health check duration in ms.",
+    "# TYPE stellar_db_health_check_duration_ms gauge",
+    `stellar_db_health_check_duration_ms ${formatMetricValue(snapshot.connectionHealthLastCheckDurationMs)}`,
+    "# HELP stellar_db_reconnection_attempts_total Total reconnection attempts.",
+    "# TYPE stellar_db_reconnection_attempts_total counter",
+    `stellar_db_reconnection_attempts_total ${snapshot.connectionHealthReconnectionsAttempted}`,
+    "# HELP stellar_db_reconnection_successes_total Total successful reconnections.",
+    "# TYPE stellar_db_reconnection_successes_total counter",
+    `stellar_db_reconnection_successes_total ${snapshot.connectionHealthReconnectionsSucceeded}`,
+    "# HELP stellar_db_reconnection_failures_total Total failed reconnection attempts.",
+    "# TYPE stellar_db_reconnection_failures_total counter",
+    `stellar_db_reconnection_failures_total ${snapshot.connectionHealthReconnectionsFailed}`,
+    "# HELP stellar_db_pool_utilization_percent Current database pool utilization percentage.",
+    "# TYPE stellar_db_pool_utilization_percent gauge",
+    `stellar_db_pool_utilization_percent ${formatMetricValue(snapshot.connectionHealthPoolUtilization)}`,
     "",
   ].join("\n");
+}
+
+export function recordConnectionHealthCheck(m) {
+  metrics.connectionHealthTotalChecks = m.totalChecks ?? 0;
+  metrics.connectionHealthTotalFailures = m.totalFailures ?? 0;
+  metrics.connectionHealthConsecutiveFailures = m.consecutiveFailures ?? 0;
+  metrics.connectionHealthLastCheckDurationMs = m.lastCheckDurationMs ?? 0;
+  metrics.connectionHealthReconnectionsAttempted = m.reconnectionsAttempted ?? 0;
+  metrics.connectionHealthReconnectionsSucceeded = m.reconnectionsSucceeded ?? 0;
+  metrics.connectionHealthReconnectionsFailed = m.reconnectionsFailed ?? 0;
+  metrics.connectionHealthPoolUtilization = m.poolUtilization ?? 0;
 }
 
 export function resetMetrics() {
@@ -130,4 +175,12 @@ export function resetMetrics() {
   metrics.healthCheckSorobanResponseTimeMs = 0;
   metrics.healthCheckCacheResponseTimeMs = 0;
   metrics.healthCheckTotal = 0;
+  metrics.connectionHealthTotalChecks = 0;
+  metrics.connectionHealthTotalFailures = 0;
+  metrics.connectionHealthConsecutiveFailures = 0;
+  metrics.connectionHealthLastCheckDurationMs = 0;
+  metrics.connectionHealthReconnectionsAttempted = 0;
+  metrics.connectionHealthReconnectionsSucceeded = 0;
+  metrics.connectionHealthReconnectionsFailed = 0;
+  metrics.connectionHealthPoolUtilization = 0;
 }

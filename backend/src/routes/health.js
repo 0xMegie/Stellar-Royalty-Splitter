@@ -1,6 +1,11 @@
 import { Router } from "express";
 import { getMigrationVersion } from "../database/index.js";
 import * as database from "../database/index.js";
+import {
+  checkConnectionHealthAsync,
+  getHealthStatus,
+  getHealthMetrics,
+} from "../database/health-monitor.js";
 
 import {
   getConfiguredContractId,
@@ -10,6 +15,7 @@ import {
   checkSorobanConnectivity,
   getCacheStatus,
 } from "../stellar.js";
+import { recordConnectionHealthCheck } from "../metrics.js";
 import logger from "../logger.js";
 
 export const healthRouter = Router();
@@ -84,6 +90,19 @@ healthRouter.get("/", async (_req, res, next) => {
       ...(dbMetrics && { dbMetrics }),
       generatedAt: new Date().toISOString(),
     };
+
+    // Connection health monitoring (#496)
+    try {
+      const connHealth = await checkConnectionHealthAsync();
+      body.connectionHealth = {
+        connected: connHealth.connected,
+        durationMs: connHealth.durationMs,
+        consecutiveFailures: connHealth.consecutiveFailures,
+        pool: connHealth.pool,
+      };
+    } catch (_) {
+      // Health monitor unavailable — don't crash the endpoint
+    }
 
     cachedHealth = body;
     cacheExpiresAt = now + (Number.isNaN(CACHE_TTL_MS) ? 30_000 : CACHE_TTL_MS);
@@ -164,11 +183,12 @@ healthRouter.get("/detailed", async (_req, res, next) => {
         (r.deployed && r.status !== "error" && r.status !== "unreachable"));
 
     // All checks run in parallel; each has its own internal timeout.
-    const [database, horizon, soroban, contract] = await Promise.all([
+    const [database, horizon, soroban, contract, connectionHealth] = await Promise.all([
       runCheck("database", () => Promise.resolve(checkDatabase())),
       runCheck("horizon", checkHorizonConnectivity),
       runCheck("soroban", checkSorobanConnectivity),
       runCheck("contract", () => checkContractDeploymentStatus(contractId), isContractHealthy),
+      runCheck("connectionHealth", checkConnectionHealthAsync, (r) => r.connected !== false),
     ]);
 
     // Cache status is synchronous — wrap in the same shape.
@@ -188,6 +208,13 @@ healthRouter.get("/detailed", async (_req, res, next) => {
       cacheMs: cache.responseTimeMs,
     });
 
+    // Record connection health metrics (#496)
+    try {
+      recordConnectionHealthCheck(getHealthMetrics());
+    } catch (_) {
+      // Best-effort metrics recording
+    }
+
     // Critical: database, horizon, soroban must all be ok.
     const criticalOk =
       database.status === "ok" && horizon.status === "ok" && soroban.status === "ok";
@@ -201,7 +228,7 @@ healthRouter.get("/detailed", async (_req, res, next) => {
       ok,
       network: getNetworkLabel(),
       checkedAt: new Date().toISOString(),
-      components: { database, horizon, soroban, contract, cache },
+      components: { database, horizon, soroban, contract, cache, connectionHealth },
     };
 
     res.status(ok ? 200 : 503).json(body);

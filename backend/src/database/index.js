@@ -276,6 +276,18 @@ export {
   deleteOldFinalityRecords,
 } from "./transaction-finality.js";
 
+// Connection health monitoring (#496)
+export {
+  checkConnectionHealth,
+  checkConnectionHealthAsync,
+  attemptReconnection,
+  startHealthMonitor,
+  stopHealthMonitor,
+  getHealthStatus,
+  getHealthMetrics,
+  resetHealthMonitorState,
+} from "./health-monitor.js";
+
 // Default export for backwards compatibility
 import { db } from "./core.js";
 export default db;

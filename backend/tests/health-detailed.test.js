@@ -11,6 +11,9 @@ const getConfiguredContractId = jest.fn();
 const getNetworkLabel = jest.fn(() => "Testnet");
 const checkDatabase = jest.fn();
 const recordDetailedHealthCheck = jest.fn();
+const checkConnectionHealthAsync = jest.fn();
+const getHealthMetrics = jest.fn().mockReturnValue({ totalChecks: 1, totalFailures: 0 });
+const recordConnectionHealthCheck = jest.fn();
 
 await jest.unstable_mockModule("../src/stellar.js", () => ({
   checkHorizonConnectivity,
@@ -31,8 +34,14 @@ await jest.unstable_mockModule("../src/database/index.js", () => ({
 
 await jest.unstable_mockModule("../src/metrics.js", () => ({
   recordDetailedHealthCheck,
+  recordConnectionHealthCheck,
   recordHorizonResponseTime: jest.fn(),
   prometheusMetrics: jest.fn(() => ""),
+}));
+
+await jest.unstable_mockModule("../src/database/health-monitor.js", () => ({
+  checkConnectionHealthAsync,
+  getHealthMetrics,
 }));
 
 const { clearHealthCache } = await import("../src/routes/health.js");
@@ -48,6 +57,21 @@ function mockAllHealthy() {
   getConfiguredContractId.mockReturnValue(
     "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
   );
+  checkConnectionHealthAsync.mockResolvedValue({
+    connected: true,
+    durationMs: 3,
+    lastCheckAt: new Date().toISOString(),
+    consecutiveFailures: 0,
+    pool: {
+      poolSize: 5,
+      activeConnections: 0,
+      available: 5,
+      utilization: 0,
+      queueLength: 0,
+      timeouts: 0,
+      acquires: 0,
+    },
+  });
   checkDatabase.mockReturnValue({
     connected: true,
     responseTimeMs: 2,
@@ -95,7 +119,7 @@ describe("GET /api/v1/health/detailed", () => {
     expect(res.body.network).toBe("Testnet");
     expect(res.body.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
-    const { database, horizon, soroban, contract, cache } = res.body.components;
+    const { database, horizon, soroban, contract, cache, connectionHealth } = res.body.components;
 
     expect(database.status).toBe("ok");
     expect(database.connected).toBe(true);
@@ -116,6 +140,14 @@ describe("GET /api/v1/health/detailed", () => {
 
     expect(cache.status).toBe("ok");
     expect(cache.cached).toBe(true);
+
+    // #496: connection health component present
+    expect(connectionHealth).toBeDefined();
+    expect(connectionHealth.status).toBe("ok");
+    expect(connectionHealth.connected).toBe(true);
+    expect(typeof connectionHealth.durationMs).toBe("number");
+    expect(connectionHealth.pool).toBeDefined();
+    expect(typeof connectionHealth.pool.poolSize).toBe("number");
   });
 
   test("returns 503 when database is down", async () => {
