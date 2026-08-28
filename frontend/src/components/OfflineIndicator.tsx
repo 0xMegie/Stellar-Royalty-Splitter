@@ -3,14 +3,15 @@ import { isOnline, watchConnectivity } from "../lib/registerServiceWorker";
 import { useOfflineQueue } from "../hooks/useOfflineQueue";
 
 /**
- * Banner that appears whenever the browser reports `offline` (#522), or
- * whenever writes are still pending sync after reconnecting (#771).
+ * OfflineIndicator (#522 / #771 / #830)
  *
- * Renders nothing when online with an empty queue so it occupies no
- * layout space. While offline (or while queued writes are still being
- * drained), renders a fixed-position banner at the top of the viewport
- * with a brief message, the pending count, and a manual "Clear queue"
- * escape hatch, with a status-role for assistive tech.
+ * Fixed-position banner shown whenever the browser is offline or there are
+ * writes still pending sync after reconnecting. Shows the pending write
+ * count as a badge and provides a "Clear queue" escape hatch to discard
+ * stuck retries. Uses `role="status"` + `aria-live="polite"` so screen
+ * readers announce the transition without interrupting current speech.
+ *
+ * Renders nothing when online with an empty queue.
  */
 export function OfflineIndicator(): JSX.Element | null {
   const [online, setOnline] = useState<boolean>(isOnline());
@@ -23,10 +24,17 @@ export function OfflineIndicator(): JSX.Element | null {
 
   if (online && pendingCount === 0) return null;
 
+  const bannerText = online
+    ? `Syncing ${pendingCount} pending ${pendingCount === 1 ? "change" : "changes"}…`
+    : `You're offline — writes will be queued and synced when you reconnect.${
+        pendingCount > 0 ? ` (${pendingCount} pending)` : ""
+      }`;
+
   return (
     <div
       role="status"
       aria-live="polite"
+      data-testid="offline-indicator"
       style={{
         position: "fixed",
         top: 0,
@@ -44,14 +52,10 @@ export function OfflineIndicator(): JSX.Element | null {
         fontSize: "0.9rem",
         fontFamily: "system-ui, sans-serif",
         boxShadow: "0 2px 6px rgba(0,0,0,0.18)",
+        transition: "background 0.3s ease",
       }}
     >
-      <span>
-        {online
-          ? `Syncing ${pendingCount} pending ${pendingCount === 1 ? "change" : "changes"}…`
-          : "You're offline — writes will be queued and synced when you reconnect."}
-        {!online && pendingCount > 0 && ` (${pendingCount} pending)`}
-      </span>
+      <span>{bannerText}</span>
       {pendingCount > 0 && (
         <button
           type="button"
