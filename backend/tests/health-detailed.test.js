@@ -277,4 +277,141 @@ describe("GET /api/v1/health/detailed", () => {
     expect(res.body.components.database.status).toBe("ok");
     expect(res.body.components.horizon.status).toBe("ok");
   }, 10_000);
+
+  // ── Degraded status tests (#817) ───────────────────────────────────────────
+
+  test("returns 200 with status=healthy when all components are ok", async () => {
+    const res = await request(app).get("/api/v1/health/detailed");
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("healthy");
+    expect(res.body.ok).toBe(true);
+  });
+
+  test("returns 200 with status=degraded when a critical component is slow", async () => {
+    // Simulate Horizon responding but slowly (above degraded threshold)
+    checkHorizonConnectivity.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () => resolve({ connected: true, url: "https://horizon-testnet.stellar.org" }),
+            60
+          )
+        )
+    );
+    process.env.HEALTH_CHECK_TIMEOUT_MS = "5000";
+    process.env.HEALTH_DEGRADED_THRESHOLD_MS = "30";
+
+    const res = await request(app).get("/api/v1/health/detailed");
+
+    delete process.env.HEALTH_CHECK_TIMEOUT_MS;
+    delete process.env.HEALTH_DEGRADED_THRESHOLD_MS;
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("degraded");
+    expect(res.body.ok).toBe(true);
+    expect(res.body.components.horizon.status).toBe("degraded");
+  }, 10_000);
+
+  test("returns 200 with status=degraded when database is slow", async () => {
+    // Simulate a slow database check
+    checkDatabase.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                connected: true,
+                responseTimeMs: 50,
+                version: 7,
+                walMode: true,
+                tableCount: 12,
+              }),
+            40
+          )
+        )
+    );
+    process.env.HEALTH_CHECK_TIMEOUT_MS = "5000";
+    process.env.HEALTH_DEGRADED_THRESHOLD_MS = "20";
+
+    const res = await request(app).get("/api/v1/health/detailed");
+
+    delete process.env.HEALTH_CHECK_TIMEOUT_MS;
+    delete process.env.HEALTH_DEGRADED_THRESHOLD_MS;
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("degraded");
+    expect(res.body.ok).toBe(true);
+    expect(res.body.components.database.status).toBe("degraded");
+  }, 10_000);
+
+  test("returns 503 with status=unhealthy when a critical component errors even if another is degraded", async () => {
+    // Database errors, Soroban slow (degraded)
+    checkDatabase.mockReturnValue({
+      connected: false,
+      responseTimeMs: 1,
+      error: "Database is closed",
+    });
+    checkSorobanConnectivity.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () => resolve({ connected: true, responseTimeMs: 60, url: "https://soroban-testnet.stellar.org" }),
+            60
+          )
+        )
+    );
+    process.env.HEALTH_CHECK_TIMEOUT_MS = "5000";
+    process.env.HEALTH_DEGRADED_THRESHOLD_MS = "30";
+
+    const res = await request(app).get("/api/v1/health/detailed");
+
+    delete process.env.HEALTH_CHECK_TIMEOUT_MS;
+    delete process.env.HEALTH_DEGRADED_THRESHOLD_MS;
+
+    expect(res.status).toBe(503);
+    expect(res.body.status).toBe("unhealthy");
+    expect(res.body.ok).toBe(false);
+    expect(res.body.components.database.status).toBe("error");
+    expect(res.body.components.soroban.status).toBe("degraded");
+  }, 10_000);
+
+  test("returns 200 with status=degraded when contract is configured but slow", async () => {
+    // Contract is configured and responds but slowly
+    checkContractDeploymentStatus.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                configured: true,
+                contractId: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                deployed: true,
+                initialized: true,
+                status: "initialized",
+              }),
+            100
+          )
+        )
+    );
+    process.env.HEALTH_CHECK_TIMEOUT_MS = "5000";
+    process.env.HEALTH_DEGRADED_THRESHOLD_MS = "1";
+
+    const res = await request(app).get("/api/v1/health/detailed");
+
+    delete process.env.HEALTH_CHECK_TIMEOUT_MS;
+    delete process.env.HEALTH_DEGRADED_THRESHOLD_MS;
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("degraded");
+    expect(res.body.ok).toBe(true);
+    expect(res.body.components.contract.status).toBe("degraded");
+  }, 10_000);
+
+  test("includes status field in response body", async () => {
+    const res = await request(app).get("/api/v1/health/detailed");
+
+    expect(res.body).toHaveProperty("status");
+    expect(["healthy", "degraded", "unhealthy"]).toContain(res.body.status);
+  });
 });

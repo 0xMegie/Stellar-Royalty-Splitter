@@ -13,6 +13,15 @@ export function initializeWebSocket(server) {
     ws.isAlive = true;
     ws.on("pong", () => { ws.isAlive = true; });
 
+    // Set timeout for auto-disconnect (10 minutes)
+    const timeout = setTimeout(() => {
+      if (ws.readyState === 1) {
+        logger.info("WebSocket auto-disconnect timeout", { ip });
+        ws.terminate();
+      }
+    }, 10 * 60 * 1000); // 10 minutes
+    ws._timeout = timeout;
+
     ws.on("message", (data) => {
       try {
         const msg = JSON.parse(data.toString());
@@ -24,6 +33,19 @@ export function initializeWebSocket(server) {
           clients.get(msg.walletAddress).add(ws);
           ws.send(JSON.stringify({ type: "subscribed", walletAddress: msg.walletAddress }));
           logger.info("Wallet subscribed to notifications", { walletAddress: msg.walletAddress });
+        }
+        if (msg.type === "subscribe" && msg.id) {
+          // Transaction subscription by ID (supports string IDs like "txn-123")
+          const key = `txn:${msg.id}`;
+          if (!clients.has(key)) {
+            clients.set(key, new Set());
+          }
+          clients.get(key).add(ws);
+          // Track the transaction key on the socket for cleanup on close
+          if (!ws.txnKeys) ws.txnKeys = new Set();
+          ws.txnKeys.add(key);
+          ws.send(JSON.stringify({ type: "subscribed", id: msg.id }));
+          logger.info("Client subscribed to transaction updates", { id: msg.id });
         }
         if (msg.type === "subscribe_finality" && msg.transactionId) {
           const key = `finality:${msg.transactionId}`;
@@ -46,11 +68,27 @@ export function initializeWebSocket(server) {
     });
 
     ws.on("close", () => {
+      // Clear timeout
+      if (ws._timeout) {
+        clearTimeout(ws._timeout);
+      }
+
       if (ws.walletAddress && clients.has(ws.walletAddress)) {
         clients.get(ws.walletAddress).delete(ws);
         if (clients.get(ws.walletAddress).size === 0) {
           clients.delete(ws.walletAddress);
         }
+      }
+      // Clean up any transaction subscriptions
+      if (ws.txnKeys) {
+        ws.txnKeys.forEach((key) => {
+          if (clients.has(key)) {
+            clients.get(key).delete(ws);
+            if (clients.get(key).size === 0) {
+              clients.delete(key);
+            }
+          }
+        });
       }
       // Clean up any finality subscriptions
       if (ws.finalityKeys) {
@@ -161,5 +199,36 @@ export function broadcastFinalityUpdate(transactionId, update) {
       }
     });
   });
+  return sent;
+}
+
+/**
+ * Broadcast a transaction status change to clients subscribed to a specific transaction ID.
+ *
+ * Clients subscribe by sending:
+ *   { type: "subscribe", id: "txn-123" }
+ *
+ * The server then adds the socket to a per-transaction ID set so that only
+ * interested subscribers receive the update.
+ *
+ * @param {string} transactionId - Transaction ID (e.g., "txn-123")
+ * @param {object} update - { id, status, fee, receipt, … }
+ * @returns {number} number of sockets that received the message
+ */
+export function broadcastTransactionStatus(transactionId, update) {
+  const message = JSON.stringify({
+    type: "transaction_status",
+    data: update,
+  });
+  let sent = 0;
+  const key = `txn:${transactionId}`;
+  if (clients.has(key)) {
+    clients.get(key).forEach((ws) => {
+      if (ws.readyState === 1) {
+        ws.send(message);
+        sent++;
+      }
+    });
+  }
   return sent;
 }

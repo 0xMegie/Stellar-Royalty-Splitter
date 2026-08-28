@@ -217,6 +217,53 @@ export interface RoyaltyStats {
   } | null;
 }
 
+export interface HealthComponent {
+  status: string;
+  color: "green" | "yellow" | "red" | "gray";
+  latencyMs?: number;
+}
+
+export interface HealthResponse {
+  ok: boolean;
+  dbVersion: number;
+  dbOk: boolean;
+  network: string;
+  horizon: { connected: boolean; url: string; latencyMs: number };
+  contract: {
+    configured: boolean;
+    contractId: string | null;
+    deployed: boolean;
+    initialized: boolean;
+    status: string;
+  };
+  components: {
+    database: HealthComponent;
+    horizon: HealthComponent;
+    contract: HealthComponent;
+  };
+  timestamp: string;
+}
+
+export interface HealthHistoryEntry {
+  id: number;
+  timestamp: string;
+  overall_ok: number;
+  horizon_connected: number;
+  horizon_latency_ms: number | null;
+  contract_status: string;
+  db_ok: number;
+}
+
+export interface SLAStats {
+  periodDays: number;
+  totalSnapshots: number;
+  healthySnapshots: number;
+  uptimePercent: number;
+  avgLatencyMs: number | null;
+  minLatencyMs: number | null;
+  maxLatencyMs: number | null;
+}
+
 export const api = {
   initialize: (body: {
     contractId: string;
@@ -457,6 +504,16 @@ export const api = {
       `/analytics/${contractId}${dateRange ? `?start=${dateRange.start}&end=${dateRange.end}` : ""}`,
     ),
 
+  // Health & SLA APIs (#787)
+  getHealth: () => get<HealthResponse>("/v1/health"),
+
+  getHealthHistory: (hours = 24) =>
+    get<{ ok: boolean; data: HealthHistoryEntry[]; count: number; periodHours: number }>(
+      `/v1/health/history?hours=${hours}`,
+    ),
+
+  getHealthSla: (days = 30) =>
+    get<{ ok: boolean; data: SLAStats }>(`/v1/health/sla?days=${days}`),
   // Contributor Onboarding APIs (#567)
   getOnboardingStatus: (walletAddress: string) =>
     get<OnboardingStatusResponse>(`/v1/onboarding/${walletAddress}`),

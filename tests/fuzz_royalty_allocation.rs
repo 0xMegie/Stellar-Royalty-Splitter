@@ -179,24 +179,42 @@ proptest! {
 
         let result = client.try_distribute_with_override(&token, &recipients);
 
-        if is_structurally_valid(&raw) {
+        if raw.is_empty() {
+            // Fallback list has 2 collaborators from setup
+            if amount >= 2 {
+                prop_assert!(result.is_ok(), "fallback allocation unexpectedly rejected: {:?}", result);
+            } else {
+                prop_assert_eq!(result, Err(Ok(ContractError::AmountTooSmall.into())));
+            }
+        } else if is_structurally_valid(&raw) {
             if amount >= raw.len() as i128 {
                 prop_assert!(result.is_ok(), "valid allocation unexpectedly rejected: {:?}", result);
             } else {
                 // amount < recipient count: AmountTooSmall is the one
                 // legitimate rejection reason for an otherwise-valid list.
-                prop_assert_eq!(result, Err(Ok(ContractError::AmountTooSmall)));
+                prop_assert_eq!(result, Err(Ok(ContractError::AmountTooSmall.into())));
             }
-        } else if raw.is_empty() {
-            prop_assert_eq!(result, Err(Ok(ContractError::EmptyRecipients)));
         } else if raw.len() > MAX_RECIPIENTS as usize {
-            prop_assert_eq!(result, Err(Ok(ContractError::TooManyRecipients)));
+            prop_assert_eq!(result, Err(Ok(ContractError::TooManyRecipients.into())));
         } else if has_zero_share(&raw) {
-            prop_assert_eq!(result, Err(Ok(ContractError::ZeroShare)));
+            prop_assert_eq!(result, Err(Ok(ContractError::ZeroShare.into())));
         } else if has_duplicate_address(&raw) {
-            prop_assert_eq!(result, Err(Ok(ContractError::DuplicateRecipient)));
+            prop_assert_eq!(result, Err(Ok(ContractError::DuplicateRecipient.into())));
         } else {
-            prop_assert_eq!(result, Err(Ok(ContractError::InvalidShareTotal)));
+            let mut total: u64 = 0;
+            let mut overflows = false;
+            for r in &raw {
+                total += r.share as u64;
+                if total > u32::MAX as u64 {
+                    overflows = true;
+                    break;
+                }
+            }
+            if overflows {
+                prop_assert_eq!(result, Err(Ok(ContractError::ArithmeticOverflow.into())));
+            } else {
+                prop_assert_eq!(result, Err(Ok(ContractError::InvalidShareTotal.into())));
+            }
         }
     }
 
@@ -213,7 +231,8 @@ proptest! {
         let (contract_id, client, token, address_pool) = build_fixture(&env, amount);
         let recipients = to_recipients(&env, &address_pool, &raw);
 
-        let would_succeed = is_structurally_valid(&raw) && amount >= raw.len() as i128;
+        let would_succeed = (is_structurally_valid(&raw) && amount >= raw.len() as i128)
+            || (raw.is_empty() && amount >= 2);
         // Only exercise the "invalid input" side of this property; the
         // valid-input, state-changes-as-expected side is covered by
         // `no_panics_on_malformed_recipient_combinations` above and by the
@@ -287,7 +306,7 @@ proptest! {
         let recipients = to_recipients(&env, &address_pool, &raw);
 
         let result = client.try_distribute_with_override(&token, &recipients);
-        prop_assert_eq!(result, Err(Ok(ContractError::AmountTooSmall)));
+        prop_assert_eq!(result, Err(Ok(ContractError::AmountTooSmall.into())));
     }
 }
 
@@ -328,5 +347,5 @@ fn admin_self_duplicate_is_rejected_not_silently_deduplicated() {
     ];
 
     let result = client.try_distribute_with_override(&token, &recipients);
-    assert_eq!(result, Err(Ok(ContractError::DuplicateRecipient)));
+    assert_eq!(result, Err(Ok(ContractError::DuplicateRecipient.into())));
 }

@@ -11,6 +11,10 @@ export {
   countWrite,
   initializeDatabase,
   getMigrationVersion,
+  recordHealthSnapshot,
+  pruneHealthHistory,
+  getHealthHistory,
+  getSLAStats,
   checkDatabase,
 } from "./core.js";
 
@@ -22,6 +26,7 @@ export {
   addDistributionPayout,
   getTransactionCount,
   getTransactionHistory,
+  getTransactionHistoryCursor,
   getTransactionDetails,
   getTransactionById,
   getRetryEligibleTransactions,

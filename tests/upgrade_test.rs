@@ -23,7 +23,7 @@ const CONTRACT_WASM: &[u8] = include_bytes!(
 
 // ── shared helpers ────────────────────────────────────────────────────────────
 
-fn setup(env: &Env) -> (Address, RoyaltySplitterClient) {
+fn setup(env: &Env) -> (Address, RoyaltySplitterClient<'_>) {
     let contract_id =
         env.register_contract(None, stellar_royalty_splitter::RoyaltySplitter);
     let client = RoyaltySplitterClient::new(env, &contract_id);
@@ -510,7 +510,7 @@ fn test_upgrade_path_with_secondary_royalties() {
     client.update_wasm(&wasm_hash);
 
     // Secondary distribution still works after upgrade
-    client.distribute_secondary_royalties();
+    client.distribute_secondary();
 
     assert_eq!(TokenClient::new(&env, &token).balance(&admin), 500);
     assert_eq!(TokenClient::new(&env, &token).balance(&b), 500);

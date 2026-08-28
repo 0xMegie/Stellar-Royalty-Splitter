@@ -3,7 +3,9 @@ import { api } from "../api";
 import { getContractAddressError, isValidContractAddress } from "../lib/stellar-address";
 import { signAndSubmitTransaction } from "../stellar";
 import { useNetwork } from "../context/NetworkContext";
+import { useTransaction, useIsTransactionInFlight } from "../context/TransactionContext";
 import FormStatus from "./FormStatus";
+import TransactionStatusBadge from "./TransactionStatusBadge";
 import { useFormStatus } from "../hooks/useFormStatus";
 import { useTransactionLifecycle } from "../hooks/useTransactionLifecycle";
 import { TransactionStatusBanner } from "./TransactionStatusBanner";
@@ -66,6 +68,10 @@ export default function DistributeForm({
   walletAddress,
   onSuccess,
 }: Props) {
+  const { network } = useNetwork();
+  const { current: txEntry, beginTransaction, updatePhase, reset: resetTx } = useTransaction();
+  const isInFlight = useIsTransactionInFlight();
+
   const { network, networkMismatch } = useNetwork();
   const [tokenId, setTokenId] = useState("");
   const [amount, setAmount] = useState("");
@@ -76,6 +82,10 @@ export default function DistributeForm({
   const [draftPrompt, setDraftPrompt] = useState<DistributionDraft | null>(null);
   const [draftDecisionMade, setDraftDecisionMade] = useState(false);
   const { status, setStatus, clearStatus } = useFormStatus();
+
+  // Use TransactionContext's in-flight flag as the primary loading gate (#391)
+  const loading = isInFlight;
+
   const [loading, setLoading] = useState(false);
   const [successTxHash, setSuccessTxHash] = useState<string | null>(null);
   const [touched, setTouched] = useState<{ tokenId?: boolean; amount?: boolean }>({});
@@ -152,6 +162,7 @@ export default function DistributeForm({
   const parsedBalance = contractBalance !== null ? parseFloat(contractBalance) : null;
   const exceedsBalance =
     parsedBalance !== null && !isNaN(parsedAmount) && parsedAmount > parsedBalance;
+
   // Live token-address validation. The error is null for empty input so an
   // untouched field is not flagged as malformed (emptiness is reported as a
   // "required" error on submit instead, matching existing behaviour).
@@ -177,6 +188,7 @@ export default function DistributeForm({
       };
     });
   }, [collaborators, parsedAmount]);
+
   const totalBasisPoints = collaborators.reduce(
     (total, collaborator) => total + collaborator.basisPoints,
     0,
@@ -202,6 +214,9 @@ export default function DistributeForm({
   }
 
   async function submit() {
+    // #391: Don't resubmit if already in-flight
+    if (isInFlight) return;
+
     if (networkMismatch)
       return setStatus("error", "Your wallet is on the wrong network. Switch it before submitting.");
     if (!contractId)
@@ -215,6 +230,8 @@ export default function DistributeForm({
     if (exceedsBalance)
       return setStatus("error", "Amount exceeds contract balance.");
 
+    // #391: Begin optimistic transaction state
+    beginTransaction();
     // #657 — prevent duplicate submissions: block if a tx is already in flight
     if (loading || txLifecycle.isActive) return;
 
@@ -235,6 +252,14 @@ export default function DistributeForm({
         _idempotencyKey: idempotencyKey,
       });
 
+      // #391: Phase 2 — signing
+      updatePhase("signing", { transactionId: res.transactionId });
+
+      const hash = await signAndSubmitTransaction(res.xdr, network);
+
+      // #391: Phase 3 — confirming, with countdown
+      updatePhase("confirming", { txHash: hash });
+
       txLifecycle.setStage("submitting");
       const hash = await signAndSubmitTransaction(res.xdr, network);
 
@@ -245,6 +270,9 @@ export default function DistributeForm({
         transactionId: res.transactionId,
       });
 
+      // #391: Phase 4 — confirmed
+      updatePhase("confirmed");
+
       setSuccessTxHash(hash);
       txLifecycle.setConfirmed(hash);
       setStatus("ok", "Distributed successfully.");
@@ -254,6 +282,13 @@ export default function DistributeForm({
       onSuccess();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
+      const isTimeout =
+        msg.toLowerCase().includes("timeout") ||
+        msg.toLowerCase().includes("timed out");
+
+      // #391: Handle timeout scenario gracefully
+      updatePhase(isTimeout ? "timeout" : "failed", { error: msg });
+      setStatus("error", msg);
       txLifecycle.setFailed(msg);
       setStatus("error", msg);
     } finally {
@@ -289,9 +324,9 @@ export default function DistributeForm({
     setContractBalance(null);
     setDraftPrompt(null);
     setDraftDecisionMade(true);
-    setSuccessTxHash(null);
     localStorage.removeItem(draftKey);
     clearStatus();
+    resetTx();
     txLifecycle.reset();
   }
 
@@ -323,6 +358,15 @@ export default function DistributeForm({
             </button>
           </div>
         </div>
+      )}
+
+      {/* #391: Transaction status badge — shows optimistic state with phase progress */}
+      {txEntry && txEntry.phase !== "idle" && (
+        <TransactionStatusBadge
+          entry={txEntry}
+          network={network}
+          onDismiss={resetTx}
+        />
       )}
 
       <label htmlFor="distribute-token-id">Token contract address</label>
@@ -361,6 +405,7 @@ export default function DistributeForm({
             : "Could not fetch balance."}
         </p>
       )}
+
       <label htmlFor="distribute-amount">Amount</label>
       <div className="input-wrapper">
         <input
@@ -425,7 +470,9 @@ export default function DistributeForm({
           )}
         </div>
       )}
+
       <p className="description">Distributes the specified amount to all collaborators.</p>
+
       {networkMismatch && (
         <div className="status error" role="alert">
           Your wallet is on the wrong network. Switch it to {network === "mainnet" ? "Mainnet" : "Testnet"} to distribute funds.
@@ -435,6 +482,9 @@ export default function DistributeForm({
         <button
           type="submit"
           className="btn-primary btn-with-spinner"
+          disabled={loading || exceedsBalance || !amount}
+          aria-busy={loading}
+          data-testid="distribute-submit"
           disabled={loading || txLifecycle.isActive || exceedsBalance || !amount || !tokenIdValid || networkMismatch}
           aria-busy={loading || txLifecycle.isActive}
         >
@@ -445,6 +495,8 @@ export default function DistributeForm({
           type="button"
           className="btn-secondary"
           onClick={clearForm}
+          disabled={loading || (!tokenId && !amount && !draftPrompt)}
+          data-testid="distribute-clear"
           disabled={loading || txLifecycle.isActive || (!tokenId && !amount && !draftPrompt)}
         >
           Clear
@@ -465,7 +517,7 @@ export default function DistributeForm({
         <FormStatus
           type={status.type}
           message={status.message}
-          txHash={successTxHash ?? undefined}
+          txHash={txEntry?.txHash ?? undefined}
           network={network}
           distributionData={
             status.type === "ok"
