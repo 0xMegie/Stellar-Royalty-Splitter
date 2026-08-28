@@ -1,6 +1,6 @@
 import client from "prom-client";
 import http from "http";
-import https ifrom "https";
+import https from "https";
 
 const metrics = {
   distributeCallsTotal: 0,
@@ -88,7 +88,7 @@ const alertsTriggered = new client.Counter({
 
 // Alerting constants
 const ALERT_WINDOW_MS = 5 * 60 * 1000;
-const ALERT_HISToRY_MS = 60 * 60 * 1000;
+const ALERT_HISTORY_MS = 60 * 60 * 1000;
 const MAX_BUCKETS = Math.ceil(ALERT_HISTORY_MS / ALERT_WINDOW_MS);
 const DEFAULT_ERROR_RATE_THRESHOLD = 0.10;
 const DEFAULT_MIN_TOTAL = 10;
