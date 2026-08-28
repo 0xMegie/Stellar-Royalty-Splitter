@@ -173,3 +173,81 @@ Before deploying the Stellar Royalty Splitter to mainnet, the deployer MUST manu
 5. [ ] **Admin Key**: The deployer address (the first address in `collaborators`) is securely stored and requires multi-sig or a hardware wallet for production.
 6. [ ] **Basis Points**: Total shares configured in initialization perfectly sum to 10,000 (100%).
 
+
+---
+
+## Dependency Vulnerability Management
+
+Third-party packages in the backend, frontend, shared workspace, Soroban
+contract, and the CI toolchain itself are all treated as part of the attack
+surface. Detection is automated; remediation is deliberate.
+
+### What scans, and where
+
+| Surface | Monitoring | Blocking CI check |
+|---|---|---|
+| `backend/` (npm) | Dependabot, weekly | `npm audit --audit-level=high` |
+| `frontend/` (npm) | Dependabot, weekly | `npm audit --audit-level=high` |
+| `shared/` (npm) | Dependabot, weekly | `npm audit --audit-level=high` |
+| Soroban contract (cargo) | Dependabot, weekly | `cargo audit --deny warnings` |
+| GitHub Actions | Dependabot, weekly | — |
+| Lockfile integrity | — | `npm ci --dry-run` per workspace |
+
+Configuration lives in [`.github/dependabot.yml`](.github/dependabot.yml) and
+[`.github/workflows/dependency-audit.yml`](.github/workflows/dependency-audit.yml).
+
+All npm scans install with `npm ci` so the advisories reported are for the
+exact versions the lockfile pins, not whatever a semver range resolves to on
+the day CI happens to run. The `lockfile-sync` job exists because a drifted
+lockfile silently invalidates every other check in the table.
+
+### Severity policy
+
+| Severity | CI result | Expected action |
+|---|---|---|
+| **Critical** | Blocks the build | Fix before merge. If no patched version exists, the affected code path must be disabled or isolated; an exception requires maintainer sign-off recorded in the PR. |
+| **High** | Blocks the build | Fix before merge, or record a reviewed exception (see below). |
+| **Moderate** | Reported, does not block | Addressed through routine dependency maintenance. |
+| **Low / informational** | Reported, does not block | Batched into scheduled maintenance. |
+
+Job summaries list the affected package, the installed version, the severity,
+and the version that fixes it where one is available.
+
+### Dependency remediation workflow
+
+1. **Reproduce locally.** `cd <workspace> && npm ci --ignore-scripts && npm audit`
+   (or `cargo audit` at the repo root).
+2. **Establish reachability.** A vulnerability in a code path the project never
+   calls is a different risk from one on a request path. Record the finding.
+3. **Prefer the narrowest fix.** A patch or minor bump of the direct dependency,
+   or an npm `overrides` entry pinning a transitive package to a fixed version.
+4. **Escalate deliberately.** If only a major upgrade fixes it, open a separate
+   PR for that upgrade alone, with its own review and test run. Dependabot is
+   configured never to propose major upgrades automatically.
+5. **Verify.** Re-run the audit and the full test suite before merging.
+
+**Do not run `npm audit fix --force`.** It performs major upgrades transitively
+and has silently broken working builds. Never weaken a validation rule or
+production check to make an audit pass.
+
+### Accepted risks and false positives
+
+An advisory that cannot currently be fixed is recorded explicitly rather than
+suppressed:
+
+- **Rust:** add the advisory ID to `ignore` in
+  [`.cargo/audit.toml`](.cargo/audit.toml) with a rationale and an acceptance
+  date. Two advisories are accepted there today, both transitive under the
+  pinned `soroban-sdk 20.0.0` and both unreachable from contract entrypoints.
+- **npm:** record the rationale in the PR that introduces the exception and
+  re-review it when the pinned dependency next moves.
+
+An entry in either place is a security decision with an owner and a review
+date, not a way to quiet the build.
+
+### Secrets
+
+The audit workflow runs with `permissions: contents: read` and consumes no
+repository secrets. `npm ci --ignore-scripts` prevents dependency install
+scripts from executing in CI, so a malicious postinstall in a newly-published
+package cannot read the runner environment during a scan.
