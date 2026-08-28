@@ -1,0 +1,36 @@
+# cargo-audit configuration.
+#
+# Advisories listed under `ignore` are KNOWN, REVIEWED, and ACCEPTED — each one
+# needs a rationale and a review date below. Anything not listed here fails CI
+# (see .github/workflows/dependency-audit.yml).
+#
+# Adding an entry here is a security decision, not a way to quiet the build.
+# The remediation workflow is documented in SECURITY.md.
+
+[advisories]
+ignore = [
+  # RUSTSEC-2024-0344 — timing variability in curve25519-dalek.
+  #
+  # Reached only as a transitive dependency of the pinned soroban-sdk 20.0.0
+  # (`soroban-sdk = "=20.0.0"` in Cargo.toml). The contract performs no
+  # secret-dependent scalar multiplication of its own: signing happens
+  # off-chain in the operator's wallet, and the contract verifies
+  # already-signed envelopes. No fixed release is reachable without moving off
+  # the pinned SDK, which is a deliberate, separately-planned upgrade.
+  #
+  # Accepted: 2026-08-28. Re-review when soroban-sdk is unpinned.
+  "RUSTSEC-2024-0344",
+
+  # RUSTSEC-2026-0009 — denial of service via stack exhaustion in `time`.
+  #
+  # Transitive under the same pinned soroban-sdk. The affected parsing path is
+  # not reachable from contract entrypoints, which take typed ScVal arguments
+  # rather than parsing user-supplied date strings.
+  #
+  # Accepted: 2026-08-28. Re-review when soroban-sdk is unpinned.
+  "RUSTSEC-2026-0009",
+]
+
+# Warnings are escalated to errors by `--deny warnings` in CI, so unmaintained
+# or yanked crates surface as build failures rather than scrollback.
+informational_warnings = ["unmaintained", "unsound", "yanked"]
