@@ -29,3 +29,6 @@ config/env/.env.prod
 
 # Deployed contract ID
 .contract-id
+
+# Blue-green deployment state (per deployment host, not source)
+.deploy-state
