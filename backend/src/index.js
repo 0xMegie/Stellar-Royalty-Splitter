@@ -28,6 +28,7 @@ import { healthRouter } from "./routes/health.js";
 import { livenessRouter } from "./routes/liveness.js";
 import onboardingRouter from "./routes/onboarding.js";
 import { closeDatabase, initializeDatabase } from "./database/index.js";
+import { startHealthMonitor, stopHealthMonitor } from "./database/health-monitor.js";
 import { createGracefulShutdownHandler, shutdownMiddleware } from "./shutdown.js";
 import { adminRouter } from "./routes/admin.js";
 import { snapshotRouter } from "./routes/snapshots.js";
@@ -66,6 +67,9 @@ import { setupGraphQL } from "./graphql.js";
 // Initialize database on startup
 initializeDatabase();
 initializeSigningKey();
+
+// Start database connection health monitor (#496)
+startHealthMonitor();
 
 const app = express();
 
