@@ -369,6 +369,30 @@ export function checkDatabase() {
       return { connected: false, responseTimeMs: Date.now() - start, error: "Database is closed" };
     }
 
+    // Verify the connection is alive with a simple query
+    db.prepare("SELECT 1").get();
+
+    const responseTimeMs = Date.now() - start;
+    const version = db.prepare("SELECT MAX(version) as v FROM schema_migrations").get()?.v ?? 0;
+    const walMode = db.pragma("journal_mode", { simple: true }) === "wal";
+    const tableCount = db.prepare("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table'").get()?.c ?? 0;
+
+    return {
+      connected: true,
+      responseTimeMs,
+      version,
+      walMode,
+      tableCount,
+    };
+  } catch (err) {
+    return {
+      connected: false,
+      responseTimeMs: Date.now() - start,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 /**
  * Delete health_history records older than 90 days.
  */
@@ -452,26 +476,3 @@ export function getSLAStats(days = 30) {
 }
 
 export default db;
-    // Verify the connection is alive with a simple query
-    db.prepare("SELECT 1").get();
-
-    const responseTimeMs = Date.now() - start;
-    const version = db.prepare("SELECT MAX(version) as v FROM schema_migrations").get()?.v ?? 0;
-    const walMode = db.pragma("journal_mode", { simple: true }) === "wal";
-    const tableCount = db.prepare("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table'").get()?.c ?? 0;
-
-    return {
-      connected: true,
-      responseTimeMs,
-      version,
-      walMode,
-      tableCount,
-    };
-  } catch (err) {
-    return {
-      connected: false,
-      responseTimeMs: Date.now() - start,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-}

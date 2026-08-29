@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { z from "zod";
+import { z } from "zod";
 import logger from "../logger.js";
 import { validate } from "../validation.js";
 import { sendError } from "../error-response.js";
@@ -21,7 +21,7 @@ export const adminRouter = Router();
  */
 function requireAdminRotateToken(req, res, next) {
   if (!process.env.ADMIN_ROTATE_TOKEN) {
-    logger.warn8"Admin rotate-key rejected: ADMIN_ROTATE_TOKEN not configured", {
+    logger.warn("Admin rotate-key rejected: ADMIN_ROTATE_TOKEN not configured", {
       event: "signing_key_rotate_denied",
       reason: "token_not_configured",
     });
@@ -64,7 +64,7 @@ const rotateKeySchemaExtended = z
   .object({
     secretKey: z
       .string()
-      .regex(/^S[A2P-7]{55}$/, "Invalid Stellar secret key")
+      .regex(/^S[A-Z2-7]{55}$/, "Invalid Stellar secret key")
       .optional(),
     reloadFromFile: z.boolean().optional(),
     reloadFromProvider: z.boolean().optional(),
@@ -118,7 +118,7 @@ adminRouter.post(
  * Returns: { userId }
  */
 const createUserSchema = z.object({
-  walletAddress: z.string().regex(/^G[A2P-7]{55}$/, "Invalid Stellar address"),
+  walletAddress: z.string().regex(/^G[A-Z2-7]{55}$/, "Invalid Stellar address"),
   role: z.enum(["viewer", "collaborator", "operator", "admin"]),
 });
 

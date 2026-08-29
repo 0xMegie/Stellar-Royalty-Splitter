@@ -5,8 +5,8 @@ import {
   pruneHealthHistory,
   getHealthHistory,
   getSLAStats,
+  checkDatabase,
 } from "../database/index.js";
-import { getMigrationVersion, checkDatabase } from "../database/index.js";
 import * as database from "../database/index.js";
 
 import {
@@ -201,6 +201,11 @@ healthRouter.get("/sla", async (req, res, next) => {
     );
     const sla = getSLAStats(days);
     res.json({ ok: true, data: sla });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── Detailed health check ─────────────────────────────────────────────────
 
 const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 5_000;

@@ -15,9 +15,20 @@ Cargo-llvm-cov-target
 lcov.info
 
 # Env
+# Real env files are never committed. Only the *.example templates under
+# config/env/ are tracked — they hold placeholders only.
 .env
+.env.*
+!.env.example
+!*.example
 backend/.env
 frontend/.env
+config/env/.env.dev
+config/env/.env.staging
+config/env/.env.prod
 
 # Deployed contract ID
 .contract-id
+
+# Blue-green deployment state (per deployment host, not source)
+.deploy-state

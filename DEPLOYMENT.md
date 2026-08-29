@@ -109,3 +109,107 @@ If a deployment is misconfigured or broken:
 5. **Record the incident**: keep the bad `CONTRACT_ID`, the network, the
    timestamp, and the root cause in your team's deployment log so future
    `pre` validation runs can be extended to catch the same class of mistake.
+
+---
+
+## Blue-Green Deployment
+
+Soroban contracts are immutable and cannot be reverted in place. That is
+exactly what makes blue-green work here rather than being bolted on:
+
+- **Blue** — the contract `ROYALTY_CONTRACT_ID` currently points at. Serving.
+- **Green** — the newly deployed candidate. On-chain, but not yet serving.
+
+Both exist simultaneously. *Switching traffic* means repointing the backend at
+green; *rolling back* means pointing it back at blue, which never stopped
+existing. Cutover destroys nothing, so the rollback window costs only
+configuration.
+
+```bash
+./scripts/blue-green-deploy.sh status     # what is serving, what can be restored
+./scripts/blue-green-deploy.sh deploy     # deploy, validate, cut over, monitor
+./scripts/blue-green-deploy.sh rollback   # restore the previous contract
+```
+
+### Deploy sequence
+
+| Step | What runs | On failure |
+|---|---|---|
+| 1. Pre-flight | `validate-deployment.sh pre` | Abort; nothing deployed |
+| 2. Deploy green | `deploy.sh` | Abort; blue still serving |
+| 3. Readiness | Poll `/api/v1/health` until it responds | Abort before cutover |
+| 4. Validation | `validate-deployment.sh post` + dependency reachability | Abort; **traffic never switched** |
+| 5. Cutover | Repoint `ROYALTY_CONTRACT_ID` at green | — |
+| 6. Monitoring | Poll `/api/v1/health/detailed` for `ROLLBACK_WINDOW` seconds | **Automatic rollback to blue** |
+
+Traffic is switched only after step 4 passes. A candidate that fails
+validation is left inert on-chain and blue keeps serving — the failure costs
+a deploy, not an outage.
+
+`/api/v1/health/detailed` returns 503 when any critical component is
+unhealthy, so its HTTP status is a sufficient gate. Critical external
+dependencies (`SOROBAN_RPC_URL`, `HORIZON_URL`) are checked too: a green
+contract behind an unreachable RPC endpoint is not a successful deploy.
+
+### Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `HEALTH_URL` | `http://localhost:3001/api/v1/health` | Endpoint polled for readiness and health |
+| `READINESS_TIMEOUT` | `120` | Seconds to wait for the backend to respond |
+| `ROLLBACK_WINDOW` | `300` | Seconds to monitor after cutover before declaring success |
+
+State lives in `.deploy-state` at the repo root (gitignored — it is
+per-deployment-host state, not source), so a rollback does not depend on
+anyone remembering the previous address.
+
+### Migrations and rollback safety
+
+**A deployment is only rollback-safe if the previous application version can
+still read the current database.** Rolling the contract back does not roll
+back the database.
+
+Migrations are declared inline in `backend/src/database/core.js` against the
+`schema_migrations` table. The deploy workflow warns when that file changes.
+Before deploying a schema change, confirm it is backward-compatible:
+
+- **Safe:** adding a nullable column, adding a table, adding an index.
+- **Unsafe:** dropping or renaming a column the previous version reads,
+  narrowing a type, adding a `NOT NULL` column without a default.
+
+For an unsafe change, split it across two releases — expand, deploy, migrate
+data, then contract in a later release — so that at no point is a live
+version reading a schema it does not understand.
+
+### Emergency manual rollback
+
+If the automated path is unavailable (script missing, state file lost, runner
+gone):
+
+1. Find the last known-good contract ID — `.deploy-state`, the `.contract-id`
+   history, or the deploy log for the previous release.
+2. Set it in the serving environment:
+   ```bash
+   # backend/.env, or the environment variable in your process manager
+   ROYALTY_CONTRACT_ID=<previous-known-good-contract-id>
+   ```
+3. Restart the backend.
+4. Confirm recovery: `curl -fsS "$HEALTH_URL/detailed"` must return 200.
+5. Record the incident — contract ID, network, timestamp, root cause — per
+   [Rollback Procedure](#rollback-procedure) step 5.
+
+The failed contract stays on-chain and inert. Provided `initialize()` was
+never called against it, no funds can move through it.
+
+### Verification status
+
+The rollback mechanism — repointing `ROYALTY_CONTRACT_ID` and restoring
+recorded state — has been exercised locally, including the failure case where
+no previous version is recorded (the script refuses to act and directs the
+operator to the manual procedure above rather than silently continuing).
+
+Zero-downtime cutover under live traffic has **not** been verified: doing so
+requires a deployed staging environment with a funded signing identity, which
+does not exist yet. The `deploy` path's on-chain steps are therefore
+unproven in a real environment and should be exercised on testnet before
+first production use.
