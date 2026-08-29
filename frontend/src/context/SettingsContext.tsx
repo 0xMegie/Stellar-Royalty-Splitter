@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
+import i18n from "../i18n";
 
 export interface SettingsType {
   autoSaveAuditLog: boolean;
@@ -7,6 +8,7 @@ export interface SettingsType {
   maxPayoutsPerTransaction: number;
   minPayoutAmount: number;
   trackedContracts: string[];
+  language: "en" | "es" | "de" | "zh";
 }
 
 interface SettingsContextType {
@@ -23,6 +25,7 @@ const DEFAULTS: SettingsType = {
   maxPayoutsPerTransaction: 10,
   minPayoutAmount: 0.1,
   trackedContracts: [],
+  language: "en",
 };
 
 // A contract ID on Stellar starts with "C" and is 56 characters long.
@@ -55,6 +58,13 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({
       localStorage.setItem("royaltySplitterSettings", JSON.stringify(settings));
     } catch (_) {}
   }, [settings]);
+
+  useEffect(() => {
+    // Sync i18n language with settings language preference
+    if (settings.language && i18n.language !== settings.language) {
+      i18n.changeLanguage(settings.language);
+    }
+  }, [settings.language]);
 
   const updateSettings = (patch: Partial<SettingsType>) =>
     setSettings((s) => ({ ...s, ...patch }));

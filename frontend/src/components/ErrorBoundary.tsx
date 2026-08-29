@@ -117,10 +117,12 @@ export class ErrorBoundary extends Component<
               )}
             </div>
 
-            <details className="error-details">
-              <summary>Error details</summary>
-              <pre>{this.state.error?.message}</pre>
-            </details>
+            {process.env.NODE_ENV === "development" && (
+              <details className="error-details">
+                <summary>Error details (development only)</summary>
+                <pre>{this.state.error?.message}</pre>
+              </details>
+            )}
 
             <p className="error-boundary-id">
               Error ID: <code>{this.state.errorId}</code>

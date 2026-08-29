@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { FeatureErrorBoundary } from "../FeatureErrorBoundary";
+import { logErrorSafely } from "../../lib/error-logger";
 
 // Mock the error logger
 vi.mock("../../lib/error-logger", () => ({
@@ -163,7 +164,6 @@ describe("ErrorBoundary", () => {
   });
 
   it("should log error safely without stack trace in production", () => {
-    const { logErrorSafely } = require("../../lib/error-logger");
     const originalEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
 

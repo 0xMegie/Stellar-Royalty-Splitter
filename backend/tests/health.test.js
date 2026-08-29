@@ -43,8 +43,20 @@ await jest.unstable_mockModule("../src/database/index.js", () => ({
 
 await jest.unstable_mockModule("../src/metrics.js", () => ({
   recordDetailedHealthCheck: jest.fn(),
+  recordConnectionHealthCheck: jest.fn(),
   recordHorizonResponseTime: jest.fn(),
   prometheusMetrics: jest.fn(() => ""),
+}));
+
+await jest.unstable_mockModule("../src/database/health-monitor.js", () => ({
+  checkConnectionHealthAsync: jest.fn().mockResolvedValue({
+    connected: true,
+    durationMs: 1,
+    lastCheckAt: new Date().toISOString(),
+    consecutiveFailures: 0,
+    pool: { poolSize: 5, activeConnections: 0, available: 5, utilization: 0, queueLength: 0, timeouts: 0, acquires: 0 },
+  }),
+  getHealthMetrics: jest.fn().mockReturnValue({ totalChecks: 1, totalFailures: 0 }),
 }));
 
 const { clearHealthCache } = await import("../src/routes/health.js");

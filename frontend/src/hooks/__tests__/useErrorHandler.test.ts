@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useErrorHandler } from "../useErrorHandler";
+import { logErrorSafely } from "../../lib/error-logger";
 
 vi.mock("../../lib/error-logger", () => ({
   logErrorSafely: vi.fn(),
@@ -146,7 +147,6 @@ describe("useErrorHandler Hook", () => {
   });
 
   it("should log errors safely", () => {
-    const { logErrorSafely } = require("../../lib/error-logger");
     const { result } = renderHook(() => useErrorHandler({ level: "app" }));
     const testError = new Error("Test error");
 

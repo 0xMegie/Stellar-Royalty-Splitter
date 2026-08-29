@@ -30,10 +30,6 @@ export {
   getTransactionDetails,
   getTransactionById,
   getRetryEligibleTransactions,
-  markTransactionRetrying,
-  markTransactionRetryExhausted,
-  getRetryExhaustedTransactions,
-  getTransactionRetryCount,
   RETRY_BACKOFF_MS,
   MAX_RETRY_COUNT,
 } from "./transactions.js";
@@ -280,6 +276,18 @@ export {
   getPendingFinalityRecords,
   deleteOldFinalityRecords,
 } from "./transaction-finality.js";
+
+// Connection health monitoring (#496)
+export {
+  checkConnectionHealth,
+  checkConnectionHealthAsync,
+  attemptReconnection,
+  startHealthMonitor,
+  stopHealthMonitor,
+  getHealthStatus,
+  getHealthMetrics,
+  resetHealthMonitorState,
+} from "./health-monitor.js";
 
 // Default export for backwards compatibility
 import { db } from "./core.js";

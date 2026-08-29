@@ -26,10 +26,14 @@
     "@stellar/stellar-sdk": "^12.0.0",
     "@tanstack/react-virtual": "^3.10.8",
     "html2canvas": "^1.4.1",
+    "i18next": "^26.4.0",
+    "i18next-browser-languagedetector": "^8.2.1",
     "jspdf": "^4.2.1",
     "qrcode.react": "^4.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
+    "react-i18next": "^17.0.12",
+    "react-toastify": "^11.1.0",
     "recharts": "^2.15.4"
   },
   "devDependencies": {
@@ -44,7 +48,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",
     "@vitest/coverage-v8": "^4.1.10",
-    "fake-indexedb": "^6.2.5",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^25.0.1",
     "size-limit": "^11.0.0",
     "typescript": "^5.4.0",
