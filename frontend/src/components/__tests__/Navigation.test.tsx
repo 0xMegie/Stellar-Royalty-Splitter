@@ -3,8 +3,8 @@ import "@testing-library/jest-dom";
 import { describe, it, expect, vi } from "vitest";
 import { Navigation } from "../Navigation";
 
-vi.mock("../NotificationBadge", () => ({
-  NotificationBadge: () => <div data-testid="notification-badge" />,
+vi.mock("../NotificationBell", () => ({
+  NotificationBell: () => <div data-testid="notification-badge" />,
 }));
 
 vi.mock("../../context/ThemeContext", () => ({
@@ -99,7 +99,7 @@ describe("Navigation — mobile menu", () => {
 
   test("active page has aria-current=page", () => {
     setup();
-    const dashboardBtn = screen.getByRole("button", { name: /Dashboard/i });
+    const dashboardBtn = screen.getByRole("button", { name: /📊 Dashboard/ });
     expect(dashboardBtn).toHaveAttribute("aria-current", "page");
   });
 

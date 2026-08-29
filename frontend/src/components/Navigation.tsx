@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useTheme } from "../context/ThemeContext";
 import { useNetwork } from "../context/NetworkContext";
-import { NotificationBadge } from "./NotificationBadge";
+import { NotificationBell } from "./NotificationBell";
 import "./Navigation.css";
 
 interface NavigationProps {
@@ -19,6 +20,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   onDisconnect,
   wsConnected = false,
 }) => {
+  const { t } = useTranslation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const { isDark, toggleTheme } = useTheme();
@@ -35,32 +37,31 @@ export const Navigation: React.FC<NavigationProps> = ({
   }, [isMobileMenuOpen]);
 
   const navItems = [
-    { id: "dashboard", label: "Dashboard", icon: "📊" },
-    { id: "earnings-dashboard", label: "Earnings Dashboard", icon: "💎" },
-    { id: "earnings-history", label: "Earnings", icon: "💹" },
-    { id: "onboarding", label: "Onboarding", icon: "🚀" },
-    { id: "transactions", label: "Transactions", icon: "📋" },
-    { id: "timeline", label: "Timeline", icon: "🕐" },
-    { id: "forecast", label: "Forecast", icon: "📈" },
-    { id: "earnings", label: "My Earnings", icon: "💎" },
-    { id: "health", label: "System Health", icon: "🩺" },
-    { id: "admin", label: "Admin", icon: "👑" },
-    { id: "initialize", label: "Initialize", icon: "⚙️" },
-    { id: "distribute", label: "Distribute", icon: "💰" },
-    { id: "secondary", label: "Secondary", icon: "🔄" },
-    { id: "health", label: "Health", icon: "🏥" },
-    { id: "bulk-import", label: "Bulk Import", icon: "📥" },
-    { id: "tax-info", label: "Tax Info", icon: "📋" },
-    { id: "payment-holds", label: "Payment Holds", icon: "⏸️" },
-    { id: "settings", label: "Settings", icon: "⚡" },
+    { id: "dashboard", labelKey: "dashboard", icon: "📊" },
+    { id: "earnings-dashboard", labelKey: "earningsDashboard", icon: "💎" },
+    { id: "earnings-history", labelKey: "earningsHistory", icon: "💹" },
+    { id: "onboarding", labelKey: "onboarding", icon: "🚀" },
+    { id: "transactions", labelKey: "transactions", icon: "📋" },
+    { id: "timeline", labelKey: "timeline", icon: "🕐" },
+    { id: "forecast", labelKey: "forecast", icon: "📈" },
+    { id: "earnings", labelKey: "earnings", icon: "💎" },
+    { id: "admin", labelKey: "admin", icon: "👑" },
+    { id: "initialize", labelKey: "initialize", icon: "⚙️" },
+    { id: "distribute", labelKey: "distribute", icon: "💰" },
+    { id: "secondary", labelKey: "secondary", icon: "🔄" },
+    { id: "health", labelKey: "health", icon: "🏥" },
+    { id: "bulk-import", labelKey: "bulkImport", icon: "📥" },
+    { id: "tax-info", labelKey: "taxInfo", icon: "📋" },
+    { id: "payment-holds", labelKey: "paymentHolds", icon: "⏸️" },
+    { id: "settings", labelKey: "settings", icon: "⚡" },
   ];
 
   // Issue #156 — update browser tab title whenever the active page changes
   useEffect(() => {
     const item = navItems.find((n) => n.id === currentPage);
-    const label = item ? item.label : currentPage;
+    const label = item ? t(`navigation.${item.labelKey}`) : currentPage;
     document.title = `${label} - Stellar Royalty Splitter`;
-  }, [currentPage]);
+  }, [currentPage, t]);
 
   function copyAddress() {
     if (!walletAddress) return;
@@ -96,7 +97,7 @@ export const Navigation: React.FC<NavigationProps> = ({
           {isMobileMenuOpen ? "✕" : "☰"}
         </button>
 
-        <ul
+         <ul
           id="mobile-nav-links"
           className={`nav-links ${isMobileMenuOpen ? "active" : ""}`}
           role="list"
@@ -109,7 +110,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                 aria-current={currentPage === item.id ? "page" : undefined}
               >
                 <span className="nav-icon">{item.icon}</span>
-                <span className="nav-label">{item.label}</span>
+                <span className="nav-label">{t(`navigation.${item.labelKey}`)}</span>
               </button>
             </li>
           ))}
@@ -120,17 +121,17 @@ export const Navigation: React.FC<NavigationProps> = ({
           <button
             className={`network-toggle network-toggle--${network}`}
             onClick={() => setNetwork(network === "testnet" ? "mainnet" : "testnet")}
-            aria-label={`Switch to ${network === "testnet" ? "mainnet" : "testnet"}`}
-            title={`Currently on ${network === "testnet" ? "Testnet" : "Mainnet"} — click to switch`}
+            aria-label={t("wallet.switchNetwork", { network: network === "testnet" ? t("wallet.mainnet") : t("wallet.testnet") })}
+            title={t("wallet.switchNetwork", { network: network === "testnet" ? t("wallet.mainnet") : t("wallet.testnet") })}
           >
             <span className="network-dot" aria-hidden="true" />
             <span className="network-label">
-              {network === "testnet" ? "Testnet" : "Mainnet"}
+              {network === "testnet" ? t("wallet.testnet") : t("wallet.mainnet")}
             </span>
           </button>
 
           {walletAddress && (
-            <NotificationBadge walletAddress={walletAddress} wsConnected={wsConnected} />
+            <NotificationBell />
           )}
 
           <button
@@ -144,7 +145,7 @@ export const Navigation: React.FC<NavigationProps> = ({
           {/* Wallet status badge — issue #249 */}
           <div
             className={`wallet-status wallet-status--${walletAddress ? "connected" : "disconnected"}`}
-            aria-label={walletAddress ? `Wallet connected: ${walletAddress}` : "Wallet disconnected"}
+            aria-label={walletAddress ? `${t("wallet.connected")}: ${walletAddress}` : t("wallet.disconnected")}
           >
             <span className="wallet-status-dot" aria-hidden="true" />
             {walletAddress ? (
@@ -171,7 +172,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                 </button>
               </>
             ) : (
-              <span className="wallet-status-label">Disconnected</span>
+              <span className="wallet-status-label">{t("wallet.disconnected")}</span>
             )}
           </div>
         </div>

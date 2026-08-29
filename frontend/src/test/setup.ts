@@ -57,3 +57,52 @@ if (
     configurable: true,
   });
 }
+
+import { vi } from "vitest";
+import enTranslations from "../i18n/locales/en.json";
+
+vi.mock("react-i18next", () => {
+  const translate = (key: string, options?: any) => {
+    const parts = key.split(".");
+    let current: any = enTranslations;
+    for (const part of parts) {
+      if (current && typeof current === "object" && part in current) {
+        current = current[part];
+      } else {
+        return key;
+      }
+    }
+    if (typeof current === "string" && options) {
+      // Basic interpolation support for tests (e.g. {{network}} -> value)
+      let result = current;
+      Object.keys(options).forEach((optKey) => {
+        result = result.replace(new RegExp(`\\{\\{\\s*${optKey}\\s*\\}\\}`, "g"), options[optKey]);
+      });
+      return result;
+    }
+    return typeof current === "string" ? current : key;
+  };
+
+  return {
+    useTranslation: () => ({
+      t: translate,
+      i18n: {
+        changeLanguage: () => Promise.resolve(),
+        language: "en",
+      },
+    }),
+  };
+});
+
+vi.mock("../context/NotificationContext", () => ({
+  useNotifications: () => ({
+    notifications: [],
+    unreadCount: 0,
+    addNotification: vi.fn(),
+    markAllRead: vi.fn(),
+    clearAll: vi.fn(),
+    markRead: vi.fn(),
+    deleteNotification: vi.fn(),
+  }),
+  NotificationProvider: ({ children }: any) => children,
+}));

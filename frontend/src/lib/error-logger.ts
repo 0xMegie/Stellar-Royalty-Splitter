@@ -33,6 +33,7 @@ export function logErrorSafely(
 ): void {
   // Prepare safe error metadata (no stack traces or sensitive data in production)
   const safeMetadata: ErrorMetadata = {
+    ...metadata,
     level: metadata.level || "app",
     errorId: metadata.errorId,
     timestamp: metadata.timestamp || new Date().toISOString(),
@@ -40,6 +41,10 @@ export function logErrorSafely(
       typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
     url: typeof window !== "undefined" ? window.location.href : "unknown",
   };
+
+  if (process.env.NODE_ENV === "production") {
+    delete safeMetadata.stack;
+  }
 
   const errorLog: ErrorLog = {
     message: error.message,

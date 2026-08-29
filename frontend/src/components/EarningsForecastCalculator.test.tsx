@@ -48,7 +48,7 @@ describe("Earnings Forecast Calculator", () => {
       const currentBalance = 100;
       const dailyRate = 10;
       const oneYearProjection = currentBalance + dailyRate * 365;
-      expect(oneYearProjection).toBe(3760);
+      expect(oneYearProjection).toBe(3750);
     });
 
     it("should calculate net gain correctly", () => {
@@ -198,7 +198,7 @@ describe("Earnings Forecast Calculator", () => {
       const oneYearGain = dailyRate * 365;
 
       expect(threeMonthGain).toBe(oneMonthGain * 3);
-      expect(oneYearGain).toBeCloseTo(oneMonthGain * 12.17, 2);
+      expect(oneYearGain).toBeCloseTo(oneMonthGain * (365 / 30), 2);
     });
   });
 });

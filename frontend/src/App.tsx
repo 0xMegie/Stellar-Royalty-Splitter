@@ -29,8 +29,8 @@ import { CopyButton } from "./components/CopyButton";
 import { api, SESSION_EXPIRED_EVENT } from "./api";
 import { OnboardingWalkthrough } from "./components/OnboardingWalkthrough";
 import { HealthDashboard } from "./components/HealthDashboard";
-import { api } from "./api";
-
+import { useNotifications } from "./context/NotificationContext";
+import { ToastContainer } from "react-toastify";
 
 import "./App.css";
 
@@ -59,21 +59,19 @@ export default function App() {
   const [selectedTxHash, setSelectedTxHash] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [sessionToast, setSessionToast] = useState<string | null>(null);
-  const [notifications, setNotifications] = useState<
-    Array<{ id: number; title: string; message: string | null; type: string }>
-  >([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const { addNotification } = useNotifications();
 
   const { connected: wsConnected } = useWebSocket({
     walletAddress,
-    onNotification: (data: unknown) => {
-      const n = data as {
-        id: number;
-        title: string;
-        message: string | null;
-        type: string;
-      };
-      setNotifications((prev) => [...prev, n]);
+    onNotification: (data: any) => {
+      addNotification({
+        type: data.type === "pending" || data.type === "confirmed" || data.type === "failed" ? data.type : "info",
+        title: data.title || "Notification",
+        message: data.message || "",
+        txHash: data.txHash,
+        transactionId: data.transactionId,
+      });
     },
   });
 
@@ -436,7 +434,7 @@ export default function App() {
           "Admin Dashboard",
         );
       case "health":
-        return withErrorBoundary(<SystemHealthDashboard />, "System Health");
+        return withErrorBoundary(<HealthDashboard />, "System Health");
       case "earnings":
         return withErrorBoundary(
           walletAddress ? (
@@ -575,8 +573,7 @@ export default function App() {
           />,
           "Onboarding Checklist",
         );
-      case "health":
-        return <HealthDashboard />;
+
       default:
         return null;
     }
@@ -595,6 +592,7 @@ export default function App() {
 
   return (
     <div className="app-wrapper">
+      <ToastContainer />
       <OfflineIndicator />
       {walletAddress && <NetworkMismatchBanner />}
       {showHelp && <HelpModal onClose={closeHelp} shortcuts={shortcuts} />}

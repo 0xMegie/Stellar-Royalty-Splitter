@@ -56,6 +56,23 @@ export function useWebSocket({ walletAddress, onNotification, onDistributionEven
             setLastPong(Date.now());
           } else if (msg.type === "notification" && onNotification) {
             onNotification(msg.data);
+          } else if (msg.type === "finality_update" && onNotification) {
+            const update = msg.data as { transactionId: number; txHash: string; status: string; errorMessage?: string };
+            onNotification({
+              type: update.status === "confirmed" ? "confirmed" : update.status === "failed" ? "failed" : "info",
+              title: update.status === "confirmed" ? "Transaction Confirmed" : update.status === "failed" ? "Transaction Failed" : "Transaction Timeout",
+              message: update.status === "confirmed" ? `Transaction ${update.txHash.slice(0, 8)}... confirmed` : update.errorMessage || "Transaction failed",
+              txHash: update.txHash,
+              transactionId: update.transactionId,
+            });
+          } else if (msg.type === "transaction_status" && onNotification) {
+            const update = msg.data as { id: string | number; status: string; errorMessage?: string };
+            onNotification({
+              type: update.status === "pending" ? "pending" : update.status === "failed" ? "failed" : "info",
+              title: update.status === "pending" ? "Transaction Pending" : "Transaction Status",
+              message: update.status === "pending" ? "Your transaction is pending on-chain..." : `Transaction status: ${update.status}`,
+              transactionId: update.id,
+            });
           } else if (msg.type === "subscribed") {
             setConnected(true);
           }
