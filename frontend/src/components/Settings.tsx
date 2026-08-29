@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useTheme } from "../context/ThemeContext";
 import {
   useSettings,
@@ -9,6 +10,7 @@ import {
 import { CopyButton } from "./CopyButton";
 import { PaymentPreferences } from "./PaymentPreferences";
 import { NotificationPreferences } from "./NotificationPreferences";
+import { LanguageSelector } from "./LanguageSelector";
 import "./Settings.css";
 
 interface SettingsProps {
@@ -61,6 +63,7 @@ export const Settings: React.FC<SettingsProps> = ({
         maxPayoutsPerTransaction: 10,
         minPayoutAmount: 0.1,
         trackedContracts: [],
+        language: "en",
       };
       setLocalSettings(defaults);
       updateSettings(defaults);
@@ -96,6 +99,7 @@ export const Settings: React.FC<SettingsProps> = ({
     showSaveStatus("✓ Contract removed from tracked list!");
   };
 
+  const { t } = useTranslation();
   const showSaveStatus = (message: string) => {
     setSaveStatus(message);
     setTimeout(() => setSaveStatus(null), 3000);
@@ -104,9 +108,9 @@ export const Settings: React.FC<SettingsProps> = ({
   return (
     <div className="settings">
       <div className="settings-header">
-        <h1>⚙️ Settings</h1>
+        <h1>⚙️ {t("settings.title")}</h1>
         <p className="settings-subtitle settings-contract-id">
-          <span>Contract ID: {contractId || "Not connected"}</span>
+          <span>{t("dashboard.contractId")}: {contractId || t("wallet.disconnected")}</span>
           {contractId && (
             <CopyButton value={contractId} label="contract ID" size="sm" />
           )}
@@ -118,13 +122,13 @@ export const Settings: React.FC<SettingsProps> = ({
       <div className="settings-content">
         {/* General Settings */}
         <section className="settings-section">
-          <h2 className="section-title">General</h2>
+          <h2 className="section-title">{t("settings.general")}</h2>
 
           <div className="setting-item">
             <div className="setting-label">
-              <label htmlFor="currency">Display Currency</label>
+              <label htmlFor="currency">{t("settings.displayCurrency")}</label>
               <p className="setting-description">
-                Choose your preferred currency for displaying amounts
+                {t("settings.currencyDescription")}
               </p>
             </div>
             <select
@@ -141,9 +145,9 @@ export const Settings: React.FC<SettingsProps> = ({
 
           <div className="setting-item">
             <div className="setting-label">
-              <label htmlFor="darkMode">Dark Mode</label>
+              <label htmlFor="darkMode">{t("settings.darkMode")}</label>
               <p className="setting-description">
-                Enable dark theme for the dashboard
+                {t("settings.darkModeDescription")}
               </p>
             </div>
             <button
@@ -151,28 +155,29 @@ export const Settings: React.FC<SettingsProps> = ({
               onClick={handleDarkMode}
               id="darkMode"
             >
-              {isDark ? "ON" : "OFF"}
+              {isDark ? t("common.on") : t("common.off")}
             </button>
           </div>
+
+          <LanguageSelector />
         </section>
 
         {/* Tracked Contracts */}
         <section className="settings-section">
-          <h2 className="section-title">Tracked Contracts</h2>
+          <h2 className="section-title">{t("settings.trackedContracts")}</h2>
           <p className="setting-description">
-            Add contract IDs to compare and aggregate earnings across multiple
-            projects on the earnings dashboard.
+            {t("settings.trackedContractsDescription")}
           </p>
 
           <div className="setting-item">
             <div className="setting-label">
-              <label htmlFor="newContractId">Add Contract ID</label>
+              <label htmlFor="newContractId">{t("settings.addContractId")}</label>
             </div>
             <div style={{ display: "flex", gap: "0.5rem", width: "100%" }}>
               <input
                 id="newContractId"
                 type="text"
-                placeholder="C..."
+                placeholder={t("settings.addContractPlaceholder")}
                 value={newContractId}
                 onChange={(e) => {
                   setNewContractId(e.target.value);
@@ -188,7 +193,7 @@ export const Settings: React.FC<SettingsProps> = ({
                 className="btn-primary"
                 onClick={handleAddContract}
               >
-                Add
+                {t("settings.addButton")}
               </button>
             </div>
           </div>
@@ -200,8 +205,7 @@ export const Settings: React.FC<SettingsProps> = ({
 
           {settings.trackedContracts.length === 0 ? (
             <p className="setting-description">
-              No contracts tracked yet. Add one above to enable the
-              multi-contract earnings comparison view.
+              {t("settings.noContractsTracked")}
             </p>
           ) : (
             <ul className="tracked-contracts-list" aria-label="Tracked contracts">
@@ -209,7 +213,7 @@ export const Settings: React.FC<SettingsProps> = ({
                 <li key={id} className="tracked-contract-item">
                   <span title={id}>{id}</span>
                   {id === contractId && (
-                    <span className="you-badge">Active</span>
+                    <span className="you-badge">{t("common.active")}</span>
                   )}
                   <CopyButton value={id} label="contract ID" size="sm" />
                   <button
@@ -217,7 +221,7 @@ export const Settings: React.FC<SettingsProps> = ({
                     aria-label={`Remove contract ${id}`}
                     onClick={() => handleRemoveContract(id)}
                   >
-                    Remove
+                    {t("settings.removeContract")}
                   </button>
                 </li>
               ))}
@@ -227,13 +231,13 @@ export const Settings: React.FC<SettingsProps> = ({
 
         {/* Distribution Settings */}
         <section className="settings-section">
-          <h2 className="section-title">Distribution</h2>
+          <h2 className="section-title">{t("settings.distribution")}</h2>
 
           <div className="setting-item">
             <div className="setting-label">
-              <label htmlFor="maxPayouts">Max Payouts Per Transaction</label>
+              <label htmlFor="maxPayouts">{t("settings.maxPayouts")}</label>
               <p className="setting-description">
-                Maximum number of collaborators to pay in a single transaction
+                {t("settings.maxPayoutsDescription")}
               </p>
             </div>
             <input
@@ -254,9 +258,9 @@ export const Settings: React.FC<SettingsProps> = ({
 
           <div className="setting-item">
             <div className="setting-label">
-              <label htmlFor="minPayout">Minimum Payout Amount (XLM)</label>
+              <label htmlFor="minPayout">{t("settings.minPayout")}</label>
               <p className="setting-description">
-                Minimum amount required for a payout transaction
+                {t("settings.minPayoutDescription")}
               </p>
             </div>
             <input
@@ -274,9 +278,9 @@ export const Settings: React.FC<SettingsProps> = ({
 
           <div className="setting-item">
             <div className="setting-label">
-              <label htmlFor="autoSave">Auto-Save Audit Log</label>
+              <label htmlFor="autoSave">{t("settings.autoSaveAuditLog")}</label>
               <p className="setting-description">
-                Automatically save transaction audit logs
+                {t("settings.autoSaveAuditLogDescription")}
               </p>
             </div>
             <button
@@ -286,32 +290,32 @@ export const Settings: React.FC<SettingsProps> = ({
               onClick={() => handleToggle("autoSaveAuditLog")}
               id="autoSave"
             >
-              {localSettings.autoSaveAuditLog ? "ON" : "OFF"}
+              {localSettings.autoSaveAuditLog ? t("common.on") : t("common.off")}
             </button>
           </div>
         </section>
 
         {/* Notification Settings */}
         <section className="settings-section">
-          <h2 className="section-title">Notifications</h2>
+          <h2 className="section-title">{t("settings.notifications")}</h2>
 
-            <div className="setting-item">
-              <div className="setting-label">
-                <label htmlFor="notifyDist">Notify on Distribution</label>
-                <p className="setting-description">
-                  Send notification when distributions are processed
-                </p>
-              </div>
-              <button
-                className={`toggle-btn ${
-                  localSettings.notifyOnDistribution ? "active" : ""
-                }`}
-                onClick={() => handleToggle("notifyOnDistribution")}
-                id="notifyDist"
-              >
-                {localSettings.notifyOnDistribution ? "ON" : "OFF"}
-              </button>
+          <div className="setting-item">
+            <div className="setting-label">
+              <label htmlFor="notifyDist">{t("settings.notifyOnDistribution")}</label>
+              <p className="setting-description">
+                {t("settings.notifyOnDistributionDescription")}
+              </p>
             </div>
+            <button
+              className={`toggle-btn ${
+                localSettings.notifyOnDistribution ? "active" : ""
+              }`}
+              onClick={() => handleToggle("notifyOnDistribution")}
+              id="notifyDist"
+            >
+              {localSettings.notifyOnDistribution ? t("common.on") : t("common.off")}
+            </button>
+          </div>
         </section>
 
         {/* Payment Preferences */}
@@ -322,32 +326,31 @@ export const Settings: React.FC<SettingsProps> = ({
 
         {/* About Section */}
         <section className="settings-section">
-          <h2 className="section-title">About</h2>
+          <h2 className="section-title">{t("settings.about")}</h2>
           <div className="about-content">
             <div className="about-item">
-              <h3>Stellar Royalty Splitter</h3>
-              <p>Version 1.0.0</p>
+              <h3>{t("settings.title")}</h3>
+              <p>{t("settings.version")} 1.0.0</p>
               <p className="about-description">
-                A decentralized platform for managing royalty distributions
-                using the Stellar blockchain.
+                {t("settings.description")}
               </p>
             </div>
             <div className="about-item">
-              <h3>Smart Contract</h3>
-              <p>Soroban Runtime</p>
+              <h3>{t("settings.smartContract")}</h3>
+              <p>{t("settings.sorobanRuntime")}</p>
               <p className="about-description">
                 Built on Stellar Testnet for secure, transparent transactions.
               </p>
             </div>
             <div className="about-item">
-              <h3>Support</h3>
+              <h3>{t("settings.support")}</h3>
               <p>
                 <a
                   href="https://stellar.org"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  Stellar Docs
+                  {t("settings.stellarDocs")}
                 </a>
               </p>
               <p>
@@ -356,7 +359,7 @@ export const Settings: React.FC<SettingsProps> = ({
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  GitHub Repository
+                  {t("settings.githubRepo")}
                 </a>
               </p>
             </div>
@@ -367,14 +370,14 @@ export const Settings: React.FC<SettingsProps> = ({
       {/* Action Buttons */}
       <div className="settings-actions">
         <button className="btn-primary" onClick={handleSave}>
-          💾 Save Settings
+          💾 {t("settings.saveSettings")}
         </button>
         <button className="btn-secondary" onClick={handleReset}>
-          🔄 Reset to Defaults
+          🔄 {t("settings.resetToDefaults")}
         </button>
         {onClearContract && (
           <button className="btn-secondary" onClick={onClearContract}>
-            🗑️ Clear Saved Contract
+            🗑️ {t("settings.clearSavedContract")}
           </button>
         )}
       </div>
