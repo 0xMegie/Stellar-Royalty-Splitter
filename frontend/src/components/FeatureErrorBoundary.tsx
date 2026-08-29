@@ -1,4 +1,4 @@
-import React, { ReactNode, FC, ErrorInfo } from "react";
+import React, { ReactNode, FC, ErrorInfo, useState } from "react";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 interface FeatureErrorBoundaryProps {
@@ -18,8 +18,15 @@ export const FeatureErrorBoundary: FC<FeatureErrorBoundaryProps> = ({
   fallback,
   onError,
 }) => {
+  const [retryKey, setRetryKey] = useState(0);
+
+  const handleRetry = () => {
+    setRetryKey((prev) => prev + 1);
+  };
+
   return (
     <ErrorBoundary
+      key={retryKey}
       level="feature"
       fallback={
         fallback || (
@@ -30,6 +37,13 @@ export const FeatureErrorBoundary: FC<FeatureErrorBoundaryProps> = ({
                 The {featureName} feature encountered an error. Please try again
                 or check back later.
               </p>
+              <button
+                onClick={handleRetry}
+                className="error-boundary-button error-boundary-button-primary"
+                aria-label="Retry loading this feature"
+              >
+                Try Again
+              </button>
             </div>
           </div>
         )
