@@ -4,6 +4,11 @@ Benchmarks measure execution time for the `distribute` entrypoint across the
 supported collaborator counts (1, 5, and 10). They are kept separate from unit
 tests so they do not inflate normal CI runtimes.
 
+> **Scope.** This document covers the **Soroban contract** benchmarks (Criterion,
+> `benches/`). Backend API performance — validation, serialization, and the HTTP
+> request path — is measured separately and gated in CI; see
+> [PERFORMANCE.md](PERFORMANCE.md).
+
 ## Running benchmarks
 
 ```bash

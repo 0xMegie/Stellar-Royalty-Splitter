@@ -1,7 +1,16 @@
-# Disaster Recovery Runbook
+# Disaster Recovery Runbook — database restore
 
 Step-by-step procedures for recovering the Stellar Royalty Splitter audit database
 from backup.
+
+> **During an incident, start at
+> [`DISASTER_RECOVERY_RUNBOOK.md`](DISASTER_RECOVERY_RUNBOOK.md)** — it covers
+> triage across all failure modes (infrastructure loss, dependency outages,
+> configuration loss, bad deployments) and links back here for the database
+> restore detail below.
+>
+> These procedures are exercised automatically by
+> [`infra/disaster-recovery-test.sh`](../infra/disaster-recovery-test.sh).
 
 ---
 

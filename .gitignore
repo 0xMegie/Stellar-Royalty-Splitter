@@ -30,5 +30,8 @@ config/env/.env.prod
 # Deployed contract ID
 .contract-id
 
+# Disaster recovery exercise scratch directory (#865). Reports worth keeping
+# are committed to docs/dr-exercises/ deliberately.
+.dr-test/
 # Blue-green deployment state (per deployment host, not source)
 .deploy-state

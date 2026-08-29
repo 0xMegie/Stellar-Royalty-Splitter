@@ -174,7 +174,7 @@ function addAlertRule(rule) {
     minTotal: Number.isFinite(rule.minTotal) ? rule.minTotal : DEFAULT_MIN_TOTAL,
     webhookUrl: rule.webhookUrl,
     email: rule.email,
-    dedupeWindowMs: Number.isFinite(rule.dedupeWindowMs) ? rule.dedupeWindowMs : DEFAULT_DETUPE_WINDOW_MS,
+    dedupeWindowMs: Number.isFinite(rule.dedupeWindowMs) ? rule.dedupeWindowMs : DEFAULT_DEDUPE_WINDOW_MS,
     maxLatencyMs: Number.isFinite(rule.maxLatencyMs) ? rule.maxLatencyMs : DEFAULT_MAX_LATENCY_MS,
     anomalyZScore: Number.isFinite(rule.anomalyZScore) ? rule.anomalyZScore : DEFAULT_ANOMALY_ZSCORE,
   });
