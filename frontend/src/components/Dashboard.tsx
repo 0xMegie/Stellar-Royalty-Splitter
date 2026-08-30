@@ -16,6 +16,7 @@ import {
   type ContractPerformanceSummary,
 } from "../utils/contractPerformance";
 import { formatCurrency, formatNumber } from "../utils/format";
+import { BulkOperationsPanel } from "./BulkOperationsPanel";
 
 interface DashboardStats {
   totalDistributed: number;
@@ -59,6 +60,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ contractId }) => {
   });
   const [sortBy, setSortBy] = useState<"revenue" | "transactions" | "name">("revenue");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [selectedContracts, setSelectedContracts] = useState<Set<string>>(new Set());
+  const [showAggregated, setShowAggregated] = useState(false);
+  const [bulkOperationLoading, setBulkOperationLoading] = useState(false);
 
   const loadStats = useCallback(async () => {
     if (!contractId) {
