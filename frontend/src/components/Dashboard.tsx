@@ -124,6 +124,80 @@ export const Dashboard: React.FC<DashboardProps> = ({ contractId }) => {
     void loadPerformance();
   }, [loadPerformance]);
 
+  const handleSelectContract = (contractId: string, event?: React.MouseEvent) => {
+    if (event?.shiftKey) {
+      // Shift+Click multi-select behavior
+      setSelectedContracts(new Set(selectedContracts).add(contractId));
+    } else {
+      const newSet = new Set(selectedContracts);
+      if (newSet.has(contractId)) {
+        newSet.delete(contractId);
+      } else {
+        newSet.add(contractId);
+      }
+      setSelectedContracts(newSet);
+    }
+  };
+
+  const handleSelectAll = () => {
+    if (performanceData && performanceData.contracts.length > 0) {
+      if (selectedContracts.size === performanceData.contracts.length) {
+        setSelectedContracts(new Set());
+      } else {
+        setSelectedContracts(
+          new Set(performanceData.contracts.map((c) => c.contractId))
+        );
+      }
+    }
+  };
+
+  const handleBulkDistribute = async () => {
+    if (selectedContracts.size === 0) return;
+    setBulkOperationLoading(true);
+    try {
+      // Mock implementation - shows confirmation dialog
+      if (
+        window.confirm(
+          `Distribute to ${selectedContracts.size} selected contracts? (This is a preview)`
+        )
+      ) {
+        // Placeholder for actual bulk distribute implementation
+        console.log("Bulk distribute to:", selectedContracts);
+      }
+    } finally {
+      setBulkOperationLoading(false);
+    }
+  };
+
+  const handleBulkExport = () => {
+    if (selectedContracts.size === 0) return;
+    const selectedData = performanceData?.contracts.filter((c) =>
+      selectedContracts.has(c.contractId)
+    );
+    const csv = [
+      ["Contract ID", "Revenue", "Transactions", "Status"],
+      ...(selectedData?.map((c) => [
+        c.contractId,
+        c.revenue,
+        c.transactions,
+        c.status,
+      ]) || []),
+    ]
+      .map((row) => row.join(","))
+      .join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `contracts-${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+  };
+
+  const handleAggregatedView = () => {
+    setShowAggregated(!showAggregated);
+  };
+
   if (!contractId) {
     return (
       <div className="dashboard-empty">
@@ -174,30 +248,63 @@ export const Dashboard: React.FC<DashboardProps> = ({ contractId }) => {
           </h2>
           <MetricsGrid
             metrics={{
-              totalDistributed: performanceData.totalRevenue,
-              totalTransactions: performanceData.transactionsThisMonth,
+              totalDistributed: showAggregated
+                ? Array.from(selectedContracts).reduce((sum, id) => {
+                    const contract = performanceData.contracts.find((c) => c.contractId === id);
+                    return sum + (contract?.revenue || 0);
+                  }, 0)
+                : performanceData.totalRevenue,
+              totalTransactions: showAggregated
+                ? Array.from(selectedContracts).reduce((sum, id) => {
+                    const contract = performanceData.contracts.find((c) => c.contractId === id);
+                    return sum + (contract?.transactions || 0);
+                  }, 0)
+                : performanceData.transactionsThisMonth,
               averagePayout: performanceData.totalRevenue / Math.max(performanceData.transactionsThisMonth, 1),
-              collaboratorCount: performanceData.activeContracts,
+              collaboratorCount: showAggregated ? selectedContracts.size : performanceData.activeContracts,
             }}
             displayCurrency={settings.displayCurrency}
             labels={{
-              totalDistributed: "Total Revenue",
-              totalTransactions: "Transactions This Month",
-              collaboratorCount: "Active Contracts",
+              totalDistributed: showAggregated ? "Selected Revenue" : "Total Revenue",
+              totalTransactions: showAggregated ? "Selected Transactions" : "Transactions This Month",
+              collaboratorCount: showAggregated ? "Selected Contracts" : "Active Contracts",
             }}
           />
+
+          {selectedContracts.size > 0 && (
+            <BulkOperationsPanel
+              selectedCount={selectedContracts.size}
+              onBulkDistribute={handleBulkDistribute}
+              onBulkExport={handleBulkExport}
+              onAggregatedView={handleAggregatedView}
+              loading={bulkOperationLoading}
+            />
+          )}
 
           <div className="performance-table-section">
             <div className="section-heading-row">
               <h2 className="section-heading">Contract Performance</h2>
               <span className="section-meta">
-                {formatNumber(performanceData.contracts.length)} contracts
+                {selectedContracts.size > 0
+                  ? `${selectedContracts.size} selected`
+                  : `${formatNumber(performanceData.contracts.length)} contracts`}
               </span>
             </div>
             <div className="stats-table stats-table-responsive">
               <table>
                 <thead>
                   <tr>
+                    <th scope="col" className="checkbox-col">
+                      <input
+                        type="checkbox"
+                        checked={
+                          performanceData.contracts.length > 0 &&
+                          selectedContracts.size === performanceData.contracts.length
+                        }
+                        onChange={handleSelectAll}
+                        aria-label="Select all contracts"
+                      />
+                    </th>
                     <th scope="col">Contract ID</th>
                     <th scope="col" className="text-right">Revenue</th>
                     <th scope="col" className="text-right">Transactions</th>
@@ -207,39 +314,54 @@ export const Dashboard: React.FC<DashboardProps> = ({ contractId }) => {
                 </thead>
                 <tbody>
                   {performanceData.contracts.length > 0 ? (
-                    performanceData.contracts.map((contract) => (
-                      <tr key={contract.contractId}>
-                        <td
-                          className="address-cell"
-                          data-label="Contract ID"
-                          title={contract.contractId}
+                    performanceData.contracts
+                      .filter((c) => !showAggregated || selectedContracts.has(c.contractId))
+                      .map((contract) => (
+                        <tr
+                          key={contract.contractId}
+                          className={selectedContracts.has(contract.contractId) ? "selected" : ""}
                         >
-                          <span className="address-short">
-                            {formatContractId(contract.contractId)}
-                          </span>
-                          <span className="address-full">{contract.contractId}</span>
-                        </td>
-                        <td className="text-right" data-label="Revenue">
-                          {formatCurrency(contract.revenue, settings.displayCurrency)}
-                        </td>
-                        <td className="text-right" data-label="Transactions">
-                          {formatNumber(contract.transactions)}
-                        </td>
-                        <td className="text-right" data-label="Last Activity">
-                          {contract.lastActivity
-                            ? new Date(contract.lastActivity).toLocaleDateString()
-                            : "—"}
-                        </td>
-                        <td className="text-right" data-label="Status">
-                          <span className={`status-pill status-${contract.status}`}>
-                            {contract.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
+                          <td className="checkbox-col">
+                            <input
+                              type="checkbox"
+                              checked={selectedContracts.has(contract.contractId)}
+                              onChange={(e) =>
+                                handleSelectContract(contract.contractId, e as any)
+                              }
+                              aria-label={`Select contract ${formatContractId(contract.contractId)}`}
+                            />
+                          </td>
+                          <td
+                            className="address-cell"
+                            data-label="Contract ID"
+                            title={contract.contractId}
+                          >
+                            <span className="address-short">
+                              {formatContractId(contract.contractId)}
+                            </span>
+                            <span className="address-full">{contract.contractId}</span>
+                          </td>
+                          <td className="text-right" data-label="Revenue">
+                            {formatCurrency(contract.revenue, settings.displayCurrency)}
+                          </td>
+                          <td className="text-right" data-label="Transactions">
+                            {formatNumber(contract.transactions)}
+                          </td>
+                          <td className="text-right" data-label="Last Activity">
+                            {contract.lastActivity
+                              ? new Date(contract.lastActivity).toLocaleDateString()
+                              : "—"}
+                          </td>
+                          <td className="text-right" data-label="Status">
+                            <span className={`status-pill status-${contract.status}`}>
+                              {contract.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
                   ) : (
                     <tr>
-                      <td colSpan={5} className="table-empty">
+                      <td colSpan={6} className="table-empty">
                         No contract activity found
                       </td>
                     </tr>

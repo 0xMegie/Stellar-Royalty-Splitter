@@ -111,6 +111,30 @@ pub struct Proposal {
     pub rejected: bool,
 }
 
+/// A distribution operation record for historical tracking (#775).
+/// Stores per-token distribution details for on-chain audit.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DistributionRecord {
+    pub id: u64,
+    pub token: Address,
+    pub total_amount: i128,
+    pub recipient_count: u32,
+    pub timestamp: u64,
+    pub status: String,
+}
+
+/// Pending distribution amount per token (#775).
+/// Tracks unsent payouts awaiting the next distribution cycle.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingDistribution {
+    pub token: Address,
+    pub pending_amount: i128,
+    pub last_updated: u64,
+    pub recipient_count: u32,
+}
+
 /// Typed storage keys.
 ///
 /// Instance storage keys: small, frequently accessed values (Admin, Paused, etc.).
@@ -159,11 +183,21 @@ pub enum StorageKey {
     MigrationMemo,
     ContributorJoinDate,
     ContributorActivityCount,
+    DistributionRecords,
+    DistributionRecordCount,
+    PendingDistributions,
 }
 
 /// Maximum number of rate-change entries kept in history.
 /// Older entries are dropped when the cap is reached.
 pub const RATE_HISTORY_CAP: u32 = 20;
+
+/// Maximum number of distribution records kept in history (#775).
+/// Older entries are pruned after 90 days to keep ledger footprint bounded.
+pub const DISTRIBUTION_HISTORY_LIMIT: u32 = 500;
+
+/// Maximum distribution history items per pagination request (#775).
+pub const DISTRIBUTION_HISTORY_PAGE_SIZE: u32 = 50;
 
 /// Maximum number of collaborators accepted by `initialize`.
 /// Bounded by Soroban execution and storage costs.
@@ -2556,6 +2590,143 @@ impl RoyaltySplitter {
             storage::instance_get::<u32>(&env, &StorageKey::AdminThreshold).unwrap_or(1)
         };
         (signers, threshold)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Distribution History & Pending Amounts (#775)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Record a distribution operation on-chain for audit trail (#775).
+    /// Called internally after successful distribute operations.
+    fn record_distribution(
+        env: &Env,
+        token: Address,
+        total_amount: i128,
+        recipient_count: u32,
+        status: &String,
+    ) -> Result<u64, ContractError> {
+        let id: u64 = storage::instance_get::<u64>(&env, &StorageKey::DistributionRecordCount)
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or(ContractError::ArithmeticOverflow)?;
+
+        let record = DistributionRecord {
+            id,
+            token: token.clone(),
+            total_amount,
+            recipient_count,
+            timestamp: env.ledger().timestamp(),
+            status: status.clone(),
+        };
+
+        let mut records: Vec<DistributionRecord> =
+            storage::persistent_get(env, &StorageKey::DistributionRecords)
+                .unwrap_or(Vec::new(env));
+
+        if records.len() >= DISTRIBUTION_HISTORY_LIMIT as usize {
+            records.remove(0);
+        }
+
+        records.push_back(record);
+        storage::persistent_set(env, &StorageKey::DistributionRecords, &records);
+        storage::instance_set(env, &StorageKey::DistributionRecordCount, &id);
+
+        Ok(id)
+    }
+
+    /// Get distribution history with pagination. Returns up to `limit` records
+    /// starting from `offset`. Maximum 50 items per page. (#775)
+    pub fn get_distribution_history(
+        env: Env,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<DistributionRecord>, ContractError> {
+        storage::extend_instance_ttl(&env);
+
+        let limit = u32::min(limit, DISTRIBUTION_HISTORY_PAGE_SIZE);
+        let records: Vec<DistributionRecord> =
+            storage::persistent_get(&env, &StorageKey::DistributionRecords)
+                .unwrap_or(Vec::new(&env));
+
+        let start = offset as usize;
+        let end = (offset + limit) as usize;
+
+        if start >= records.len() {
+            return Ok(Vec::new(&env));
+        }
+
+        let mut result = Vec::new(&env);
+        for i in start..end.min(records.len()) {
+            result.push_back(records.get(i as u32).unwrap());
+        }
+
+        Ok(result)
+    }
+
+    /// Get pending distribution amounts per token awaiting next distribution cycle (#775).
+    /// Returns an empty vector if no pending distributions exist.
+    pub fn get_pending_distributions(env: Env) -> Result<Vec<PendingDistribution>, ContractError> {
+        storage::extend_instance_ttl(&env);
+
+        let pending: Vec<PendingDistribution> =
+            storage::persistent_get(&env, &StorageKey::PendingDistributions)
+                .unwrap_or(Vec::new(&env));
+
+        Ok(pending)
+    }
+
+    /// Get pending distribution amount for a specific token (#775).
+    /// Returns 0 if no pending amount tracked for this token.
+    pub fn get_pending_amount(env: Env, token: Address) -> Result<i128, ContractError> {
+        storage::extend_instance_ttl(&env);
+
+        let pending: Vec<PendingDistribution> =
+            storage::persistent_get(&env, &StorageKey::PendingDistributions)
+                .unwrap_or(Vec::new(&env));
+
+        for record in pending.iter() {
+            if record.token == token {
+                return Ok(record.pending_amount);
+            }
+        }
+
+        Ok(0)
+    }
+
+    /// Update pending distribution amount for a token. Used internally during
+    /// distribution cycles to track what's awaiting payout. (#775)
+    fn update_pending_amount(
+        env: &Env,
+        token: Address,
+        amount: i128,
+        recipient_count: u32,
+    ) -> Result<(), ContractError> {
+        let mut pending: Vec<PendingDistribution> =
+            storage::persistent_get(env, &StorageKey::PendingDistributions)
+                .unwrap_or(Vec::new(env));
+
+        let mut found = false;
+        for record in pending.iter_mut() {
+            if record.token == token {
+                record.pending_amount = amount;
+                record.last_updated = env.ledger().timestamp();
+                record.recipient_count = recipient_count;
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            pending.push_back(PendingDistribution {
+                token,
+                pending_amount: amount,
+                last_updated: env.ledger().timestamp(),
+                recipient_count,
+            });
+        }
+
+        storage::persistent_set(env, &StorageKey::PendingDistributions, &pending);
+        Ok(())
     }
 }
 
